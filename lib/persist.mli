@@ -15,6 +15,13 @@ type crash_hook = unit -> unit
 (** [no_crash] is the production hook (does nothing). *)
 val no_crash : crash_hook
 
+(** [trace_write_path path] — when [K4K_TEST_TRACE_WRITES=<file>] is
+    set, append [path] to that file (one path per line). Production
+    runs leave the env unset and this is a no-op. Exposed so writers
+    outside this module ([Persist_lock]) can participate in the NF4
+    envelope trace. *)
+val trace_write_path : string -> unit
+
 (** [atomic_write ?crash_hook ~path content] writes [content] to [path]
     atomically. Pattern: open [path.tmp], write+fsync, run [crash_hook] (if
     any), close, rename, fsync the parent directory.

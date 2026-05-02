@@ -215,6 +215,83 @@ module PT = struct
   ]
 end
 
+(* ---------------- P12 file-locking discipline ---------------- *)
+module P12T = struct
+  (* Two appenders contend for the lock. With flock, the second
+     blocks while the first writes. We use a small helper thread to
+     observe interleaving: each appender writes a marker, sleeps
+     briefly, writes another marker, and releases. If the writes
+     are not serialised, the markers will interleave; if they are
+     serialised, the file's bytes will be 'A1A2B1B2' or 'B1B2A1A2'.
+     Threads share an fd table, so OCaml's [Unix.lockf] (POSIX
+     advisory) does NOT lock different threads of the same process
+     against each other; we therefore use forked subprocesses. *)
+  let p12_concurrent_writers_serialize () =
+    with_tmpdir (fun dir ->
+      let path = Filename.concat dir "in.k4k" in
+      Persist_lock.append_clarification ~path "";
+      let pid_a = Unix.fork () in
+      if pid_a = 0 then begin
+        Persist_lock.with_exclusive_lock ~path (fun () ->
+          let oc = open_out_gen
+            [ Open_append; Open_binary ] 0o644 path in
+          output_string oc "A1"; flush oc;
+          Unix.sleepf 0.2;
+          output_string oc "A2"; flush oc;
+          close_out oc);
+        exit 0
+      end;
+      Unix.sleepf 0.05;
+      let pid_b = Unix.fork () in
+      if pid_b = 0 then begin
+        Persist_lock.with_exclusive_lock ~path (fun () ->
+          let oc = open_out_gen
+            [ Open_append; Open_binary ] 0o644 path in
+          output_string oc "B1"; flush oc;
+          Unix.sleepf 0.05;
+          output_string oc "B2"; flush oc;
+          close_out oc);
+        exit 0
+      end;
+      let _ = Unix.waitpid [] pid_a in
+      let _ = Unix.waitpid [] pid_b in
+      let body = read_all path in
+      Alcotest.(check bool)
+        (Printf.sprintf "no interleave: got %s" body) true
+        (body = "A1A2B1B2" || body = "B1B2A1A2"))
+
+  (* Sanity: with_exclusive_lock returns the body's value. *)
+  let p12_lock_is_released_on_exception () =
+    with_tmpdir (fun dir ->
+      let path = Filename.concat dir "x.k4k" in
+      (try
+        Persist_lock.with_exclusive_lock ~path (fun () -> raise Exit)
+      with Exit -> ());
+      (* Subsequent acquisition must not block. *)
+      let acquired = ref false in
+      Persist_lock.with_exclusive_lock ~path (fun () ->
+        acquired := true);
+      Alcotest.(check bool) "second acquisition succeeded" true
+        !acquired)
+
+  let p12_append_clarification_writes () =
+    with_tmpdir (fun dir ->
+      let path = Filename.concat dir "in.k4k" in
+      Persist_lock.append_clarification ~path "first\n";
+      Persist_lock.append_clarification ~path "second\n";
+      Alcotest.(check string) "appended in order"
+        "first\nsecond\n" (read_all path))
+
+  let tests = [
+    Alcotest.test_case "P12_concurrent_writers_serialize" `Quick
+      p12_concurrent_writers_serialize;
+    Alcotest.test_case "P12_lock_released_on_exception" `Quick
+      p12_lock_is_released_on_exception;
+    Alcotest.test_case "P12_append_clarification_writes" `Quick
+      p12_append_clarification_writes;
+  ]
+end
+
 (* ---------------- Parser tests (≥3) ---------------- *)
 module ParT = struct
   let parses_well_formed_fixture () =
@@ -3587,6 +3664,7 @@ let () =
     [ "Error",        ET.tests;
       "Logger",       LT.tests;
       "Persist",      PT.tests;
+      "P12",          P12T.tests;
       "Parser",       ParT.tests;
       "Stability",    ST.tests;
       "Backend_stub", BS.tests;

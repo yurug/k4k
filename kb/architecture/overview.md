@@ -75,7 +75,7 @@ One iteration of the harness loop. Selects the next property by `risk_score`, co
 Computes the diff between previous and current `(D, S)`; for each affected aspect, identifies the KB files (via `manifest.kb_source_map`) whose ownership is `k4k`, and regenerates them via one agent call per file.
 
 ### `lib/Persist`
-All file I/O. Atomic writes via tmp+fsync+rename. `flock(2)` discipline. Holds the only handle to `.k4k/`.
+All file I/O. Atomic writes via tmp+fsync+rename. Holds the only handle to `.k4k/`. The `flock(2)` discipline lives in the peer `lib/Persist_lock` module (P12), which guards writes to `<file.k4k>` (the user-owned interaction file) with an advisory exclusive lock held only across the write itself, never across an agent or verifier call.
 
 ### `lib/Logger`
 Both human-readable stderr and JSONL `.k4k/log.jsonl`. The TTY status updater is a separate sub-module (`Logger.Tty_status`) that draws the in-place line.

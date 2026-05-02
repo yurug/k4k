@@ -227,7 +227,28 @@ let s1_echo_first_run_e2e () =
       let r = K4k.Subprocess.run ~prog:"dune"
                 ~args:["build";"@runtest";"--force";"--root";dir]
                 ~timeout_s:60 () in
-      Alcotest.(check int) "final dune runtest exit 0" 0 r.exit_code)
+      Alcotest.(check int) "final dune runtest exit 0" 0 r.exit_code;
+      (* Step 4 — target KB completeness. *)
+      let must = [
+        ".k4k/INDEX.md";
+        ".k4k/GLOSSARY.md";
+        ".k4k/spec/data-model.md";
+        ".k4k/spec/algorithms.md";
+        ".k4k/properties/functional.md";
+        ".k4k/properties/edge-cases.md";
+      ] in
+      List.iter (fun f ->
+        Alcotest.(check bool) (f ^ " present") true
+          (Sys.file_exists (Filename.concat dir f))) must;
+      let glossary = read_all_close
+        (open_in (Filename.concat dir ".k4k/GLOSSARY.md")) in
+      Alcotest.(check bool) "GLOSSARY.md non-empty" true
+        (String.length glossary > 0);
+      List.iter (fun key ->
+        Alcotest.(check bool)
+          (key ^ " present in GLOSSARY") true
+          (Astring.String.is_infix ~affix:key glossary))
+        [ "owner: k4k"; "content_hash:"; "id:"; "type:" ])
 
 (* --- NF1 SIGINT subprocess test ---
 

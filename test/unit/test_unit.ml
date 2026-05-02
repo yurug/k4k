@@ -2592,7 +2592,7 @@ module Lint = struct
     "lib/sigint.ml"; "lib/git.ml";
     "lib/run_loop.ml"; "lib/convergence.ml";
     (* step-4 files *)
-    "lib/kb_regen.ml"; "lib/tty_status.ml";
+    "lib/kb_regen.ml"; "lib/kb_render.ml"; "lib/tty_status.ml";
   ]
 
   let rec find_root dir =

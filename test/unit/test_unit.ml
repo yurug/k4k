@@ -1758,6 +1758,11 @@ module SigT = struct
       raise_if_needed_quiet;
     Alcotest.test_case "T16_sigint_during_verifier_exits_within_5s" `Slow
       t16_subprocess_sigint_kills_child;
+    (* L2 — P8 (bounded responsiveness to signals) is exercised by
+       T16 above; expose it under its own P-named entry so the
+       Axis-1 P-ID coverage check is satisfied. *)
+    Alcotest.test_case "P8_signal_latency_under_stub" `Slow
+      t16_subprocess_sigint_kills_child;
   ]
 end
 
@@ -2463,6 +2468,11 @@ module T4T = struct
       `Quick (fun () ->
         let r = Run_loop.initial_user_hashes (Some "/no/such/path") in
         Alcotest.(check int) "[]" 0 (List.length r));
+    (* L2 — P13 (fresh-read per step) is exercised by the T4
+       mid-run-edit test above; expose it under its own P-named
+       entry so the Axis-1 P-ID coverage check is satisfied. *)
+    Alcotest.test_case "P13_fresh_read_per_step" `Quick
+      t4_mid_run_edit_triggers_restability;
   ]
 end
 

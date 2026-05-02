@@ -6,7 +6,7 @@ domain: spec
 last-updated: 2026-05-02
 depends-on: [glossary, spec.data-model, spec.algorithms]
 refines: []
-related: [external.claude-code, external.dune, external.ollama, architecture.overview]
+related: [external.claude-code, external.verifier-protocol, external.ollama, architecture.overview]
 ---
 
 # API Contracts

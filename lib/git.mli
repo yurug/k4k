@@ -44,11 +44,19 @@ val commit_all :
 val merge_ff_only : cwd:string -> name:string -> (unit, string) result
 
 (** [init ~cwd] — initialize a fresh repo at [cwd] on branch [main].
-    Used by tests; not by the harness. *)
+
+    [@test_only] The production harness expects the user to have
+    initialised the project repo themselves; only the unit and
+    integration tests use this helper to bootstrap a scratch repo. *)
 val init : cwd:string -> (unit, string) result
 
 (** [configure_test_identity ~cwd] sets a deterministic
-    [user.name]/[user.email] in [cwd]. Used by tests. *)
+    [user.name] / [user.email] in [cwd] so [git commit] does not fail
+    on a CI runner with no global git identity.
+
+    [@test_only] As above, this is exported for the unit and
+    integration tests, not for the production harness — k4k never
+    edits the user's git config. *)
 val configure_test_identity : cwd:string -> unit
 
 (** [scratch_branch_name ~property_id] — Q3.2 naming

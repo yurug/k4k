@@ -1376,6 +1376,392 @@ module PG = struct
   ]
 end
 
+(* ---------------- Diff_extract (≥3) ---------------- *)
+module DET = struct
+  let extracts_files () =
+    let s = "```json\n{\"files\":[\"a.ml\",\"b.ml\"]}\n```\n" in
+    Alcotest.(check (list string)) "files"
+      ["a.ml"; "b.ml"] (Diff_extract.extract_files s)
+
+  let no_files_when_missing () =
+    Alcotest.(check (list string)) "no preface" []
+      (Diff_extract.extract_files "no JSON here")
+
+  let extracts_diff_block () =
+    let s = "Some prose\n```diff\n--- a/x.ml\n+++ b/x.ml\n@@ -1 +1 @@\n-old\n+new\n```\nmore" in
+    match Diff_extract.extract_diff s with
+    | Some d ->
+        Alcotest.(check bool) "has --- a/x.ml" true
+          (Astring.String.is_infix ~affix:"--- a/x.ml" d);
+        Alcotest.(check bool) "has +new" true
+          (Astring.String.is_infix ~affix:"+new" d)
+    | None -> Alcotest.fail "expected Some"
+
+  let extracts_unfenced_diff () =
+    let s = "Here:\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n" in
+    match Diff_extract.extract_diff s with
+    | Some d ->
+        Alcotest.(check bool) "starts with ---" true
+          (Astring.String.is_prefix ~affix:"--- a/x" (String.trim d))
+    | None -> Alcotest.fail "expected Some"
+
+  let no_diff_returns_none () =
+    Alcotest.(check bool) "none" true
+      (Diff_extract.extract_diff "no diff" = None)
+
+  let tests = [
+    Alcotest.test_case "Diff_extract_files" `Quick extracts_files;
+    Alcotest.test_case "Diff_extract_no_files" `Quick no_files_when_missing;
+    Alcotest.test_case "Diff_extract_fenced_diff" `Quick extracts_diff_block;
+    Alcotest.test_case "Diff_extract_unfenced_diff" `Quick extracts_unfenced_diff;
+    Alcotest.test_case "Diff_extract_no_diff_none" `Quick no_diff_returns_none;
+  ]
+end
+
+(* ---------------- Git wrapper (≥3) ---------------- *)
+module GT = struct
+  let init_and_commit dir =
+    let _ = Git.init ~cwd:dir in
+    Git.configure_test_identity ~cwd:dir;
+    let oc = open_out (Filename.concat dir "README") in
+    output_string oc "hi"; close_out oc;
+    let _ = Git.commit_all ~cwd:dir ~message:"initial" in
+    ()
+
+  let is_repo_after_init () =
+    with_tmpdir (fun dir ->
+      init_and_commit dir;
+      Alcotest.(check bool) "is_repo" true (Git.is_repo ~cwd:dir);
+      Alcotest.(check bool) "is_clean" true
+        (let c, _ = Git.is_clean ~cwd:dir in c))
+
+  let scratch_name_format () =
+    let n = Git.scratch_branch_name ~property_id:"P1234567" in
+    Alcotest.(check bool) "starts with k4k/gap/P1234567/" true
+      (Astring.String.is_prefix ~affix:"k4k/gap/P1234567/" n)
+
+  let dirty_when_modified () =
+    with_tmpdir (fun dir ->
+      init_and_commit dir;
+      let oc = open_out (Filename.concat dir "README") in
+      output_string oc "changed"; close_out oc;
+      let c, dirty = Git.is_clean ~cwd:dir in
+      Alcotest.(check bool) "not clean" false c;
+      Alcotest.(check bool) "dirty paths reported" true (dirty <> []))
+
+  let create_and_delete_branch () =
+    with_tmpdir (fun dir ->
+      init_and_commit dir;
+      let n = "k4k/gap/PXXXXXXX/test-1" in
+      (match Git.create_branch ~cwd:dir ~name:n with
+       | Ok () -> ()
+       | Error e -> Alcotest.fail e);
+      Alcotest.(check bool) "exists" true
+        (Git.branch_exists ~cwd:dir ~name:n);
+      let _ = Git.checkout ~cwd:dir ~name:"main" in
+      let _ = Git.delete_branch ~cwd:dir ~name:n in
+      Alcotest.(check bool) "deleted" false
+        (Git.branch_exists ~cwd:dir ~name:n))
+
+  let tests = [
+    Alcotest.test_case "Git_is_repo_after_init" `Quick is_repo_after_init;
+    Alcotest.test_case "Git_scratch_name_format" `Quick scratch_name_format;
+    Alcotest.test_case "Git_is_clean_detects_dirty" `Quick dirty_when_modified;
+    Alcotest.test_case "Git_create_and_delete_branch" `Quick
+      create_and_delete_branch;
+  ]
+end
+
+(* ---------------- Sigint (≥3) ---------------- *)
+module SigT = struct
+  let install_idempotent () =
+    Sigint.install ();
+    Sigint.install ();
+    Alcotest.(check bool) "still false" false (Sigint.should_exit ())
+
+  let reset_clears_flag () =
+    Sigint.reset_for_test ();
+    Alcotest.(check bool) "false after reset" false (Sigint.should_exit ())
+
+  let raise_if_needed_quiet () =
+    Sigint.reset_for_test ();
+    Sigint.raise_if_needed ()  (* should not raise when flag is unset *)
+
+  let tests = [
+    Alcotest.test_case "Sigint_install_idempotent" `Quick install_idempotent;
+    Alcotest.test_case "Sigint_reset_clears" `Quick reset_clears_flag;
+    Alcotest.test_case "Sigint_raise_if_needed_no_signal" `Quick
+      raise_if_needed_quiet;
+  ]
+end
+
+(* ---------------- Gap_prompt (≥3) ---------------- *)
+module GPT = struct
+  let mk_prop () =
+    Property.make
+      ~source:{ aspect = "errors"; path = ["errors"; "EBADARG"] }
+      ~statement:"raises EBADARG when argv missing" ()
+
+  let renders_property_id () =
+    let p = mk_prop () in
+    let s = Gap_prompt.compose p Characterization.empty
+              ~current_summary:"empty" in
+    Alcotest.(check bool) "contains pid" true
+      (Astring.String.is_infix ~affix:p.id s);
+    Alcotest.(check bool) "contains statement" true
+      (Astring.String.is_infix
+         ~affix:"raises EBADARG when argv missing" s)
+
+  let renders_test_naming_convention () =
+    let p = mk_prop () in
+    let s = Gap_prompt.compose p Characterization.empty
+              ~current_summary:"" in
+    Alcotest.(check bool) "convention mentions P<id>_<slug>" true
+      (Astring.String.is_infix ~affix:"P<id>_<slug>" s)
+
+  let renders_examples () =
+    let mk_acc n = {
+      Characterization.name = n; argv = ["echo"; n]; stdin = None;
+      expect = { stdout = n; stderr = "";
+                 exit_code = 0; fs_after = None } } in
+    let d = { Characterization.empty with
+              examples_accept = [mk_acc "e1"; mk_acc "e2"] } in
+    let p = mk_prop () in
+    let s = Gap_prompt.compose p d ~current_summary:"" in
+    Alcotest.(check bool) "shows e1" true
+      (Astring.String.is_infix ~affix:"e1" s);
+    Alcotest.(check bool) "shows e2" true
+      (Astring.String.is_infix ~affix:"e2" s)
+
+  let tests = [
+    Alcotest.test_case "Gap_prompt_includes_property_id" `Quick
+      renders_property_id;
+    Alcotest.test_case "Gap_prompt_includes_test_naming_convention" `Quick
+      renders_test_naming_convention;
+    Alcotest.test_case "Gap_prompt_renders_examples" `Quick renders_examples;
+  ]
+end
+
+(* ---------------- Gap_step (≥3) — mocked agent + verifier ---------------- *)
+module GST = struct
+  open Property
+
+  (* A minimal manual verifier shim: closes over a verdict map. *)
+  let canned_verifier ~verdict =
+    let v_run ~workdir:_ ~focus:_ : Verifier.run_result =
+      `Ok Verifier.{
+        by_property = verdict;
+        raw_exit_code = 0;
+        stdout_path = ""; stderr_path = "";
+        duration_ms = 0;
+      }
+    in v_run
+
+  let mk_prop_p1 () =
+    Property.make
+      ~source:{ aspect = "errors"; path = ["errors"; "EBADARG"] }
+      ~statement:"raises EBADARG" ()
+
+  let mk_deps ~k4k_dir ~workdir ~agent_resp ~verifier_run : _ Gap_step.deps =
+    let logger = Logger.create ~verbosity:`Quiet
+      ~jsonl_path:(Some (Filename.concat k4k_dir "log.jsonl")) in
+    {
+      k4k_dir;
+      workdir;
+      agent_invoke = (fun ~purpose:_ ~prompt:_ ~budget:_ -> agent_resp ());
+      verifier_run;
+      logger;
+      budget_remaining = ref 1000;
+      agent_backend = ();
+    }
+
+  let init_repo dir =
+    let _ = Git.init ~cwd:dir in
+    Git.configure_test_identity ~cwd:dir;
+    let oc = open_out (Filename.concat dir "README") in
+    output_string oc "init"; close_out oc;
+    let oc = open_out (Filename.concat dir ".gitignore") in
+    output_string oc ".k4k/\n"; close_out oc;
+    let _ = Git.commit_all ~cwd:dir ~message:"initial" in
+    Persist.ensure_dir (Filename.concat dir ".k4k");
+    ()
+
+  let p_dirty_workdir_aborts () =
+    with_tmpdir (fun dir ->
+      init_repo dir;
+      let oc = open_out (Filename.concat dir "README") in
+      output_string oc "dirty"; close_out oc;
+      let p = mk_prop_p1 () in
+      let deps = mk_deps ~k4k_dir:(Filename.concat dir ".k4k")
+        ~workdir:dir
+        ~agent_resp:(fun () -> `Tool_error "should not be called")
+        ~verifier_run:(canned_verifier ~verdict:[]) in
+      try
+        let _ = Gap_step.step ~deps ~d:Characterization.empty
+          ~current_summary:"" ~prev_status:[] [p] in
+        Alcotest.fail "expected ESTATE_CORRUPT for dirty tree"
+      with Error.K4k_error (Error.E_state_corrupt _) -> ())
+
+  let mk_response_diff_satisfies_p () =
+    (* Add a new file (simpler than modifying README — diffs against
+       new files are robust regardless of trailing-newline issues). *)
+    "```json\n{\"files\":[\"new.txt\"]}\n```\n\
+     ```diff\n\
+     diff --git a/new.txt b/new.txt\n\
+     new file mode 100644\n\
+     --- /dev/null\n\
+     +++ b/new.txt\n\
+     @@ -0,0 +1 @@\n\
+     +hello\n\
+     ```\n"
+
+  let p5_accept_when_established_no_regression () =
+    with_tmpdir (fun dir ->
+      init_repo dir;
+      let p = mk_prop_p1 () in
+      let response_text = mk_response_diff_satisfies_p () in
+      let deps = mk_deps ~k4k_dir:(Filename.concat dir ".k4k")
+        ~workdir:dir
+        ~agent_resp:(fun () ->
+          `Ok Agent_backend.{ text = response_text;
+                              budget_used = 0; duration_ms = 0 })
+        ~verifier_run:(canned_verifier
+                         ~verdict:[(p.id, `Established)]) in
+      match Gap_step.step ~deps ~d:Characterization.empty
+              ~current_summary:"" ~prev_status:[] [p] with
+      | Accepted q ->
+          Alcotest.(check string) "established"
+            "established" (Property_json.status_to_string q.status)
+      | Rejected (_, msg) -> Alcotest.fail ("rejected: " ^ msg)
+      | _ -> Alcotest.fail "unexpected outcome")
+
+  let p5_reject_on_regression () =
+    with_tmpdir (fun dir ->
+      init_repo dir;
+      let p = mk_prop_p1 () in
+      (* Force the verifier to report the focus as Established, but
+         a previously-established other property as Contradicted. *)
+      let other = "Pdeadbee" in
+      let response_text = mk_response_diff_satisfies_p () in
+      let deps = mk_deps ~k4k_dir:(Filename.concat dir ".k4k")
+        ~workdir:dir
+        ~agent_resp:(fun () ->
+          `Ok Agent_backend.{ text = response_text;
+                              budget_used = 0; duration_ms = 0 })
+        ~verifier_run:(canned_verifier
+          ~verdict:[(p.id, `Established); (other, `Contradicted)]) in
+      match Gap_step.step ~deps ~d:Characterization.empty
+              ~current_summary:"" ~prev_status:[(other, `Established)]
+              [p] with
+      | Rejected (q, reason) ->
+          Alcotest.(check int) "fc bumped" 1 q.failure_count;
+          Alcotest.(check bool) "reason mentions regression" true
+            (Astring.String.is_infix ~affix:"regress" reason)
+      | _ -> Alcotest.fail "expected Rejected (regression)")
+
+  let p6_three_strikes_blocks () =
+    with_tmpdir (fun dir ->
+      init_repo dir;
+      let p0 = mk_prop_p1 () in
+      let response_text = mk_response_diff_satisfies_p () in
+      let deps p =
+        mk_deps ~k4k_dir:(Filename.concat dir ".k4k") ~workdir:dir
+          ~agent_resp:(fun () ->
+            `Ok Agent_backend.{ text = response_text;
+                                budget_used = 0; duration_ms = 0 })
+          ~verifier_run:(canned_verifier
+                           ~verdict:[(p.Property.id, `Contradicted)])
+      in
+      let bumped = ref p0 in
+      for _ = 1 to 3 do
+        match Gap_step.step ~deps:(deps !bumped)
+                ~d:Characterization.empty
+                ~current_summary:"" ~prev_status:[] [!bumped] with
+        | Rejected (q, _) -> bumped := q
+        | _ -> ()
+      done;
+      Alcotest.(check int) "fc=3" 3 !bumped.failure_count;
+      Alcotest.(check bool) "blocked" true !bumped.blocked;
+      (* Next call must short-circuit Blocked. *)
+      match Gap_step.step ~deps:(deps !bumped)
+              ~d:Characterization.empty
+              ~current_summary:"" ~prev_status:[] [!bumped] with
+      | Blocked q -> Alcotest.(check string) "id" p0.id q.id
+      | _ -> Alcotest.fail "expected Blocked")
+
+  let p9_budget_exhausted () =
+    with_tmpdir (fun dir ->
+      init_repo dir;
+      let p = mk_prop_p1 () in
+      let deps = mk_deps ~k4k_dir:(Filename.concat dir ".k4k")
+        ~workdir:dir
+        ~agent_resp:(fun () -> `Budget_exhausted)
+        ~verifier_run:(canned_verifier ~verdict:[]) in
+      match Gap_step.step ~deps ~d:Characterization.empty
+              ~current_summary:"" ~prev_status:[] [p] with
+      | Budget_exhausted -> ()
+      | _ -> Alcotest.fail "expected Budget_exhausted")
+
+  let no_diff_in_response_rejects () =
+    with_tmpdir (fun dir ->
+      init_repo dir;
+      let p = mk_prop_p1 () in
+      let deps = mk_deps ~k4k_dir:(Filename.concat dir ".k4k")
+        ~workdir:dir
+        ~agent_resp:(fun () ->
+          `Ok Agent_backend.{ text = "no diff here";
+                              budget_used = 0; duration_ms = 0 })
+        ~verifier_run:(canned_verifier ~verdict:[]) in
+      match Gap_step.step ~deps ~d:Characterization.empty
+              ~current_summary:"" ~prev_status:[] [p] with
+      | Rejected (q, reason) ->
+          Alcotest.(check int) "fc bumped" 1 q.failure_count;
+          Alcotest.(check bool) "no diff reason" true
+            (Astring.String.is_infix ~affix:"no diff" reason)
+      | _ -> Alcotest.fail "expected Rejected")
+
+  let t11_verifier_unknown_for_all () =
+    with_tmpdir (fun dir ->
+      init_repo dir;
+      let p = mk_prop_p1 () in
+      let response_text = mk_response_diff_satisfies_p () in
+      let deps = mk_deps ~k4k_dir:(Filename.concat dir ".k4k")
+        ~workdir:dir
+        ~agent_resp:(fun () ->
+          `Ok Agent_backend.{ text = response_text;
+                              budget_used = 0; duration_ms = 0 })
+        ~verifier_run:(fun ~workdir:_ ~focus:_ ->
+          `Ok Verifier.{
+            by_property = [];   (* nothing recognized *)
+            raw_exit_code = 0;
+            stdout_path = ""; stderr_path = "";
+            duration_ms = 0;
+          }) in
+      match Gap_step.step ~deps ~d:Characterization.empty
+              ~current_summary:"" ~prev_status:[] [p] with
+      | Rejected (_, _) -> ()
+      | _ -> Alcotest.fail "expected Rejected when verifier unknown")
+
+  let tests = [
+    Alcotest.test_case "Gap_step_dirty_workdir_aborts" `Quick
+      p_dirty_workdir_aborts;
+    Alcotest.test_case "P5_gap_step_accepts_when_established" `Quick
+      p5_accept_when_established_no_regression;
+    Alcotest.test_case "P5_non_regression_under_rejected_patch" `Quick
+      p5_reject_on_regression;
+    Alcotest.test_case "P6_three_strikes_then_blocked" `Quick
+      p6_three_strikes_blocks;
+    Alcotest.test_case "T12_three_strikes_blocked" `Quick
+      p6_three_strikes_blocks;
+    Alcotest.test_case "P9_gap_step_budget_exhausted" `Quick
+      p9_budget_exhausted;
+    Alcotest.test_case "Gap_step_no_diff_in_response_rejects" `Quick
+      no_diff_in_response_rejects;
+    Alcotest.test_case "T11_verifier_unknown_for_all" `Quick
+      t11_verifier_unknown_for_all;
+  ]
+end
+
 (* ---------------- Lint-style P7 test ---------------- *)
 module Lint = struct
   let lib_files = [
@@ -1392,7 +1778,9 @@ module Lint = struct
     "lib/prompts.ml"; "lib/backend_claude.ml";
     (* step-3 files *)
     "lib/property.ml"; "lib/property_json.ml";
-    "lib/verifier_dune_ocaml.ml"; "lib/gap_step.ml";
+    "lib/verifier_dune_ocaml.ml"; "lib/dune_output.ml";
+    "lib/subprocess.ml"; "lib/gap_step.ml"; "lib/gap_branch.ml";
+    "lib/gap_prompt.ml"; "lib/diff_extract.ml";
     "lib/sigint.ml"; "lib/git.ml";
   ]
 
@@ -1495,5 +1883,10 @@ let () =
       "Persist_gap",  PG.tests;
       "Dune_output",  DOT.tests;
       "Verifier_dune_ocaml", VDO.tests;
+      "Diff_extract", DET.tests;
+      "Git",          GT.tests;
+      "Sigint",       SigT.tests;
+      "Gap_prompt",   GPT.tests;
+      "Gap_step",     GST.tests;
       "Lint",         Lint.tests;
     ]

@@ -1,6 +1,6 @@
 (** [Subprocess] — wrapper around [Unix.create_process] with stdout/stderr
-    capture and a wall-clock timeout. Forbidden alternative: [Sys.command]
-    (per [conventions/code-style.md]). *)
+    capture and a wall-clock timeout. Replaces the forbidden Stdlib
+    'system' helper (per [conventions/code-style.md]). *)
 
 type result = {
   exit_code : int;
@@ -70,19 +70,27 @@ let kill_tree pid =
   wait ();
   (try ignore (Unix.waitpid [] pid) with _ -> ())
 
+let chdir_safe path =
+  try Unix.chdir path; true
+  with Unix.Unix_error _ -> false
+
 let spawn_in ~prog ~argv ~env ~cwd ~stdout_w ~stderr_w
              ~stdout_r ~stderr_r =
-  let prev_cwd = Unix.getcwd () in
-  Unix.chdir cwd;
+  let prev_cwd = try Unix.getcwd () with _ -> "/" in
+  if not (chdir_safe cwd) then begin
+    close_safe stdout_w; close_safe stderr_w;
+    close_safe stdout_r; close_safe stderr_r;
+    raise (Unix.Unix_error (Unix.ENOENT, "chdir", cwd))
+  end;
   let pid =
     try
       Unix.create_process_env prog argv env
         Unix.stdin stdout_w stderr_w
     with e -> close_safe stdout_w; close_safe stderr_w;
               close_safe stdout_r; close_safe stderr_r;
-              Unix.chdir prev_cwd; raise e
+              let _ = chdir_safe prev_cwd in raise e
   in
-  Unix.chdir prev_cwd;
+  let _ = chdir_safe prev_cwd in
   close_safe stdout_w;
   close_safe stderr_w;
   pid

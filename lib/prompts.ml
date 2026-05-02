@@ -27,6 +27,7 @@ let template_path name =
 
 let embedded = function
   | "formalize.md" -> Some Embedded_prompts.formalize
+  | "gap-step.md"  -> Some Embedded_prompts.gap_step
   | _              -> None
 
 let load name =

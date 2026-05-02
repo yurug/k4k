@@ -2,6 +2,17 @@
 
 open K4k
 
+(* Tiny adapter for [QCheck.Test.t] → [Alcotest.test_case]. We don't
+   have [qcheck-alcotest] installed; this short adapter runs the test
+   silently and reports failure to alcotest. *)
+let qcheck_to_alcotest (t : QCheck.Test.t) : unit Alcotest.test_case =
+  let QCheck2.Test.Test cell = t in
+  let name = QCheck2.Test.get_name cell in
+  Alcotest.test_case name `Quick (fun () ->
+    let rc = QCheck_base_runner.run_tests ~verbose:false [t] in
+    if rc <> 0 then
+      Alcotest.failf "qcheck property %s failed" name)
+
 (* ---------------- Helpers ---------------- *)
 
 let with_tmpdir f =
@@ -382,6 +393,167 @@ module HT = struct
   ]
 end
 
+(* ---------------- Canonicalize tests (≥3, plus qcheck) ---------------- *)
+module CanonT = struct
+  open Characterization
+
+  let mk_arg ?(kind=`Flag) ?(typ="string") ?(req=false) ?(rep=false)
+              ?(doc="") name =
+    { name; kind; type_ = typ; required = req; repeats = rep; doc }
+
+  let mk_err id =
+    { id; when_ = "x"; message_template = "msg"; exit_code = 1 }
+
+  let mk_glob g = { glob = g; mode = `R }
+
+  let mk_accept name =
+    { name; argv = [name]; stdin = None;
+      expect = { stdout = ""; stderr = ""; exit_code = 0; fs_after = None } }
+
+  let mk_refuse name =
+    { name; argv = []; stdin = None; expect_error = "EBADARG" }
+
+  let mk_exit code = { code; condition = "" }
+
+  (* P4 — canonicalize is idempotent (qcheck, ≥1000 trials). *)
+  let p4_idempotent_qcheck =
+    let argv_gen = QCheck.Gen.(
+      list_size (int_range 0 5)
+        (map (fun n -> mk_arg (Printf.sprintf "arg%d" n)) (int_range 0 9)))
+    in
+    let err_gen = QCheck.Gen.(
+      list_size (int_range 0 4)
+        (map (fun n -> mk_err (Printf.sprintf "E%d" n)) (int_range 0 9)))
+    in
+    let glob_gen = QCheck.Gen.(
+      list_size (int_range 0 3)
+        (map (fun n -> mk_glob (Printf.sprintf "/p%d/*" n)) (int_range 0 9)))
+    in
+    let accept_gen = QCheck.Gen.(
+      list_size (int_range 0 3)
+        (map (fun n -> mk_accept (Printf.sprintf "a%d" n)) (int_range 0 9)))
+    in
+    let refuse_gen = QCheck.Gen.(
+      list_size (int_range 0 2)
+        (map (fun n -> mk_refuse (Printf.sprintf "r%d" n)) (int_range 0 9)))
+    in
+    let goal_gen = QCheck.Gen.(
+      map (fun s -> "  " ^ s ^ "  \n\t") (string_size (int_range 0 20)))
+    in
+    let mk_t goal argv errs reads writes accs refs =
+      { Characterization.empty with
+        goal;
+        inputs_outputs = { Characterization.empty.inputs_outputs with
+                           argv;
+                           exit_codes = [ mk_exit 0; mk_exit 1 ] };
+        errors = errs;
+        fs_contract = { reads; writes; creates = [] };
+        examples_accept = accs;
+        examples_refuse = refs;
+      }
+    in
+    let gen = QCheck.Gen.(
+      goal_gen >>= fun g ->
+      argv_gen >>= fun a ->
+      err_gen >>= fun e ->
+      glob_gen >>= fun rs ->
+      glob_gen >>= fun ws ->
+      accept_gen >>= fun acs ->
+      refuse_gen >>= fun rfs ->
+      return (mk_t g a e rs ws acs rfs))
+    in
+    let arb = QCheck.make ~print:(fun _ -> "<characterization>") gen in
+    QCheck.Test.make ~count:200 ~name:"P4_canonicalization_idempotent" arb
+      (fun c ->
+         let c1 = Canonicalize.canonicalize c in
+         let c2 = Canonicalize.canonicalize c1 in
+         String.equal c1.Characterization.hash c2.Characterization.hash
+         && String.equal
+              (Canonicalize.canonical_bytes c1)
+              (Canonicalize.canonical_bytes c2))
+
+  (* P4 — paraphrased pairs hash equal: identical content with shuffled
+     argv / errors / examples and whitespace noise. *)
+  let p4_structural_equivalence () =
+    let base : Characterization.t =
+      { Characterization.empty with
+        goal = "do the thing";
+        inputs_outputs = { Characterization.empty.inputs_outputs with
+                           argv = [ mk_arg "a"; mk_arg "b"; mk_arg "c" ];
+                           exit_codes = [ mk_exit 0; mk_exit 1 ] };
+        errors = [ mk_err "E1"; mk_err "E2" ];
+        fs_contract = { reads = [ mk_glob "/x"; mk_glob "/y" ];
+                        writes = []; creates = [] };
+        examples_accept = [ mk_accept "ex1"; mk_accept "ex2" ];
+      } in
+    let shuffled : Characterization.t =
+      { base with
+        goal = "  do  the\tthing  ";  (* whitespace noise *)
+        inputs_outputs = { base.inputs_outputs with
+                           argv = [ mk_arg "c"; mk_arg "a"; mk_arg "b" ];
+                           exit_codes = [ mk_exit 1; mk_exit 0 ] };
+        errors = [ mk_err "E2"; mk_err "E1" ];
+        fs_contract = { reads = [ mk_glob "/y"; mk_glob "/x" ];
+                        writes = []; creates = [] };
+        examples_accept = [ mk_accept "ex2"; mk_accept "ex1" ];
+      } in
+    let cb = Canonicalize.canonicalize base in
+    let cs = Canonicalize.canonicalize shuffled in
+    Alcotest.(check string) "hashes equal" cb.hash cs.hash;
+    Alcotest.(check bool) "non-empty hash" true (cb.hash <> "")
+
+  (* P4 — preserves user-provided identifier names. *)
+  let p4_no_identifier_renaming () =
+    let c = { Characterization.empty with
+      inputs_outputs = { Characterization.empty.inputs_outputs with
+                         argv = [ mk_arg "my-flag"; mk_arg "another" ] };
+      errors = [ mk_err "EUSER" ];
+    } in
+    let cc = Canonicalize.canonicalize c in
+    let argv_names = List.map
+      (fun (a : Characterization.arg_spec) -> a.name)
+      cc.inputs_outputs.argv in
+    Alcotest.(check (list string)) "argv names preserved (sorted)"
+      ["another"; "my-flag"] argv_names;
+    Alcotest.(check string) "error id preserved"
+      "EUSER" (List.hd cc.errors).id
+
+  (* Hash differs when actual content differs. *)
+  let p4_hash_differs_on_real_change () =
+    let a = Canonicalize.canonicalize
+      { Characterization.empty with goal = "alpha" } in
+    let b = Canonicalize.canonicalize
+      { Characterization.empty with goal = "beta" } in
+    Alcotest.(check bool) "different hashes" true (a.hash <> b.hash)
+
+  (* JSON round-trip: parse → serialize → re-canonicalize gives same hash. *)
+  let p4_json_round_trip () =
+    let c = Canonicalize.canonicalize
+      { Characterization.empty with
+        goal = "rt";
+        inputs_outputs = { Characterization.empty.inputs_outputs with
+                           argv = [ mk_arg "x" ] };
+        errors = [ mk_err "EX" ];
+      } in
+    let bytes = Canonicalize.canonical_bytes c in
+    let parsed = Yojson.Safe.from_string bytes in
+    let c2 = Characterization.of_yojson parsed in
+    let c2c = Canonicalize.canonicalize c2 in
+    Alcotest.(check string) "round-trip hash equal" c.hash c2c.hash
+
+  let tests = [
+    qcheck_to_alcotest p4_idempotent_qcheck;
+    Alcotest.test_case "P4_canonicalization_preserves_structural_equivalence"
+      `Quick p4_structural_equivalence;
+    Alcotest.test_case "P4_no_identifier_renaming" `Quick
+      p4_no_identifier_renaming;
+    Alcotest.test_case "P4_hash_differs_on_real_change" `Quick
+      p4_hash_differs_on_real_change;
+    Alcotest.test_case "P4_json_round_trip_preserves_hash" `Quick
+      p4_json_round_trip;
+  ]
+end
+
 (* ---------------- Lint-style P7 test ---------------- *)
 module Lint = struct
   let lib_files = [
@@ -428,5 +600,6 @@ let () =
       "Backend_stub", BS.tests;
       "Verifier_stub", VS.tests;
       "Harness",      HT.tests;
+      "Canonicalize", CanonT.tests;
       "Lint",         Lint.tests;
     ]

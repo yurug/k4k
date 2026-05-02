@@ -1,0 +1,46 @@
+[
+  {
+    "purpose": "Formalization",
+    "text": "{\"class\":\"cli\",\"goal\":\"echo argv with optional uppercasing\",\"inputs_outputs\":{\"argv\":[{\"name\":\"--upper\",\"kind\":\"flag\",\"type\":\"bool\",\"required\":false,\"repeats\":false,\"doc\":\"uppercase the output\"},{\"name\":\"args\",\"kind\":\"positional\",\"type\":\"string\",\"required\":false,\"repeats\":true,\"doc\":\"strings to echo\"}],\"stdin\":{\"type\":\"none\",\"encoding\":null,\"doc\":\"\"},\"stdout\":{\"type\":\"text\",\"encoding\":\"utf-8\",\"doc\":\"argv joined by spaces, optionally uppercased, plus newline\"},\"stderr\":{\"type\":\"text\",\"encoding\":\"utf-8\",\"doc\":\"\"},\"exit_codes\":[{\"code\":0,\"condition\":\"ok\"}]},\"errors\":[],\"fs_contract\":{\"reads\":[],\"writes\":[],\"creates\":[]},\"concurrency\":\"N/A\",\"perf\":\"N/A\",\"examples_accept\":[{\"name\":\"e1\",\"argv\":[\"hello\"],\"stdin\":null,\"expect\":{\"stdout\":\"hello\",\"stderr\":\"\",\"exit_code\":0,\"fs_after\":null}},{\"name\":\"e2\",\"argv\":[\"--upper\",\"hello\"],\"stdin\":null,\"expect\":{\"stdout\":\"HELLO\",\"stderr\":\"\",\"exit_code\":0,\"fs_after\":null}},{\"name\":\"e3\",\"argv\":[\"hello\",\"world\"],\"stdin\":null,\"expect\":{\"stdout\":\"hello world\",\"stderr\":\"\",\"exit_code\":0,\"fs_after\":null}}],\"examples_refuse\":[{\"name\":\"r1\",\"argv\":[\"--unknown\"],\"stdin\":null,\"expect_error\":\"EBADARG\"}],\"out_of_scope\":[\"everything except echo with optional --upper\"],\"verifier_pref\":null,\"hash\":\"\"}"
+  },
+  {
+    "purpose": "Formalization",
+    "text": "{\"class\":\"cli\",\"goal\":\"echo argv with optional uppercasing\",\"inputs_outputs\":{\"argv\":[{\"name\":\"--upper\",\"kind\":\"flag\",\"type\":\"bool\",\"required\":false,\"repeats\":false,\"doc\":\"uppercase the output\"},{\"name\":\"args\",\"kind\":\"positional\",\"type\":\"string\",\"required\":false,\"repeats\":true,\"doc\":\"strings to echo\"}],\"stdin\":{\"type\":\"none\",\"encoding\":null,\"doc\":\"\"},\"stdout\":{\"type\":\"text\",\"encoding\":\"utf-8\",\"doc\":\"argv joined by spaces, optionally uppercased, plus newline\"},\"stderr\":{\"type\":\"text\",\"encoding\":\"utf-8\",\"doc\":\"\"},\"exit_codes\":[{\"code\":0,\"condition\":\"ok\"}]},\"errors\":[],\"fs_contract\":{\"reads\":[],\"writes\":[],\"creates\":[]},\"concurrency\":\"N/A\",\"perf\":\"N/A\",\"examples_accept\":[{\"name\":\"e1\",\"argv\":[\"hello\"],\"stdin\":null,\"expect\":{\"stdout\":\"hello\",\"stderr\":\"\",\"exit_code\":0,\"fs_after\":null}},{\"name\":\"e2\",\"argv\":[\"--upper\",\"hello\"],\"stdin\":null,\"expect\":{\"stdout\":\"HELLO\",\"stderr\":\"\",\"exit_code\":0,\"fs_after\":null}},{\"name\":\"e3\",\"argv\":[\"hello\",\"world\"],\"stdin\":null,\"expect\":{\"stdout\":\"hello world\",\"stderr\":\"\",\"exit_code\":0,\"fs_after\":null}}],\"examples_refuse\":[{\"name\":\"r1\",\"argv\":[\"--unknown\"],\"stdin\":null,\"expect_error\":\"EBADARG\"}],\"out_of_scope\":[\"everything except echo with optional --upper\"],\"verifier_pref\":null,\"hash\":\"\"}"
+  },
+  {
+    "purpose": "Gap_step",
+    "text": "```json\n{\"files\":[\"dune-project\",\"test/dune\",\"test/test_echo_upper.ml\"]}\n```\n```diff\ndiff --git a/dune-project b/dune-project\nnew file mode 100644\n--- /dev/null\n+++ b/dune-project\n@@ -0,0 +1,1 @@\n+(lang dune 3.22)\ndiff --git a/test/dune b/test/dune\nnew file mode 100644\n--- /dev/null\n+++ b/test/dune\n@@ -0,0 +1,3 @@\n+(test\n+ (name test_echo_upper)\n+ (libraries alcotest))\ndiff --git a/test/test_echo_upper.ml b/test/test_echo_upper.ml\nnew file mode 100644\n--- /dev/null\n+++ b/test/test_echo_upper.ml\n@@ -0,0 +1,13 @@\n+let () =\n+  Alcotest.run \"echo-upper\" [\n+    \"S\", [\n+      Alcotest.test_case \"P1ee246d_goal\" `Quick (fun () -> ());\n+      Alcotest.test_case \"P8e5c7e9_argv_upper\" `Quick (fun () -> ());\n+      Alcotest.test_case \"P6a578f3_argv_args\" `Quick (fun () -> ());\n+      Alcotest.test_case \"P9b9f69b_exit0\" `Quick (fun () -> ());\n+      Alcotest.test_case \"P80776e1_ex_e1\" `Quick (fun () -> ());\n+      Alcotest.test_case \"P3688761_ex_e2\" `Quick (fun () -> ());\n+      Alcotest.test_case \"P37a979a_ex_e3\" `Quick (fun () -> ());\n+      Alcotest.test_case \"Pc1a80f6_ref_r1\" `Quick (fun () -> ());\n+    ]\n+  ]\n```\n"
+  },
+  {
+    "purpose": "Gap_step",
+    "text": "```json\n{\"files\":[\"oops.txt\"]}\n```\n```diff\ndiff --git a/oops.txt b/oops.txt\n--- a/oops.txt\n+++ b/oops.txt\n@@ -1 +1 @@\n-old\n+new\n```\n"
+  },
+  {
+    "purpose": "Gap_step",
+    "text": "```json\n{\"files\":[\"step_2.txt\"]}\n```\n```diff\ndiff --git a/step_2.txt b/step_2.txt\nnew file mode 100644\n--- /dev/null\n+++ b/step_2.txt\n@@ -0,0 +1 @@\n+ok-2\n```\n"
+  },
+  {
+    "purpose": "Gap_step",
+    "text": "```json\n{\"files\":[\"step_3.txt\"]}\n```\n```diff\ndiff --git a/step_3.txt b/step_3.txt\nnew file mode 100644\n--- /dev/null\n+++ b/step_3.txt\n@@ -0,0 +1 @@\n+ok-3\n```\n"
+  },
+  {
+    "purpose": "Gap_step",
+    "text": "```json\n{\"files\":[\"step_4.txt\"]}\n```\n```diff\ndiff --git a/step_4.txt b/step_4.txt\nnew file mode 100644\n--- /dev/null\n+++ b/step_4.txt\n@@ -0,0 +1 @@\n+ok-4\n```\n"
+  },
+  {
+    "purpose": "Gap_step",
+    "text": "```json\n{\"files\":[\"step_5.txt\"]}\n```\n```diff\ndiff --git a/step_5.txt b/step_5.txt\nnew file mode 100644\n--- /dev/null\n+++ b/step_5.txt\n@@ -0,0 +1 @@\n+ok-5\n```\n"
+  },
+  {
+    "purpose": "Gap_step",
+    "text": "```json\n{\"files\":[\"step_6.txt\"]}\n```\n```diff\ndiff --git a/step_6.txt b/step_6.txt\nnew file mode 100644\n--- /dev/null\n+++ b/step_6.txt\n@@ -0,0 +1 @@\n+ok-6\n```\n"
+  },
+  {
+    "purpose": "Gap_step",
+    "text": "```json\n{\"files\":[\"step_7.txt\"]}\n```\n```diff\ndiff --git a/step_7.txt b/step_7.txt\nnew file mode 100644\n--- /dev/null\n+++ b/step_7.txt\n@@ -0,0 +1 @@\n+ok-7\n```\n"
+  },
+  {
+    "purpose": "Gap_step",
+    "text": "```json\n{\"files\":[\"step_8.txt\"]}\n```\n```diff\ndiff --git a/step_8.txt b/step_8.txt\nnew file mode 100644\n--- /dev/null\n+++ b/step_8.txt\n@@ -0,0 +1 @@\n+ok-8\n```\n"
+  }
+]

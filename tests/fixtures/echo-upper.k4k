@@ -1,0 +1,57 @@
+---
+k4k:
+  version: 1
+  class: cli
+---
+# echo --upper
+
+<!-- k4k:owner=user begin id=goal -->
+## Goal
+Echo argv with optional uppercasing.
+<!-- k4k:owner=user end -->
+
+<!-- k4k:owner=user begin id=inputs-outputs -->
+## Inputs and outputs
+- argv: positional args optionally preceded by `--upper`
+- stdin: ignored
+- stdout: argv joined by spaces, uppercased iff `--upper` is set, plus newline
+- stderr: empty on success
+- exit codes: 0 on success
+<!-- k4k:owner=user end -->
+
+<!-- k4k:owner=user begin id=errors -->
+## Error taxonomy
+N/A: no error paths in v0
+<!-- k4k:owner=user end -->
+
+<!-- k4k:owner=user begin id=fs -->
+## File-system contract
+N/A
+<!-- k4k:owner=user end -->
+
+<!-- k4k:owner=user begin id=concurrency -->
+## Concurrency
+N/A
+<!-- k4k:owner=user end -->
+
+<!-- k4k:owner=user begin id=perf -->
+## Performance bounds
+N/A
+<!-- k4k:owner=user end -->
+
+<!-- k4k:owner=user begin id=examples-accept -->
+## Acceptance examples
+1. argv=["hello"] -> stdout="hello\n"
+2. argv=["--upper","hello"] -> stdout="HELLO\n"
+3. argv=["hello","world"] -> stdout="hello world\n"
+<!-- k4k:owner=user end -->
+
+<!-- k4k:owner=user begin id=examples-refuse -->
+## Refusing examples
+1. argv=["--unknown"] -> exits non-zero
+<!-- k4k:owner=user end -->
+
+<!-- k4k:owner=user begin id=out-of-scope -->
+## Out of scope
+- everything except echoing argv with optional uppercase
+<!-- k4k:owner=user end -->

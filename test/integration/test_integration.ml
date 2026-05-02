@@ -161,9 +161,81 @@ let spec_json_validates_round_trip () =
     let canon = K4k.Canonicalize.canonicalize c in
     Alcotest.(check bool) "non-empty hash" true (canon.hash <> ""))
 
+(* --- step 3: S1 echo-upper convergence test --- *)
+
+let dune_available () =
+  try
+    let r = K4k.Subprocess.run ~prog:"dune" ~args:["--version"]
+              ~timeout_s:5 () in
+    r.exit_code = 0
+  with _ -> false
+
+let with_workdir_and_git f =
+  with_workdir (fun dir ->
+    let _ = K4k.Git.init ~cwd:dir in
+    K4k.Git.configure_test_identity ~cwd:dir;
+    let oc = open_out (Filename.concat dir ".gitignore") in
+    (* Capture-stream files end up in cwd; ignore them. *)
+    output_string oc ".k4k/\n_build/\nstdout.txt\nstderr.txt\n";
+    close_out oc;
+    let oc = open_out (Filename.concat dir "README.md") in
+    output_string oc "# project\n"; close_out oc;
+    let _ = K4k.Git.commit_all ~cwd:dir ~message:"initial" in
+    f dir)
+
+let s1_echo_first_run_e2e () =
+  if not (dune_available ()) then
+    print_endline "S1: skipped (dune not on PATH)"
+  else
+    with_workdir_and_git (fun dir ->
+      let f = Filename.concat dir "echo-upper.k4k" in
+      copy_file (fixture_path "echo-upper.k4k") f;
+      let _ = K4k.Git.commit_all ~cwd:dir ~message:"add spec" in
+      let canned = fixture_path "echo-upper-canned.json" in
+      let (code, so, se) = run_capture
+        ~env:[ "K4K_STUB_RESPONSES", canned;
+               "PATH", (Sys.getenv "PATH") ]
+        ~k4k_args:["--max-steps"; "30"; "echo-upper.k4k"]
+        ~cwd:dir () in
+      if code <> 0 then begin
+        Printf.printf "stdout: %s\n" so;
+        Printf.printf "stderr: %s\n" se;
+        let log_path = Filename.concat dir ".k4k/log.jsonl" in
+        if Sys.file_exists log_path then
+          Printf.printf "log: %s\n"
+            (let ic = open_in log_path in
+             let r = read_all_close ic in r)
+      end;
+      Alcotest.(check int) "exit 0" 0 code;
+      Alcotest.(check bool) "stdout contains done" true
+        (Astring.String.is_infix ~affix:"done" so);
+      Alcotest.(check bool) "manifest" true
+        (Sys.file_exists (Filename.concat dir ".k4k/manifest.json"));
+      Alcotest.(check bool) "spec.json" true
+        (Sys.file_exists
+           (Filename.concat dir
+              ".k4k/characterization/desired/spec.json"));
+      Alcotest.(check bool) "gap properties" true
+        (Sys.file_exists
+           (Filename.concat dir ".k4k/gap/properties.json"));
+      let gap_raw = (let ic = open_in
+        (Filename.concat dir ".k4k/gap/properties.json") in
+        read_all_close ic) in
+      Alcotest.(check bool) "gap count: 0 after convergence" true
+        (Astring.String.is_infix ~affix:"\"count\":0" gap_raw);
+      (* Final dune runtest must pass on the grown source tree. *)
+      let r = K4k.Subprocess.run ~prog:"dune"
+                ~args:["build";"@runtest";"--force";"--root";dir]
+                ~timeout_s:60 () in
+      Alcotest.(check int) "final dune runtest exit 0" 0 r.exit_code)
+
 let () =
   Alcotest.run "k4k integration"
-    [ "S5", [
+    [ "S1", [
+        Alcotest.test_case
+          "S1_echo_first_run_e2e" `Slow s1_echo_first_run_e2e;
+      ];
+      "S5", [
         Alcotest.test_case
           "S5_check_subcommand_exits_0_when_stable_structural" `Quick
           s5_check_stable_exits_0;

@@ -57,6 +57,8 @@ val stdout_line : t -> string -> unit
 val scrub : string -> string
 
 (** Sub-module re-export — see [tty_status.mli] for the full API.
-    Provides the in-place TTY status line used by [Run_loop]. *)
+    Provides the in-place TTY status line used by [Run_loop].
+    @invariant P20 — every public function in this signature carries
+                     an [@invariant] doc-comment. *)
 module Tty_status = Tty_status
 

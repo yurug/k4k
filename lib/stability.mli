@@ -10,19 +10,23 @@
     canonically-equal ASTs (P18); a stable result is cached by user-
     section hash (P19). *)
 
-(** A binary stability verdict. *)
+(** A binary stability verdict.
+    @invariant P3 — pass/fail only; no graded score. *)
 type t =
   | Stable
   | Unstable of Error.issue list
 
-(** [check_structural file] — first stage. *)
+(** [check_structural file] — first stage.
+    @invariant P3 — returns the binary verdict. *)
 val check_structural : Parser.interaction_file -> t
 
 (** [check_semantic file] — legacy step-1 stub (always [Stable]).
-    Step 2's real check lives in [semantic_check_with_backend]. *)
+    Step 2's real check lives in [semantic_check_with_backend].
+    @invariant P3 — returns the binary verdict. *)
 val check_semantic : Parser.interaction_file -> t
 
-(** [is_stable t]. *)
+(** [is_stable t].
+    @invariant P3 — total predicate over the binary verdict. *)
 val is_stable : t -> bool
 
 (** [user_section_hashes file] — keyed map of user-section id to

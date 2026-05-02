@@ -22,7 +22,10 @@ val no_crash : crash_hook
     @param path Absolute or working-dir-relative path; parent must exist.
     @param crash_hook Optional pre-rename hook for crash testing.
     @raise Error.K4k_error E_disk_full on [ENOSPC].
-    @invariant P10 — partial state never persists past a crash. *)
+    @invariant P10 — partial state never persists past a crash.
+    @invariant P12 — write-only; the lock-discipline is enforced at
+                     the call boundary in [Harness] (no lock held
+                     across agent calls). *)
 val atomic_write : ?crash_hook:crash_hook -> path:string -> string -> unit
 
 (** [append_jsonl_line ~path ~line] appends [line] + ['\n'] to [path],

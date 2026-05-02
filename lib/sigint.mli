@@ -4,10 +4,12 @@
     branches (Q3.2) is performed via [register_cleanup] +
     [Stdlib.at_exit]. *)
 
-(** [install ()] — install the SIGINT/SIGTERM handler. Idempotent. *)
+(** [install ()] — install the SIGINT/SIGTERM handler. Idempotent.
+    @invariant P8 — the harness exits ≤ 5 s after a signal. *)
 val install : unit -> unit
 
-(** [should_exit ()] — true if a SIGINT/SIGTERM has been received. *)
+(** [should_exit ()] — true if a SIGINT/SIGTERM has been received.
+    @invariant P8 — polled at safe points to bound exit latency. *)
 val should_exit : unit -> bool
 
 (** [reset_for_test ()] — clear the flag (test-only). *)

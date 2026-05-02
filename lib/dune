@@ -6,7 +6,8 @@
 
 (rule
  (target embedded_prompts.ml)
- (deps (:tpl ../prompts/formalize.md) (:gs ../prompts/gap-step.md))
+ (deps (:tpl ../prompts/formalize.md) (:gs ../prompts/gap-step.md)
+       (:kr ../prompts/kb-regen.md))
  (action
   (with-stdout-to %{target}
    (progn
@@ -15,4 +16,7 @@
     (echo "|bake}\n")
     (echo "let gap_step = {bake|")
     (cat %{gs})
+    (echo "|bake}\n")
+    (echo "let kb_regen = {bake|")
+    (cat %{kr})
     (echo "|bake}\n")))))

@@ -1,0 +1,7 @@
+_build/
+.k4k/
+agentic-dev-kit/
+others/
+*.install
+*~
+.merlin

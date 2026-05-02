@@ -114,10 +114,10 @@ kb/
 | 2 — KB construction                                       | ✓ done                          |
 | 2k — KB audit (Ralph Loop + KB-quiz)                      | ✓ done (10/10 quiz, 0 criticals)|
 | 3 — Plan (`kb/plan.md`) + simulation gate                 | ✓ done                          |
-| 4 — Implement (Ralph Loops, per step)                     | steps 1–3 ✓ ; step 4 pending    |
-| 5 — Quality audits                                        | not started                      |
-| 6 — KB sync                                               | not started                      |
-| 7 — Documentation & validation                            | not started                      |
+| 4 — Implement (Ralph Loops, per step)                     | ✓ done (steps 1–4)              |
+| 5 — Quality audits                                        | dry pass ✓ (0 criticals); 4 highs to address in proper Phase 5 |
+| 6 — KB sync                                               | pending                          |
+| 7 — Documentation & validation                            | pending                          |
 
 ## Agent notes
 

@@ -38,6 +38,19 @@ let persist_gap ~k4k_dir (ps : Property.t list) =
                 (Property_json.list_to_yojson ps) in
   Persist.write_gap ~k4k_dir ~bytes
 
+(* NF7 — emit a JSONL event after every gap persistence so the audit
+   replay can reconstruct the full property set even when some entries
+   never received a gap-step event (e.g. converged immediately). *)
+let log_gap_persist (logger : Logger.t) (ps : Property.t list) =
+  let ids = List.map (fun (p : Property.t) ->
+    `Assoc [
+      "id", `String p.id;
+      "status", `String (Property_json.status_to_string p.status);
+    ]) ps in
+  Logger.info logger "gap.persist"
+    (`Assoc [ "count", `Int (List.length ps);
+              "properties", `List ids ])
+
 let update_gap ~accepted ~rejected (ps : Property.t list)
     : Property.t list =
   let updated =
@@ -109,11 +122,13 @@ let loop_iter ~deps ~d ~cfg ~k4k_dir ~logger ~step_no ~window
   | `Accepted q ->
       let new_gap = update_gap ~accepted:(Some q) ~rejected:None gap in
       persist_gap ~k4k_dir new_gap;
+      log_gap_persist logger new_gap;
       Kb_regen.regen ~k4k_dir ~prev_d:None ~current_d:d ~logger;
       `Continue (new_gap, prev_status @ [(q.id, `Established)])
   | `Rejected q ->
       let new_gap = update_gap ~accepted:None ~rejected:(Some q) gap in
       persist_gap ~k4k_dir new_gap;
+      log_gap_persist logger new_gap;
       `Continue (new_gap, prev_status)
   | `Blocked ->
       `Continue (gap, prev_status)
@@ -136,6 +151,7 @@ let initial_user_hashes file_path =
 let run ?file_path ~deps ~d ~cfg ~k4k_dir ~logger
     ~initial_gap () : result =
   persist_gap ~k4k_dir initial_gap;
+  log_gap_persist logger initial_gap;
   Kb_regen.regen_full ~k4k_dir ~current_d:d ~logger;
   let gap = ref initial_gap in
   let prev = ref (prev_status_of_props initial_gap) in

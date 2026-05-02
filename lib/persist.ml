@@ -18,6 +18,27 @@ let fault_inject_should_fail path =
   | None | Some "" -> false
   | Some pat -> Astring.String.is_infix ~affix:pat path
 
+(* Test-only NF4 trace hook. When K4K_TEST_TRACE_WRITES=<file> is set,
+   every [atomic_write] and [append_jsonl_line] call appends its target
+   path to the trace file (one path per line). Production runs leave
+   this env unset; the env lookup is the only added cost. Used by the
+   NF4_state_confinement_envelope test to verify the path whitelist. *)
+let trace_write_path path =
+  match Sys.getenv_opt "K4K_TEST_TRACE_WRITES" with
+  | None | Some "" -> ()
+  | Some trace_file ->
+      (* Avoid recursion if [path] equals [trace_file]. *)
+      if path = trace_file then ()
+      else
+        try
+          let fd = Unix.openfile trace_file
+            [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_APPEND ] 0o644 in
+          let line = path ^ "\n" in
+          let buf = Bytes.unsafe_of_string line in
+          let _ = Unix.write fd buf 0 (Bytes.length buf) in
+          Unix.close fd
+        with Unix.Unix_error _ -> ()
+
 let rec ensure_dir path =
   if path = "" || path = "." || path = "/" then ()
   else if Sys.file_exists path && Sys.is_directory path then ()
@@ -66,6 +87,7 @@ let write_all fd buf =
   loop 0
 
 let atomic_write ?(crash_hook = no_crash) ~path content =
+  trace_write_path path;
   let parent = Filename.dirname path in
   ensure_dir parent;
   let tmp = path ^ ".tmp" in
@@ -83,6 +105,7 @@ let atomic_write ?(crash_hook = no_crash) ~path content =
   fsync_dir parent
 
 let append_jsonl_line ~path ~line =
+  trace_write_path path;
   let parent = Filename.dirname path in
   ensure_dir parent;
   let fd =

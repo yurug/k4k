@@ -19,13 +19,20 @@ val no_crash : crash_hook
     atomically. Pattern: open [path.tmp], write+fsync, run [crash_hook] (if
     any), close, rename, fsync the parent directory.
 
+    Test-only: when [K4K_TEST_TRACE_WRITES=<file>] is set, every call
+    appends [path] to [<file>]. Production runs leave the env var unset
+    and the trace path is never created. Used by the
+    [NF4_state_confinement_envelope] test.
+
     @param path Absolute or working-dir-relative path; parent must exist.
     @param crash_hook Optional pre-rename hook for crash testing.
     @raise Error.K4k_error E_disk_full on [ENOSPC].
     @invariant P10 — partial state never persists past a crash.
     @invariant P12 — write-only; the lock-discipline is enforced at
                      the call boundary in [Harness] (no lock held
-                     across agent calls). *)
+                     across agent calls).
+    @invariant NF4 — every write goes via this function, so the trace
+                     hook captures the full envelope. *)
 val atomic_write : ?crash_hook:crash_hook -> path:string -> string -> unit
 
 (** [append_jsonl_line ~path ~line] appends [line] + ['\n'] to [path],

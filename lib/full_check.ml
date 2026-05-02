@@ -47,46 +47,36 @@ let load_cached_desired ~k4k_dir ~hash =
 let raise_unstable issues =
   raise (Error.K4k_error (Error.E_unstable issues))
 
-let run (type b)
-    (module B : Agent_backend.S with type t = b)
-    (module V : Verifier.S)
-    ~(backend : b) ~(inputs : Harness.check_inputs) =
-  Persist.ensure_dir inputs.k4k_dir;
-  let manifest = Manifest.read_or_init ~k4k_dir:inputs.k4k_dir in
-  let content =
-    if not (Sys.file_exists inputs.file_path) then
-      raise (Error.K4k_error (Error.E_file_not_found inputs.file_path));
-    Persist.read_file inputs.file_path
-  in
-  Logger.info inputs.logger "stability.start"
-    (`Assoc [ "file", `String inputs.file_path ]);
-  let parsed = Parser.parse content in
-  (match Stability.check_structural parsed with
-   | Stability.Unstable issues ->
-       Logger.info inputs.logger "stability.fail"
-         (`Assoc [ "kind", `String "structural";
-                   "issue_count", `Int (List.length issues) ]);
-       raise_unstable issues
-   | Stability.Stable -> ());
+let read_or_raise path =
+  if not (Sys.file_exists path) then
+    raise (Error.K4k_error (Error.E_file_not_found path));
+  Persist.read_file path
+
+let do_structural ~logger parsed =
+  match Stability.check_structural parsed with
+  | Stability.Unstable issues ->
+      Logger.info logger "stability.fail"
+        (`Assoc [ "kind", `String "structural";
+                  "issue_count", `Int (List.length issues) ]);
+      raise_unstable issues
+  | Stability.Stable -> ()
+
+let persist_pass ~inputs ~content ~parsed ~agent_name ~agent_version
+    ~verifier_name (d : Characterization.t) =
+  persist_desired ~k4k_dir:inputs.Harness.k4k_dir d;
   let user_h = Stability.user_section_hashes parsed in
-  let prev_h = Manifest.user_section_hashes manifest in
-  let cached_d = load_cached_desired ~k4k_dir:inputs.k4k_dir
-                   ~hash:(Manifest.desired_hash manifest) in
-  let prompt = render_prompt parsed in
-  let invoker = {
-    Stability.bk = backend;
-    invoke = (fun ~purpose ~prompt ~budget ->
-      B.invoke backend ~purpose ~prompt ~budget);
-  } in
-  let outcome =
-    Stability.semantic_check_with_backend
-      ~k4k_dir:inputs.k4k_dir ~prompt ~budget:1000
-      ~prev_hashes:prev_h ~current_hashes:user_h
-      ~cached_desired:cached_d invoker
-  in
+  let mj = manifest_json
+    ~file_path:inputs.file_path ~file_content:content ~user_h
+    ~agent_name ~agent_version ~verifier_name ~desired_hash:d.hash in
+  Persist.atomic_write
+    ~path:(Filename.concat inputs.k4k_dir "manifest.json")
+    (Yojson.Safe.pretty_to_string ~std:true mj)
+
+let handle_outcome ~inputs ~content ~parsed
+    ~agent_name ~agent_version ~verifier_name (outcome : Stability.semantic_outcome) =
   match outcome with
   | Sem_cached d ->
-      Logger.info inputs.logger "stability.pass"
+      Logger.info inputs.Harness.logger "stability.pass"
         (`Assoc [ "cached", `Bool true; "hash", `String d.hash ]);
       d
   | Sem_stable (d, _) ->
@@ -97,15 +87,8 @@ let run (type b)
                     "issue_count", `Int (List.length cov) ]);
         raise_unstable cov
       end;
-      persist_desired ~k4k_dir:inputs.k4k_dir d;
-      let mj = manifest_json
-        ~file_path:inputs.file_path ~file_content:content
-        ~user_h
-        ~agent_name:B.name ~agent_version:(B.version backend)
-        ~verifier_name:V.name ~desired_hash:d.hash in
-      Persist.atomic_write
-        ~path:(Filename.concat inputs.k4k_dir "manifest.json")
-        (Yojson.Safe.pretty_to_string ~std:true mj);
+      persist_pass ~inputs ~content ~parsed
+        ~agent_name ~agent_version ~verifier_name d;
       Logger.info inputs.logger "stability.pass"
         (`Assoc [ "hash", `String d.hash ]);
       d
@@ -114,3 +97,33 @@ let run (type b)
         (`Assoc [ "kind", `String "formalization";
                   "issue_count", `Int (List.length issues) ]);
       raise_unstable issues
+
+let run (type b)
+    (module B : Agent_backend.S with type t = b)
+    (module V : Verifier.S)
+    ~(backend : b) ~(inputs : Harness.check_inputs) =
+  Persist.ensure_dir inputs.k4k_dir;
+  let manifest = Manifest.read_or_init ~k4k_dir:inputs.k4k_dir in
+  let content = read_or_raise inputs.file_path in
+  Logger.info inputs.logger "stability.start"
+    (`Assoc [ "file", `String inputs.file_path ]);
+  let parsed = Parser.parse content in
+  do_structural ~logger:inputs.logger parsed;
+  let prev_h = Manifest.user_section_hashes manifest in
+  let user_h = Stability.user_section_hashes parsed in
+  let cached_d = load_cached_desired ~k4k_dir:inputs.k4k_dir
+                   ~hash:(Manifest.desired_hash manifest) in
+  let invoker = {
+    Stability.bk = backend;
+    invoke = (fun ~purpose ~prompt ~budget ->
+      B.invoke backend ~purpose ~prompt ~budget);
+  } in
+  let outcome =
+    Stability.semantic_check_with_backend
+      ~k4k_dir:inputs.k4k_dir ~prompt:(render_prompt parsed) ~budget:1000
+      ~prev_hashes:prev_h ~current_hashes:user_h
+      ~cached_desired:cached_d invoker
+  in
+  handle_outcome ~inputs ~content ~parsed
+    ~agent_name:B.name ~agent_version:(B.version backend)
+    ~verifier_name:V.name outcome

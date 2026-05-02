@@ -123,36 +123,31 @@ let rec semantic_check_with_backend
   else
     run_two ~k4k_dir ~prompt ~budget inv
 
-and run_two ~k4k_dir ~prompt ~budget inv =
-  let id_a = Persist.agent_run_id () in
-  let text_a = invoke_or_raise inv ~prompt ~budget in
-  let r_a = one_run ~k4k_dir ~run_id:id_a ~prompt ~response_text:text_a in
-  let id_b = Persist.agent_run_id () in
-  let text_b = invoke_or_raise inv ~prompt ~budget in
-  let r_b = one_run ~k4k_dir ~run_id:id_b ~prompt ~response_text:text_b in
+and write_divergence ~k4k_dir id_a id_b ca cb =
+  let av = Characterization_json.to_yojson ca in
+  let bv = Characterization_json.to_yojson cb in
+  let report = {
+    Divergence.run_a_id = id_a;
+    run_b_id = id_b;
+    hash_a = ca.Characterization.hash;
+    hash_b = cb.Characterization.hash;
+    diff_paths = Divergence.diff av bv;
+  } in
+  let bytes = Yojson.Safe.pretty_to_string ~std:true
+    (Divergence.to_yojson report) in
+  Persist.write_divergence_report ~k4k_dir ~run_id:id_a ~report:bytes
+
+and combine ~k4k_dir id_a id_b r_a r_b =
   match r_a, r_b with
   | Ok ca, Ok cb when Canonicalize.equal ca cb ->
       Sem_stable (ca, [id_a; id_b])
   | Ok ca, Ok cb ->
-      let av = Characterization_json.to_yojson ca in
-      let bv = Characterization_json.to_yojson cb in
-      let report = {
-        Divergence.run_a_id = id_a;
-        run_b_id = id_b;
-        hash_a = ca.hash;
-        hash_b = cb.hash;
-        diff_paths = Divergence.diff av bv;
-      } in
-      let report_bytes = Yojson.Safe.pretty_to_string ~std:true
-        (Divergence.to_yojson report) in
-      Persist.write_divergence_report ~k4k_dir ~run_id:id_a
-        ~report:report_bytes;
-      Sem_unstable
-        ([Error.issue ~section:"formalization"
-            (Printf.sprintf
-               "two formalization runs produced different ASTs (%s vs %s); see %s/divergence.json"
-               (String.sub ca.hash 0 7) (String.sub cb.hash 0 7) id_a)],
-         [id_a; id_b])
+      write_divergence ~k4k_dir id_a id_b ca cb;
+      let msg = Printf.sprintf
+        "two formalization runs produced different ASTs (%s vs %s); see %s/divergence.json"
+        (String.sub ca.hash 0 7) (String.sub cb.hash 0 7) id_a in
+      Sem_unstable ([Error.issue ~section:"formalization" msg],
+                    [id_a; id_b])
   | Error msg_a, Error msg_b ->
       Sem_unstable
         ([Error.issue ~section:"formalization"
@@ -168,3 +163,12 @@ and run_two ~k4k_dir ~prompt ~budget inv =
         ([Error.issue ~section:"formalization"
             (Printf.sprintf "second run invalid: %s" msg)],
          [id_a; id_b])
+
+and run_two ~k4k_dir ~prompt ~budget inv =
+  let id_a = Persist.agent_run_id () in
+  let text_a = invoke_or_raise inv ~prompt ~budget in
+  let r_a = one_run ~k4k_dir ~run_id:id_a ~prompt ~response_text:text_a in
+  let id_b = Persist.agent_run_id () in
+  let text_b = invoke_or_raise inv ~prompt ~budget in
+  let r_b = one_run ~k4k_dir ~run_id:id_b ~prompt ~response_text:text_b in
+  combine ~k4k_dir id_a id_b r_a r_b

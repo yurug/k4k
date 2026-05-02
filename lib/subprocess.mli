@@ -1,7 +1,7 @@
 (** [Subprocess] — fork/exec wrapper with output capture + wall-clock
     timeout. Replaces the Stdlib system shell (forbidden by code-style.md).
 
-    Used by [Verifier_dune_ocaml] (and the SIGINT/T16 test path). *)
+    Used by [Verifier_external] and [Git] (and the SIGINT/T16 test path). *)
 
 type result = {
   exit_code   : int;       (** Process exit code. -1 if [timed_out]. *)

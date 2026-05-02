@@ -1,7 +1,8 @@
 (** [Verifier] — pluggable verifier signature.
 
-    See [kb/spec/api-contracts.md#verifier]. v0 ships [Verifier_dune_ocaml]
-    in step 3 and [Verifier_stub] from step 1 onwards.
+    See [kb/spec/api-contracts.md#verifier]. v0 ships [Verifier_external]
+    (the generic wire-protocol adapter, ADR-008; reference verifier at
+    [examples/verifiers/dune-ocaml/]) and [Verifier_stub] for tests.
 *)
 
 type status = [ `Established | `Contradicted | `Unknown ]

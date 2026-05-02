@@ -68,7 +68,9 @@ let render_input_errors = function
   | E_format { line; col; reason } ->
       Printf.sprintf "format error: %d:%d: %s" line col reason
   | E_unstable issues ->
-      Printf.sprintf "unstable: %s" (render_issues issues)
+      Printf.sprintf
+        "unstable: %s; see clarifications appended to <file.k4k>"
+        (render_issues issues)
   | E_version { found; supported } ->
       let sup = String.concat "," (List.map string_of_int supported) in
       Printf.sprintf "unsupported version: %d (this k4k handles versions %s)"
@@ -76,21 +78,33 @@ let render_input_errors = function
   | E_class_unsupported c ->
       Printf.sprintf "unsupported class: %s (v0 supports: cli)" c
   | E_encoding off ->
-      Printf.sprintf "encoding error at byte %d: invalid UTF-8 sequence" off
+      Printf.sprintf
+        "encoding error at byte %d: invalid UTF-8 sequence; \
+         re-save the file as UTF-8" off
   | E_file_not_found p ->
-      Printf.sprintf "file not found: %s" p
+      Printf.sprintf
+        "file not found: %s; verify the path (relative paths resolve \
+         against the current directory)" p
   | E_file_too_large n ->
-      Printf.sprintf "file too large: %d bytes (max 10485760)" n
+      Printf.sprintf
+        "file too large: %d bytes (max 10485760); split the spec or \
+         simplify it" n
   | _ -> assert false
 
 let render_resource_errors = function
   | E_budget { used; cap } ->
-      Printf.sprintf "budget exhausted: %d/%d units; .k4k/ left consistent"
+      Printf.sprintf
+        "budget exhausted: %d/%d units; .k4k/ left consistent; raise \
+         k4k.budget.hard_per_invocation in frontmatter or split the \
+         work across runs"
         used cap
   | E_max_steps n ->
-      Printf.sprintf "max steps reached (%d)" n
+      Printf.sprintf
+        "max steps reached (%d); re-run, or raise --max-steps" n
   | E_disk_full p ->
-      Printf.sprintf "disk full while writing %s; rolled back" p
+      Printf.sprintf
+        "disk full while writing %s; rolled back; free space and re-run"
+        p
   | _ -> assert false
 
 let render_external_errors = function

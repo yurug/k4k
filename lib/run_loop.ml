@@ -103,7 +103,8 @@ let restability_check ~file_path ~prev_user_hashes_ref ~logger =
   | Some _ -> ()
 
 let loop_iter ~deps ~d ~cfg ~k4k_dir ~logger ~step_no ~window
-    ~file_path ~prev_user_hashes ~prev_status (gap : Property.t list) =
+    ~file_path ~prev_user_hashes ~prev_d_ref
+    ~prev_status (gap : Property.t list) =
   if !step_no >= cfg.max_steps then raise_max_steps cfg.max_steps;
   incr step_no;
   restability_check ~file_path ~prev_user_hashes_ref:prev_user_hashes
@@ -123,7 +124,13 @@ let loop_iter ~deps ~d ~cfg ~k4k_dir ~logger ~step_no ~window
       let new_gap = update_gap ~accepted:(Some q) ~rejected:None gap in
       persist_gap ~k4k_dir new_gap;
       log_gap_persist logger new_gap;
-      Kb_regen.regen ~k4k_dir ~prev_d:None ~current_d:d ~logger;
+      (* H1 — incremental KB regen against the prior D, not None.
+         When D is unchanged across steps (the common v0 case where
+         only the gap shrinks), [diff_aspects] returns [], so no
+         file is rewritten. When D does change across steps, only
+         affected files are rewritten. *)
+      Kb_regen.regen ~k4k_dir ~prev_d:!prev_d_ref ~current_d:d ~logger;
+      prev_d_ref := Some d;
       `Continue (new_gap, prev_status @ [(q.id, `Established)])
   | `Rejected q ->
       let new_gap = update_gap ~accepted:None ~rejected:(Some q) gap in
@@ -152,7 +159,11 @@ let run ?file_path ~deps ~d ~cfg ~k4k_dir ~logger
     ~initial_gap () : result =
   persist_gap ~k4k_dir initial_gap;
   log_gap_persist logger initial_gap;
+  (* Initial full-pass regen seeds the prior-D ref with [Some d];
+     subsequent per-step regens diff against this baseline so
+     unchanged D triggers no rewrites. *)
   Kb_regen.regen_full ~k4k_dir ~current_d:d ~logger;
+  let prev_d_ref = ref (Some d) in
   let gap = ref initial_gap in
   let prev = ref (prev_status_of_props initial_gap) in
   let prev_user_hashes = ref (initial_user_hashes file_path) in
@@ -162,7 +173,7 @@ let run ?file_path ~deps ~d ~cfg ~k4k_dir ~logger
   while !go && !gap <> [] do
     match loop_iter ~deps ~d ~cfg ~k4k_dir ~logger ~step_no
             ~window ~file_path ~prev_user_hashes
-            ~prev_status:!prev !gap with
+            ~prev_d_ref ~prev_status:!prev !gap with
     | `Continue (g', p') ->
         gap := g'; prev := p';
         if List.for_all (fun (p : Property.t) ->

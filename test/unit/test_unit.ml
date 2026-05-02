@@ -2140,6 +2140,69 @@ module RLT = struct
       Alcotest.(check bool) "all blocked" true
         (List.for_all (fun (q : Property.t) -> q.blocked) r.final_gap))
 
+  (* H1 — P16 production-wired incrementality. Drive Run_loop across
+     two accepted steps with the same D; assert the second step does
+     NOT emit any kb-regen.write events (D unchanged → diff = []).
+     The dry-pass P16 test only checked the static map; the run-loop
+     used to call regen with prev_d:None on every step, defeating
+     the optimisation. *)
+  let p16_run_loop_does_not_rewrite_when_d_unchanged () =
+    with_tmpdir (fun dir ->
+      init_repo dir;
+      let p1 = Property.make
+        ~source:{ aspect = "errors"; path = ["errors"; "A"] }
+        ~statement:"A" () in
+      let p2 = Property.make
+        ~source:{ aspect = "errors"; path = ["errors"; "B"] }
+        ~statement:"B" () in
+      let logger = mk_logger dir in
+      let next_resp = ref [
+        mk_resp_diff p1.id;
+        mk_resp_diff p2.id;
+      ] in
+      let deps : _ Gap_step.deps = {
+        k4k_dir = Filename.concat dir ".k4k";
+        workdir = dir;
+        agent_invoke = (fun ~purpose:_ ~prompt:_ ~budget:_ ->
+          let r = match !next_resp with
+            | [] -> mk_resp_diff "fallback"
+            | x :: tl -> next_resp := tl; x
+          in
+          `Ok Agent_backend.{ text = r;
+                              budget_used = 0; duration_ms = 0 });
+        verifier_run = (fun ~workdir:_ ~focus ->
+          let by = List.map (fun id -> (id, `Established)) focus in
+          `Ok Verifier.{
+            by_property = by;
+            raw_exit_code = 0;
+            stdout_path = ""; stderr_path = "";
+            duration_ms = 0 });
+        logger;
+        budget_remaining = ref 1_000_000;
+        agent_backend = ();
+      } in
+      let _ = Run_loop.run ~deps ~d:Characterization.empty
+        ~cfg:Run_loop.default_config
+        ~k4k_dir:(Filename.concat dir ".k4k") ~logger
+        ~initial_gap:[p1; p2] () in
+      let log = Filename.concat dir ".k4k/log.jsonl" in
+      let lines = String.split_on_char '\n' (read_all log)
+                  |> List.filter (fun s -> s <> "") in
+      (* Count kb-regen.start events. The initial regen_full at the
+         loop entry counts as one; per-step regens should each count
+         as one but should produce ZERO file writes ('files: 0' in
+         the start event), because D is unchanged across steps. *)
+      let kb_regen_events = List.filter (fun l ->
+        Astring.String.is_infix ~affix:"kb-regen.start" l
+        || Astring.String.is_infix ~affix:"kb-regen.write" l) lines in
+      let writes = List.filter (fun l ->
+        Astring.String.is_infix ~affix:"kb-regen.write" l)
+        kb_regen_events in
+      let initial_writes = List.length Kb_regen.target_files in
+      Alcotest.(check bool)
+        "writes equal initial set (no per-step rewrites)" true
+        (List.length writes = initial_writes))
+
   let tests = [
     Alcotest.test_case "P9_hard_budget_cap_terminates_gracefully" `Quick
       p9_run_loop_budget;
@@ -2149,6 +2212,9 @@ module RLT = struct
       convergence_when_accepted;
     Alcotest.test_case "Run_loop_stops_when_all_blocked" `Quick
       three_strikes_then_loop_stops;
+    Alcotest.test_case
+      "P16_run_loop_does_not_rewrite_when_d_unchanged" `Quick
+      p16_run_loop_does_not_rewrite_when_d_unchanged;
   ]
 end
 

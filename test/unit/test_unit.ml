@@ -1749,6 +1749,19 @@ module GST = struct
       | Blocked q -> Alcotest.(check string) "id" p0.id q.id
       | _ -> Alcotest.fail "expected Blocked")
 
+  let t14_budget_exhausted_mid_step () =
+    with_tmpdir (fun dir ->
+      init_repo dir;
+      let p = mk_prop_p1 () in
+      let deps = mk_deps ~k4k_dir:(Filename.concat dir ".k4k")
+        ~workdir:dir
+        ~agent_resp:(fun () -> `Budget_exhausted)
+        ~verifier_run:(canned_verifier ~verdict:[]) in
+      match Gap_step.step ~deps ~d:Characterization.empty
+              ~current_summary:"" ~prev_status:[] [p] with
+      | Budget_exhausted -> ()
+      | _ -> Alcotest.fail "expected Budget_exhausted")
+
   let p9_budget_exhausted () =
     with_tmpdir (fun dir ->
       init_repo dir;
@@ -1779,6 +1792,30 @@ module GST = struct
           Alcotest.(check bool) "no diff reason" true
             (Astring.String.is_infix ~affix:"no diff" reason)
       | _ -> Alcotest.fail "expected Rejected")
+
+  let t3_pre_existing_partial () =
+    (* T3 — when the source already has tests for some properties,
+       the gap-step picks the next one and accepts via FF-merge.
+       Here we simulate: 2 properties; one already Established in S
+       (recorded via [prev_status]); gap = [the other one]. *)
+    with_tmpdir (fun dir ->
+      init_repo dir;
+      let p = mk_prop_p1 () in
+      let other = "Pdeadbee" in
+      let deps = mk_deps ~k4k_dir:(Filename.concat dir ".k4k")
+        ~workdir:dir
+        ~agent_resp:(fun () ->
+          `Ok Agent_backend.{ text = mk_response_diff_satisfies_p ();
+                              budget_used = 0; duration_ms = 0 })
+        ~verifier_run:(canned_verifier
+                         ~verdict:[(p.id, `Established)]) in
+      match Gap_step.step ~deps ~d:Characterization.empty
+              ~current_summary:"" ~prev_status:[(other, `Established)]
+              [p] with
+      | Accepted q ->
+          Alcotest.(check string) "established"
+            "established" (Property_json.status_to_string q.status)
+      | _ -> Alcotest.fail "expected Accepted")
 
   let t11_verifier_unknown_for_all () =
     with_tmpdir (fun dir ->
@@ -1815,10 +1852,14 @@ module GST = struct
       p6_three_strikes_blocks;
     Alcotest.test_case "P9_gap_step_budget_exhausted" `Quick
       p9_budget_exhausted;
+    Alcotest.test_case "T14_budget_exhausted_mid_step" `Quick
+      t14_budget_exhausted_mid_step;
     Alcotest.test_case "Gap_step_no_diff_in_response_rejects" `Quick
       no_diff_in_response_rejects;
     Alcotest.test_case "T11_verifier_unknown_for_all" `Quick
       t11_verifier_unknown_for_all;
+    Alcotest.test_case "T3_pre_existing_partial_implementation" `Quick
+      t3_pre_existing_partial;
   ]
 end
 

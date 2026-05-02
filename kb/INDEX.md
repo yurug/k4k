@@ -77,7 +77,8 @@ kb/
 │       ├── adr-003-pluggable-backend.md
 │       ├── adr-004-verifier-extension.md
 │       ├── adr-005-canonical-ast.md
-│       └── adr-006-two-layer-kb.md
+│       ├── adr-006-two-layer-kb.md
+│       └── adr-007-deterministic-kb-regen.md
 │
 ├── external/
 │   ├── INDEX.md
@@ -92,7 +93,8 @@ kb/
 │   └── context-economy.md           prompt design for the weakest supported backend
 │
 ├── runbooks/
-│   └── audit-checklist.md           Phase-5 quality audit checklist (7 axes)
+│   ├── audit-checklist.md           Phase-5 quality audit checklist (7 axes)
+│   └── test-environment.md          test-only K4K_* env knobs (closed set, default-OFF)
 │
 ├── indexes/
 │   └── by-task.md                   primary navigation: "I need to do X → load A, B, C"
@@ -102,8 +104,8 @@ kb/
 
 ## File count and last updated
 
-- **Methodology files**: 30
-- **Reference files** (NOTES, claude-code-report, opencode, questions-round{1,2}): 5
+- **Methodology files**: 32 (+ ADR-007, + runbooks/test-environment.md)
+- **Reference files** (NOTES, claude-code-report, opencode, questions-round{1,2,3}, plan, plan-simulation report, audit reports): grew through Phases 1–5
 - **Last updated**: 2026-05-02
 
 ## Methodology phase tracker

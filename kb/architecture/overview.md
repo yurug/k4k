@@ -130,40 +130,63 @@ exception Invariant_violation of string  (* panics, exit 64+ *)
 
 Every public function that may fail documents which constructors it can produce. No naked `Failure _` outside library boundaries. See `conventions/error-handling.md`.
 
-## File layout (planned source tree)
+## File layout (actual source tree, post step 4)
 
 ```
 k4k/
-  bin/
-    main.ml                # CLI entry, argv parsing, DI wiring
-    main.mli
-  lib/
-    parser.ml{,i}
-    stability.ml{,i}
-    canonicalize.ml{,i}
-    gap_step.ml{,i}
-    kb_regen.ml{,i}
-    persist.ml{,i}
-    logger.ml{,i}
-    harness.ml{,i}
-    error.ml{,i}
-    backend_claude.ml{,i}
-    backend_stub.ml{,i}
-    verifier_dune_ocaml.ml{,i}
-    verifier_stub.ml{,i}
+  bin/main.ml                       # CLI entry, argv parsing, DI wiring
+  lib/                              # see module-by-module list below
   prompts/
-    formalize.md
-    gap-step.md
-    kb-regen.md
+    formalize.md                    # step 2 (active)
+    gap-step.md                     # step 3 (active)
+    kb-regen.md                     # step 4 (wired but inactive — see ADR-007)
   test/
-    unit/<one-per-lib-module>.ml
-    integration/<scenario>.ml
-    property/<invariant>.ml
-  dune-project
-  k4k.opam
+    unit/test_unit.ml               # one alcotest binary, modules per lib unit
+    integration/test_integration.ml # S1 echo-upper end-to-end + smoke gates
+    edge/test_edge.ml               # T-series boundary scenarios
+  tests/fixtures/                   # *.k4k inputs + canned-responses JSON
+  dune-project, k4k.opam, .gitignore
 ```
 
-Source-tree organization matches module names, no surprises.
+### Modules in `lib/` (each with paired `.mli` unless noted)
+
+| Module                       | Purpose                                                                  |
+|------------------------------|--------------------------------------------------------------------------|
+| `error`                      | closed taxonomy, exit-code map                                           |
+| `logger` (+ `Tty_status`)    | stderr text + `.k4k/log.jsonl`; in-place TTY status; secrets scrub       |
+| `persist`                    | atomic tmp+fsync+rename, `flock`, `.k4k/` init, fault-inject hook        |
+| `parser` (+ `_utf8`, `_frontmatter`, `_sections`) | YAML frontmatter + ownership-tag sections             |
+| `manifest`                   | `Manifest.t` schema + atomic update                                      |
+| `characterization` (+ `_json`, `_decoder`) | `Characterization.t` data type + hand-written codecs       |
+| `canonical_json`             | byte-deterministic JSON serializer (sorted keys, no whitespace)          |
+| `canonicalize`               | the determinism boundary (ADR-005): idempotent, equivalence-preserving   |
+| `permissive_json`            | strip code fences, tolerate trailing prose (R7 from context-economy)     |
+| `coverage`                   | `cli` coverage checklist enforcement                                     |
+| `property` (+ `_json`, `_id`) | `Property.t` data + JSON codec; `"P" || sha256(aspect_path)[:7]` IDs    |
+| `divergence`                 | divergence reports for unequal canonical hashes                          |
+| `prompts`                    | template loader (`{{var}}` substitution); on-disk-over-baked-in fallback |
+| `stability`                  | structural + two-run formalization protocol + cache                      |
+| `full_check`                 | orchestrator: structural → cache → formalization → coverage              |
+| `dune_output`                | `[OK]/[FAIL] ... P<id>_<slug>` line parser                               |
+| `subprocess`                 | `execvp`-based runner with timeout + signal-poll                         |
+| `git`                        | scratch branch via `Unix` (no `Sys.command`)                             |
+| `gap_branch`                 | `k4k/gap/<id>/<ts>` naming + `at_exit` cleanup (Q3.2)                    |
+| `gap_prompt`                 | gap-step prompt rendering                                                |
+| `diff_extract`               | unified-diff extraction + JSON-preface validation                        |
+| `gap_step`                   | one full iteration: select → prompt → diff → apply → verify → accept/reject |
+| `sigint`                     | `Atomic.t` flag + safe-point check (NF1)                                 |
+| `convergence`                | terminator: gap empty → exit 0                                           |
+| `run_loop`                   | top-level loop with `--max-steps`/`--budget`, ETA window                 |
+| `kb_regen` (+ `kb_render`)   | incremental ownership-aware target-KB regeneration (deterministic — ADR-007) |
+| `harness`                    | DI seam over `Agent_backend`/`Verifier`; constructed in `bin/main.ml`    |
+| `agent_backend`              | `module type S` for agent backends                                       |
+| `backend_stub`               | DI stub with Strong/Weak profiles + canned responses (Q3.3)              |
+| `backend_claude`             | subprocess `claude -p --output-format json --max-turns 1`                |
+| `verifier`                   | `module type S` for verifiers                                            |
+| `verifier_stub`              | DI stub                                                                  |
+| `verifier_dune_ocaml`        | real `dune build @runtest --force --display=quiet --root <dir>`          |
+
+Several modules are split (e.g. `characterization` → 3 files; `parser` → 4 files; `kb_regen` → 2 files) solely to honor the 200-line cap from `conventions/code-style.md`. They form one logical module each. The `agent_backend` and `verifier` "signature modules" are `.ml` files containing only `module type S`; no `.mli` companion (idiomatic dune).
 
 ## Invariants enforced architecturally
 
@@ -186,5 +209,7 @@ Source-tree organization matches module names, no surprises.
 - `decisions/adr-004-verifier-extension.md`
 - `decisions/adr-005-canonical-ast.md`
 - `decisions/adr-006-two-layer-kb.md`
+- `decisions/adr-007-deterministic-kb-regen.md`
 - `conventions/code-style.md`
 - `conventions/error-handling.md`
+- `runbooks/test-environment.md`

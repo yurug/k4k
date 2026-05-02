@@ -49,7 +49,9 @@ Tests not matching the convention are surfaced as `verifier.warning` events (`T2
 
 ## Output parsing
 
-Default test framework: alcotest. Its output looks like:
+Default test framework: alcotest. **alcotest writes test results to `stderr`, not `stdout`** — observed empirically during step 3 implementation; not documented in upstream alcotest docs at the time of writing. The verifier adapter therefore scans both streams when parsing test results, with stderr being the primary expected location. Build errors (compiler / dune diagnostics) also appear on stderr; the parser distinguishes them from test results by line shape.
+
+Its output looks like:
 ```
 Testing `myproject'.
 This run has ID `XXXXXXXX'.

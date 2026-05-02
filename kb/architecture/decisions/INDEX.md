@@ -25,6 +25,7 @@ ADR format: Status, Context, Decision, Consequences, What this means for impleme
 | ADR-004 | Pluggable verifier; v0 ships dune-ocaml only                           | Sets the verifier extension point and v0 narrowing                    |
 | ADR-005 | Determinism on canonical AST; two-run formalization                    | Resolves the agent-stochasticity / harness-determinism tension        |
 | ADR-006 | Two-layer KB — meta (`kb/`) and target (`.k4k/`)                       | Pins down round-2 user-edit on KB layout                              |
+| ADR-007 | Deterministic in-process kb-regen for v0                                | v0 deviates from `algorithms.md#kb-regen`'s agent-driven model        |
 
 ## How to add a new ADR
 

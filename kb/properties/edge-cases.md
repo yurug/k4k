@@ -25,7 +25,7 @@ Each entry: **ID**, **Trigger**, **Expected behavior**, **Observable artefact**,
 - **Trigger:** `<file.k4k>` is zero bytes.
 - **Expected:** Exit 1 with `EUNSTABLE`; no agent calls; no `.k4k/` mutation.
 - **Observable:** stderr line `k4k: unstable: missing required sections: ...`; `.k4k/` either absent or unchanged.
-- **Refs:** P2, EUNSTABLE.
+- **Refs:** P2, EUNSTABLE. *Implementation note:* an empty file matches both `EFORMAT` (no frontmatter) and `EUNSTABLE` (no required sections). T1's intent is the latter — the structural-stability check fires first, before frontmatter strictness, so an empty file reports `EUNSTABLE`. The parser treats zero-byte input as a special case to preserve this ordering.
 
 ### T2 — Conflicting acceptance examples
 - **Trigger:** Two `examples_accept` entries assert mutually contradictory outputs for the same `argv`/`stdin`.

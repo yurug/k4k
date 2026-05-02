@@ -129,8 +129,11 @@ let run_check verbosity file =
       output_string stderr (Printf.sprintf "k4k: BUG: %s\n" msg);
       flush stderr; 64
 
-let make_verifier () = Verifier_dune_ocaml.create
-  Verifier_dune_ocaml.default_config
+let make_verifier ~k4k_dir ~logger =
+  Verifier_dune_ocaml.create
+    { Verifier_dune_ocaml.default_config with
+      k4k_dir = Some k4k_dir;
+      logger = Some logger; }
 
 let run_convergence verbosity file ~max_steps ~budget =
   let k4k_dir = ".k4k" in
@@ -139,7 +142,7 @@ let run_convergence verbosity file ~max_steps ~budget =
   let inputs = Harness.{ file_path = file; k4k_dir; logger } in
   let cfg = { Run_loop.max_steps; budget } in
   try
-    let verifier = make_verifier () in
+    let verifier = make_verifier ~k4k_dir ~logger in
     let _outcome =
       match make_backend () with
       | `Claude b ->

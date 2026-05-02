@@ -272,7 +272,7 @@ end
 (* ---------------- Backend_stub tests (≥3) ---------------- *)
 module BS = struct
   let p15_step_1_returns_tool_error () =
-    let b = Backend_stub.create { responses = [] } in
+    let b = Backend_stub.create Backend_stub.default_config in
     let r = Backend_stub.invoke b ~purpose:`Formalization
               ~prompt:"hi" ~budget:100 in
     match r with
@@ -281,10 +281,13 @@ module BS = struct
 
   let p15_canned_response_lookup () =
     let b = Backend_stub.create
-      { responses = [
+      { Backend_stub.default_config with
+        responses = [
           { purpose = `Formalization; trigger = (fun _ -> true);
             payload = Ok "canned" };
-        ]; }
+        ];
+        profile = `Strong;          (* Strong: verbatim text *)
+      }
     in
     match Backend_stub.invoke b ~purpose:`Formalization
             ~prompt:"x" ~budget:1 with
@@ -293,7 +296,8 @@ module BS = struct
 
   let p15_no_match_yields_tool_error () =
     let b = Backend_stub.create
-      { responses = [
+      { Backend_stub.default_config with
+        responses = [
           { purpose = `Gap_step; trigger = (fun _ -> true);
             payload = Ok "x" };
         ]; }
@@ -537,7 +541,7 @@ module CanonT = struct
       } in
     let bytes = Canonicalize.canonical_bytes c in
     let parsed = Yojson.Safe.from_string bytes in
-    let c2 = Characterization.of_yojson parsed in
+    let c2 = Characterization_decoder.of_yojson parsed in
     let c2c = Canonicalize.canonicalize c2 in
     Alcotest.(check string) "round-trip hash equal" c.hash c2c.hash
 
@@ -551,6 +555,142 @@ module CanonT = struct
       p4_hash_differs_on_real_change;
     Alcotest.test_case "P4_json_round_trip_preserves_hash" `Quick
       p4_json_round_trip;
+  ]
+end
+
+(* ---------------- Permissive_json tests (≥3) ---------------- *)
+module PJT = struct
+  let strips_code_fence () =
+    let s = "Here you go:\n```json\n{\"a\":1}\n```\nthanks." in
+    let v = Permissive_json.parse s in
+    Alcotest.(check string) "round-trip"
+      "{\"a\":1}" (Yojson.Safe.to_string v)
+
+  let strips_trailing_prose () =
+    let s = "{\"a\":1}\nThe answer is above." in
+    let v = Permissive_json.parse s in
+    Alcotest.(check string) "extracted"
+      "{\"a\":1}" (Yojson.Safe.to_string v)
+
+  let tolerates_trailing_comma () =
+    let s = "{\"a\":1,\n\"b\":2,\n}" in
+    let v = Permissive_json.parse s in
+    Alcotest.(check string) "trimmed"
+      "{\"a\":1,\"b\":2}" (Yojson.Safe.to_string v)
+
+  let tolerates_nested_braces_in_string () =
+    let s = "blah {\"k\":\"a }} b\"} more" in
+    let v = Permissive_json.parse s in
+    Alcotest.(check string) "string preserved"
+      "{\"k\":\"a }} b\"}" (Yojson.Safe.to_string v)
+
+  let raises_when_no_object () =
+    let s = "no JSON here." in
+    Alcotest.check_raises "EFORMAT"
+      (Error.K4k_error (Error.E_format
+         { line = 0; col = 0;
+           reason = "no JSON object found in response" }))
+      (fun () -> ignore (Permissive_json.parse s))
+
+  let tests = [
+    Alcotest.test_case "permissive_strips_code_fence" `Quick strips_code_fence;
+    Alcotest.test_case "permissive_strips_trailing_prose" `Quick
+      strips_trailing_prose;
+    Alcotest.test_case "permissive_tolerates_trailing_comma" `Quick
+      tolerates_trailing_comma;
+    Alcotest.test_case "permissive_tolerates_braces_in_string" `Quick
+      tolerates_nested_braces_in_string;
+    Alcotest.test_case "permissive_raises_no_object" `Quick raises_when_no_object;
+  ]
+end
+
+(* ---------------- Property_id tests (≥3) ---------------- *)
+module PIDT = struct
+  let p_property_ids_stable_across_runs () =
+    let id1 = Property_id.of_path ["errors"; "EBADARG"; "when"] in
+    let id2 = Property_id.of_path ["errors"; "EBADARG"; "when"] in
+    Alcotest.(check string) "stable" id1 id2;
+    Alcotest.(check int) "shape: P + 7 hex" 8 (String.length id1);
+    Alcotest.(check char) "starts with P" 'P' id1.[0]
+
+  let length_prefix_disambiguates () =
+    (* ["a"; "b"] vs ["ab"] must hash differently. *)
+    let a = Property_id.of_path ["a"; "b"] in
+    let b = Property_id.of_path ["ab"] in
+    Alcotest.(check bool) "different IDs" true (a <> b)
+
+  let encode_format () =
+    let s = Property_id.encode_path ["a"; "bc"] in
+    Alcotest.(check string) "encoded"
+      "1:a2:bc" s
+
+  let tests = [
+    Alcotest.test_case "P_property_ids_stable_across_runs" `Quick
+      p_property_ids_stable_across_runs;
+    Alcotest.test_case "P_property_id_length_prefix_disambiguates" `Quick
+      length_prefix_disambiguates;
+    Alcotest.test_case "P_property_id_encoding_format" `Quick encode_format;
+  ]
+end
+
+(* ---------------- Backend_stub weakness profile (NF8) ---------------- *)
+module BSW = struct
+  let canned_json = {|{"class":"cli","goal":"x"}|}
+
+  let mk_backend () =
+    Backend_stub.create
+      { Backend_stub.default_config with
+        responses = [
+          { purpose = `Formalization;
+            trigger = (fun _ -> true);
+            payload = Ok canned_json };
+        ];
+        (* Weak by default per default_config. *)
+      }
+
+  let nf8_weak_response_is_parseable () =
+    let b = mk_backend () in
+    let r = Backend_stub.invoke b ~purpose:`Formalization
+              ~prompt:"hi" ~budget:100 in
+    match r with
+    | `Ok resp ->
+        let v = Permissive_json.parse resp.text in
+        let fields = (match v with `Assoc x -> x | _ -> []) in
+        Alcotest.(check bool) "class field present" true
+          (List.mem_assoc "class" fields)
+    | _ -> Alcotest.fail "expected Ok"
+
+  let nf8_weak_response_differs_from_canned () =
+    let b = mk_backend () in
+    match Backend_stub.invoke b ~purpose:`Formalization
+            ~prompt:"a" ~budget:1 with
+    | `Ok resp ->
+        Alcotest.(check bool) "weak mutated" true (resp.text <> canned_json)
+    | _ -> Alcotest.fail "expected Ok"
+
+  let strong_response_is_verbatim () =
+    let b = Backend_stub.create
+      { Backend_stub.default_config with
+        responses = [
+          { purpose = `Formalization;
+            trigger = (fun _ -> true);
+            payload = Ok canned_json };
+        ];
+        profile = `Strong; }
+    in
+    match Backend_stub.invoke b ~purpose:`Formalization
+            ~prompt:"a" ~budget:1 with
+    | `Ok resp ->
+        Alcotest.(check string) "verbatim" canned_json resp.text
+    | _ -> Alcotest.fail "expected Ok"
+
+  let tests = [
+    Alcotest.test_case "NF8_weak_response_is_parseable" `Quick
+      nf8_weak_response_is_parseable;
+    Alcotest.test_case "NF8_weak_response_differs_from_canned" `Quick
+      nf8_weak_response_differs_from_canned;
+    Alcotest.test_case "P15_strong_response_verbatim" `Quick
+      strong_response_is_verbatim;
   ]
 end
 
@@ -601,5 +741,8 @@ let () =
       "Verifier_stub", VS.tests;
       "Harness",      HT.tests;
       "Canonicalize", CanonT.tests;
+      "Permissive_json", PJT.tests;
+      "Property_id",  PIDT.tests;
+      "Backend_stub_weak", BSW.tests;
       "Lint",         Lint.tests;
     ]

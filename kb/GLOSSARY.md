@@ -55,10 +55,10 @@ A pluggable provider of headless coding-agent calls. v0 ships `claude-code`. The
 Used interchangeably for an agent backend. Always headless (no interactive chat from k4k's perspective).
 
 ### Verifier
-A pluggable provider of property-status verdicts. v0 ships `dune-ocaml` (typecheck + test suite). The interface is in `spec/api-contracts.md#verifier`. See ADR-004 for the extension point.
+An external executable that, given a target source tree and a focus list of property IDs, writes a JSON result classifying each as `established | contradicted | unknown`. Per ADR-008, k4k ships **no** verifier itself — only the wire-protocol adapter `Verifier_external`. A reference verifier for OCaml + dune lives at `examples/verifiers/dune-ocaml/`. See `external/verifier-protocol.md` for the contract.
 
 ### Verifier adapter
-A small module that maps a specific verifier's stdout/stderr/exit-code into our property-status enum. Naming: `Verifier_<tool>` (e.g. `Verifier_dune_ocaml`).
+The OCaml module inside `lib/` that satisfies `Verifier.S`. Per ADR-008, k4k ships exactly two: `Verifier_external` (the only production adapter — it spawns a configured executable per `external/verifier-protocol.md` and reads a JSON result) and `Verifier_stub` (test harness). Per-tool intelligence (alcotest output regexes, coqc exit-code interpretation, etc.) lives in the verifier executable itself, not in any k4k module.
 
 ### Gap-step
 One iteration of the harness loop: pick the highest-risk property in `G`, ask the agent for a patch, apply on a scratch branch, run the verifier, accept or reject. See `spec/algorithms.md#gap-step`.

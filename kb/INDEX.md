@@ -34,10 +34,10 @@ related: []
 |-------------------------------------------|------------------------------------------------------------------------------------------------------------------|
 | Implement a k4k feature                   | `INDEX.md` → `GLOSSARY.md` → `domain/prd.md` → `kb/plan.md` (Phase 3) → `spec/algorithms.md` + relevant spec/ → `properties/functional.md` → `architecture/overview.md` → `conventions/code-style.md` |
 | Add an agent backend (e.g. Ollama)        | `architecture/decisions/adr-003-pluggable-backend.md` → `spec/api-contracts.md#agent-backend` → `external/ollama.md` (or write your own) → `conventions/context-economy.md` → `properties/non-functional.md#NF8` |
-| Add a verifier (e.g. Rocq)                | `architecture/decisions/adr-004-verifier-extension.md` → `spec/api-contracts.md#verifier` → `external/dune.md` (model your adapter on it) |
+| Add a verifier (e.g. Rocq)                | `architecture/decisions/adr-008-verifier-protocol.md` → `external/verifier-protocol.md` → `examples/verifiers/dune-ocaml/README.md` (worked example) — **no k4k code change required** |
 | Run a Phase-5 audit                       | `runbooks/audit-checklist.md` → `properties/INDEX.md` → `conventions/testing-strategy.md`                       |
 | Debug an issue                            | `spec/error-taxonomy.md` → `spec/algorithms.md` → `properties/edge-cases.md` → relevant `external/<sdk>.md`     |
-| Write or fix tests                        | `conventions/testing-strategy.md` → `properties/INDEX.md` → `spec/api-contracts.md` → `external/dune.md`        |
+| Write or fix tests                        | `conventions/testing-strategy.md` → `properties/INDEX.md` → `spec/api-contracts.md` → `external/verifier-protocol.md` |
 | Author or modify a prompt                 | `conventions/context-economy.md` → `external/ollama.md` → `spec/algorithms.md` → `properties/functional.md`     |
 | Understand a decision                     | `GLOSSARY.md` → `architecture/decisions/INDEX.md` → relevant ADR                                                |
 
@@ -78,12 +78,13 @@ kb/
 │       ├── adr-004-verifier-extension.md
 │       ├── adr-005-canonical-ast.md
 │       ├── adr-006-two-layer-kb.md
-│       └── adr-007-deterministic-kb-regen.md
+│       ├── adr-007-deterministic-kb-regen.md
+│       └── adr-008-verifier-protocol.md
 │
 ├── external/
 │   ├── INDEX.md
-│   ├── claude-code.md               v0 agent backend — runtime behavior, budget, failure modes
-│   ├── dune.md                      v0 verifier — invocation, parsing, exit codes
+│   ├── claude-code.md               agent backend — runtime behavior, budget, failure modes
+│   ├── verifier-protocol.md         wire protocol any verifier executable must implement (ADR-008)
 │   └── ollama.md                    v1+ target — design constraints applied in v0
 │
 ├── conventions/
@@ -104,7 +105,7 @@ kb/
 
 ## File count and last updated
 
-- **Methodology files**: 32 (+ ADR-007, + runbooks/test-environment.md)
+- **Methodology files**: 33 (after ADR-008 retrofit: + ADR-008, + external/verifier-protocol.md, − external/dune.md)
 - **Reference files** (NOTES, claude-code-report, opencode, questions-round{1,2,3}, plan, plan-simulation report, audit reports): grew through Phases 1–5
 - **Last updated**: 2026-05-02
 

@@ -42,17 +42,17 @@ How the modules in `bin/` and `lib/` are wired. *Why* the choices are this way l
   └─────────┘  └────┬────┘   └──────┬───────┘  └────┬─────┘  └────────┘
                     │               │               │
                     ▼               ▼               ▼
-             ┌──────────────────────────────┐ ┌─────────────┐
-             │ Agent_backend (signature)    │ │  Verifier   │
-             │   impls:                     │ │  (signature)│
-             │     Backend_claude           │ │   impls:    │
-             │     Backend_stub             │ │     Verifier_dune_ocaml │
-             │     (future: Backend_ollama) │ │     Verifier_stub       │
-             └──────────────────────────────┘ └─────────────┘
+             ┌──────────────────────────────┐ ┌────────────────────────┐
+             │ Agent_backend (signature)    │ │ Verifier (signature)   │
+             │   impls:                     │ │   impls:               │
+             │     Backend_claude           │ │     Verifier_external  │
+             │     Backend_stub             │ │     Verifier_stub      │
+             │     (future: Backend_ollama) │ │                        │
+             └──────────────────────────────┘ └────────────────────────┘
                     │                                │
-                    │  subprocess / HTTP             │  subprocess (`dune build`/`dune runtest`)
-                    ▼                                ▼
-              external service                  local toolchain
+                    │  subprocess / HTTP             │  subprocess invocation of any
+                    ▼                                ▼  user-configured executable
+              external service                conforming to external/verifier-protocol.md
 ```
 
 `Persist` (file I/O for `.k4k/`, atomic writes, locking) is a peer of the above; every module that writes goes through it. `Canonicalize` is a pure library used by both `Stability` and `Gap_step`.
@@ -91,13 +91,13 @@ The harness is constructed once in `bin/main.ml`:
 let () =
   let agent : (module Agent_backend) =
     match Cli.backend_choice with
-    | `Claude_code  -> (module Backend_claude)
-    | `Stub         -> (module Backend_stub)
+    | `Claude_code -> (module Backend_claude)
+    | `Stub        -> (module Backend_stub)
   in
   let verifier : (module Verifier) =
     match Cli.verifier_choice with
-    | `Dune_ocaml -> (module Verifier_dune_ocaml)
-    | `Stub       -> (module Verifier_stub)
+    | `External -> (module Verifier_external)   (* configured via .k4k frontmatter *)
+    | `Stub     -> (module Verifier_stub)
   in
   let module H = Harness.Make ((val agent)) ((val verifier)) in
   H.run Cli.file
@@ -136,6 +136,11 @@ Every public function that may fail documents which constructors it can produce.
 k4k/
   bin/main.ml                       # CLI entry, argv parsing, DI wiring
   lib/                              # see module-by-module list below
+  examples/
+    verifiers/
+      dune-ocaml/                   # reference verifier, conforms to wire protocol
+        main.ml                     # standalone OCaml binary
+        README.md                   # invocation + .k4k snippet to plug it in
   prompts/
     formalize.md                    # step 2 (active)
     gap-step.md                     # step 3 (active)
@@ -167,7 +172,6 @@ k4k/
 | `prompts`                    | template loader (`{{var}}` substitution); on-disk-over-baked-in fallback |
 | `stability`                  | structural + two-run formalization protocol + cache                      |
 | `full_check`                 | orchestrator: structural → cache → formalization → coverage              |
-| `dune_output`                | `[OK]/[FAIL] ... P<id>_<slug>` line parser                               |
 | `subprocess`                 | `execvp`-based runner with timeout + signal-poll                         |
 | `git`                        | scratch branch via `Unix` (no `Sys.command`)                             |
 | `gap_branch`                 | `k4k/gap/<id>/<ts>` naming + `at_exit` cleanup (Q3.2)                    |
@@ -182,9 +186,9 @@ k4k/
 | `agent_backend`              | `module type S` for agent backends                                       |
 | `backend_stub`               | DI stub with Strong/Weak profiles + canned responses (Q3.3)              |
 | `backend_claude`             | subprocess `claude -p --output-format json --max-turns 1`                |
-| `verifier`                   | `module type S` for verifiers                                            |
+| `verifier`                   | `module type S` for verifiers (internal scaffolding only — see ADR-008)  |
 | `verifier_stub`              | DI stub                                                                  |
-| `verifier_dune_ocaml`        | real `dune build @runtest --force --display=quiet --root <dir>`          |
+| `verifier_external`          | the only production verifier adapter — invokes a configured executable per `external/verifier-protocol.md`, reads JSON result |
 
 Several modules are split (e.g. `characterization` → 3 files; `parser` → 4 files; `kb_regen` → 2 files) solely to honor the 200-line cap from `conventions/code-style.md`. They form one logical module each. The `agent_backend` and `verifier` "signature modules" are `.ml` files containing only `module type S`; no `.mli` companion (idiomatic dune).
 

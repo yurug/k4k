@@ -88,25 +88,27 @@ The backend itself is **not** required to be deterministic. The harness's determ
 
 ## Verifier interface
 
+The OCaml-internal signature retained for type-level wiring inside k4k:
+
 ```ocaml
 module type Verifier = sig
   type t
   type config
 
-  val name : string                          (* "dune-ocaml", "rocq", ... *)
+  val name : string
   val version : t -> string
 
   val create : config -> t
 
   val run :
     t ->
-    workdir:string ->                        (* path to source tree *)
-    focus:string list ->                     (* property ids to check; [] = all *)
+    workdir:string ->
+    focus:string list ->
     [ `Ok of result
     | `Tool_error of string ]
 
   type result = {
-    by_property : (string * status) list;    (* property_id -> status *)
+    by_property : (string * status) list;
     raw_exit_code : int;
     stdout_path : string;
     stderr_path : string;
@@ -116,24 +118,28 @@ module type Verifier = sig
 end
 ```
 
+**The signature is internal scaffolding only.** It has exactly two production-grade implementations: `Verifier_external` (the generic adapter that delegates to a configured external executable per `external/verifier-protocol.md`) and `Verifier_stub` (test harness). Adding new verifiers does not add new modules — it adds new external executables conforming to the wire protocol.
+
 ### Pre-conditions
-- `workdir` exists and contains a buildable project (verifier-specific).
+- `workdir` exists and contains the target program's source tree.
 - `focus` may be `[]` ⇒ verify all known properties.
 
 ### Post-conditions
 - `by_property` is a map; properties not in the verifier's coverage map to `Unknown` (not absent — the harness needs to know it has no signal).
-- Logs are persisted to `stdout_path` / `stderr_path`. The verifier must not mutate the source tree.
-- The verifier never raises; all failures are `Tool_error`.
+- Logs are persisted to `stdout_path` / `stderr_path`. The verifier must not mutate the user's tracked source tree (build artefacts in standard locations excluded by `.gitignore` are fine).
+- The adapter never raises; all failures are `Tool_error`.
 
-### Test-name convention (for dune-ocaml v0)
+### Public extension surface
 
-Tests must be named `P<id>_<slug>`. The verifier adapter parses dune output and maps each `P<id>_*` test to property `P<id>`. Properties without a corresponding test map to `Unknown`. The convention is enforced by k4k when generating tests during gap-steps.
+Adding a verifier is **not** an OCaml change. It is a new executable conforming to the wire protocol in `external/verifier-protocol.md`. The user configures the executable via the interaction file's `k4k.verifier.command` frontmatter field. No code in `lib/` is verifier-specific.
 
-### Concrete v0 verifier
-`dune-ocaml` — see `external/dune.md` for output format, exit-code semantics, parsing rules.
+### Test-name convention
 
-### v1+ verifiers
-`rocq`, `frama-c`, `verus`, `afl` — extension points only in v0.
+Tests / theorems / proof obligations are named `P<id>_<slug>` so the verifier executable can map them to property IDs. The convention is **enforced by the verifier executable**, not by k4k. The k4k-side prompt template `prompts/gap-step.md` instructs the agent to use the convention; conformance is the verifier's job to validate.
+
+### Reference verifier
+
+`examples/verifiers/dune-ocaml/` ships a reference implementation for OCaml + dune projects. See `external/verifier-protocol.md` and the example's own README.
 
 ## Internal contracts (k4k boundary)
 
@@ -155,7 +161,8 @@ A pure function from `(purpose, D, S, Property?)` to `string`. No randomness. Th
 ## Related files
 
 - `external/claude-code.md` — runtime behavior of the v0 agent backend
-- `external/dune.md` — runtime behavior of the v0 verifier
+- `external/verifier-protocol.md` — the wire protocol verifiers must implement
 - `external/ollama.md` — v1+ target, but prompts must already accommodate
 - `architecture/decisions/adr-003-pluggable-backend.md` — why these signatures, why now
+- `architecture/decisions/adr-008-verifier-protocol.md` — why the verifier surface is a wire protocol, not an OCaml signature
 - `architecture/overview.md` — module boundaries that realize these contracts

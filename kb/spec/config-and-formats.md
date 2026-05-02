@@ -30,6 +30,9 @@ UTF-8 (no BOM; if a BOM is present, k4k strips it on read). Line endings: LF. Ma
 k4k:
   version: 1
   class: cli
+  verifier:
+    command: ["./scripts/verify.sh"]   # required; per external/verifier-protocol.md
+    timeout_s: 60                      # optional; default 60
   budget:
     soft_per_step: 100
     hard_per_invocation: 1000
@@ -101,7 +104,11 @@ the section under <!-- k4k:owner=user --> tags, then re-runs k4k ...
 
 - `k4k.version` is required. Unknown versions ⇒ `EVERSION` (`error-taxonomy.md`).
 - `class` is required. v0 accepts only `cli`.
+- `verifier.command` is required (a non-empty list of strings). Missing or empty ⇒ `EUNSTABLE` with a clarification block naming the missing field.
+- `verifier.timeout_s` is optional; default 60. Must be a positive integer if present.
 - `budget` and `retention` are optional; defaults from this file apply.
+
+The CLI flag `--verifier '<cmd>'` overrides `verifier.command` for one run; `--verifier-timeout N` overrides `verifier.timeout_s`. Overrides do not persist to the manifest.
 
 ### Section ownership rules
 

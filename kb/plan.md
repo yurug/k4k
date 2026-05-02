@@ -11,6 +11,8 @@ related: [conventions.testing-strategy, runbooks.audit-checklist]
 
 # k4k v0 — Implementation Plan
 
+> **Historical note (2026-05-02, post-v0):** Step 3 below names `lib/Verifier_dune_ocaml` and `lib/Dune_output` as in-tree modules. **ADR-008 retrofitted these out**: k4k now ships only `Verifier_external` (a generic adapter); the dune-ocaml integration moved to `examples/verifiers/dune-ocaml/` as a worked example. The other surfaces named in this plan (Step 1's parser/persist, Step 2's canonicalize, Step 3's gap-step loop, Step 4's kb-regen + tty status) are unchanged. This file is kept as the historical record of the v0 build.
+
 ## Conventions
 
 - Each step runs a Ralph Loop (max 5 iterations). If a step does not converge, stop and split — do not raise the iteration cap.

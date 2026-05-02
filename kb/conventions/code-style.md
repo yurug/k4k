@@ -26,7 +26,7 @@ A file or function that exceeds the limit is split, never raised.
 
 ## Naming
 
-- Modules: `Snake_case` (one word per file: `Gap_step`, `Verifier_dune_ocaml`).
+- Modules: `Snake_case` (one word per file: `Gap_step`, `Verifier_external`).
 - Functions: `snake_case`. Predicates end with `?` only inside doc-comments; OCaml lacks the syntax — use `is_<x>` or `has_<x>`.
 - Type aliases: `snake_case`. Variant constructors: `Capitalized`. Polymorphic variants only at module boundaries (e.g. `Agent_backend.invoke` return type).
 - Test names: `P<id>_<slug>` for property-bound tests; `T<id>_<slug>` for edge-case tests; `NF<id>_<slug>` for non-functional measurements.

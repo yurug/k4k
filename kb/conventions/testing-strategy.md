@@ -13,7 +13,7 @@ related: [conventions.code-style, runbooks.audit-checklist]
 
 ## Test framework
 
-`alcotest` (matches the verifier's expectations from `external/dune.md`). `qcheck` (alcotest-qcheck binding) for property-based tests.
+`alcotest` for k4k's own unit/integration/edge tests (k4k is itself an OCaml program; the test framework is internal scaffolding, separate from any verifier). `qcheck` (qcheck-core) for property-based tests of pure modules. Note: a target program built by k4k may use any test framework — the verifier executable bridges that framework's output to the wire protocol per `external/verifier-protocol.md`.
 
 ## Test naming convention
 
@@ -25,7 +25,7 @@ Every test name **must** start with the property it verifies:
 | Edge case        | `T<id>_<slug>`                                     | `T15_sigint_during_agent_call`               |
 | Non-functional   | `NF<id>_<slug>`                                    | `NF1_sigint_exits_within_5s`                 |
 
-Slugs are `snake_case`, descriptive but compact. The verifier adapter (`external/dune.md`) uses the prefix to map test results back to property statuses.
+Slugs are `snake_case`, descriptive but compact. The verifier adapter (`external/verifier-protocol.md`) uses the prefix to map test results back to property statuses.
 
 ## Four kinds of tests
 
@@ -89,5 +89,5 @@ The audit pass (`runbooks/audit-checklist.md`) checks that every entry in `prope
 - `properties/functional.md` — P-entries that drive functional tests
 - `properties/non-functional.md` — NF-entries with measurement procedures
 - `properties/edge-cases.md` — T-entries that drive edge-case tests
-- `external/dune.md` — the test-name convention used by the verifier
+- `external/verifier-protocol.md` — the test-name convention used by the verifier
 - `runbooks/audit-checklist.md` — where coverage is verified

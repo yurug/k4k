@@ -12,7 +12,7 @@ related: [adr-001, adr-003, external.dune]
 # ADR-004: Pluggable verifier; v0 ships dune-ocaml only
 
 ## Status
-Accepted (2026-05-02).
+Accepted (2026-05-02). **Partially superseded by ADR-008** (2026-05-02): the *pluggable* claim stands; the *plug shape* moved from "OCaml module signature, one adapter per tool" to "wire protocol over JSON files, one generic adapter". The dune-ocaml-specific reasoning below applies to the *example verifier* now shipped at `examples/verifiers/dune-ocaml/`, not to a built-in module.
 
 ## Context
 NOTES.md envisions multiple verifiers (Rocq, Lean, Verus, Frama-C, AFL) and the eventual ability for k4k to build its own. v0 must ship something concrete without committing to all of them.
@@ -21,7 +21,7 @@ A test-suite-based verifier is the lowest-friction starting point: it is *determ
 
 ## Decision
 1. **The verifier is an OCaml module signature** (`Verifier` in `spec/api-contracts.md`).
-2. **v0 ships exactly one implementation: `Verifier_dune_ocaml`** — runs `dune build @runtest`, parses the test output, maps `P<id>_*` test names to property statuses.
+2. ~~**v0 ships exactly one implementation: `Verifier_dune_ocaml`** — runs `dune build @runtest`, parses the test output, maps `P<id>_*` test names to property statuses.~~ **Superseded by ADR-008**: k4k now ships only `Verifier_external`; the dune-ocaml integration is a worked example at `examples/verifiers/dune-ocaml/`.
 3. **The test-name convention is enforced *by k4k* when generating tests** (during gap-steps). The verifier adapter rejects malformed names with `T20`'s `verifier.warning`.
 4. **`Verifier_stub`** ships from day one for tests of k4k itself.
 5. **Future verifiers** plug in via the same signature; no harness changes.

@@ -26,6 +26,7 @@ ADR format: Status, Context, Decision, Consequences, What this means for impleme
 | ADR-005 | Determinism on canonical AST; two-run formalization                    | Resolves the agent-stochasticity / harness-determinism tension        |
 | ADR-006 | Two-layer KB — meta (`kb/`) and target (`.k4k/`)                       | Pins down round-2 user-edit on KB layout                              |
 | ADR-007 | Deterministic in-process kb-regen for v0                                | v0 deviates from `algorithms.md#kb-regen`'s agent-driven model        |
+| ADR-008 | Wire-protocol verifier; k4k ships no verifier-specific code             | Supersedes the v0-only narrowing in ADR-004; verifier moves to a JSON wire protocol |
 
 ## How to add a new ADR
 

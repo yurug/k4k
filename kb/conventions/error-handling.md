@@ -92,7 +92,7 @@ Panics dump a truncated stack trace to `.k4k/log.jsonl` (max 8 KB per entry) so 
 
 Three places allow retries; nowhere else does:
 - **`Backend_claude.invoke`**: up to 3× on transient network/rate-limit failures (exponential backoff). All retries count against budget.
-- **`Verifier_dune_ocaml.run`**: zero retries. A `Tool_error` here is a real error.
+- **`Verifier_external.run`**: zero retries. A `Tool_error` here (verifier exit ≥ 1, missing/unparseable result file, timeout) is a real error.
 - **`Persist.atomic_write`**: zero retries on `ENOSPC`; rollback and surface `EDISK_FULL`.
 
 A retry that succeeds is logged at `level: "warn"` (so audit can see how flaky a run was).

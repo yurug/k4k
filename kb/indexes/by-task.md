@@ -90,7 +90,7 @@ Repro reproducible from `.k4k/` + `<file.k4k>` alone; root cause cited from a sp
 1. `conventions/testing-strategy.md`
 2. `properties/INDEX.md` — find the IDs your tests must reference
 3. `spec/api-contracts.md` — if mocking, the contract you must satisfy
-4. `external/dune.md` — for the `P<id>_<slug>` test-name convention
+4. `external/verifier-protocol.md` — for the protocol your verifier executable must satisfy (test-name conventions are per-verifier, not k4k-wide)
 
 **Key questions answered:**
 - What's the test naming convention?
@@ -123,22 +123,24 @@ The full integration test suite passes against `Backend_<your-backend>` substitu
 
 ---
 
-## #extend-verifier — adding a verifier (e.g. Rocq)
+## #extend-verifier — adding a verifier (e.g. Rocq, Frama-C, AFL)
+
+**Adding a verifier requires zero changes to k4k's source** (per ADR-008). Build a standalone executable conforming to the wire protocol; users plug it in via the interaction file's `k4k.verifier.command` frontmatter.
 
 **Load:**
-1. `architecture/decisions/adr-004-verifier-extension.md`
-2. `spec/api-contracts.md#verifier`
-3. `external/<your-verifier>.md` — write this first
-4. `external/dune.md` — model your adapter on this one
+1. `architecture/decisions/adr-008-verifier-protocol.md` — why no k4k code change
+2. `external/verifier-protocol.md` — the wire contract (CLI shape + JSON result schema + exit codes)
+3. `examples/verifiers/dune-ocaml/README.md` — worked example to copy from
+4. `properties/non-functional.md#NF6` — the determinism contract your verifier must satisfy
 
 **Key questions answered:**
-- How do I map the verifier's output to `Established | Contradicted | Unknown`?
-- What's the test-name convention for this verifier? (Test name → property ID mapping)
-- What is the wall-clock budget per invocation?
-- Does my adapter raise only `EVERIFIER_TOOL_ERROR`?
+- What CLI shape do I implement? (`--workdir`, `--focus`, `--output`)
+- What JSON schema does the result file follow? (`by_property`, `raw_exit_code`, `duration_ms`, `warnings`)
+- Which exit codes do I use? (0 = result written; 1/130/other = `Tool_error`)
+- How do I name proof obligations / tests / theorems so my verifier maps them to property IDs? (`P<id>_<slug>` is the convention shared by reference verifiers; your verifier defines its own and documents it.)
 
 **Exit criterion:**
-Same as extend-backend.
+Your executable runs against the protocol's compliance checklist (a small test fixture in `examples/verifiers/dune-ocaml/test/` exercises every contract clause; copy and adapt it).
 
 ---
 

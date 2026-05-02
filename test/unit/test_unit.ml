@@ -3318,6 +3318,68 @@ module Lint = struct
       (Printf.sprintf "P20 ratio (%d/%d ≥ 80%%)" !covered !total)
       true (ratio >= 0.80)
 
+  (* Per Axis-7 #1: every @invariant <token> annotation in a .mli must
+     cite an ID drawn from a closed vocabulary (P1..P20, NF1..NF8,
+     T1..T20). Unknown tokens used to slip past the coverage lint
+     because that lint only walked the expected P-list. *)
+  let known_invariant_ids =
+    let p = List.init 20 (fun i -> Printf.sprintf "P%d" (i + 1)) in
+    let nf = List.init 8 (fun i -> Printf.sprintf "NF%d" (i + 1)) in
+    let t = List.init 20 (fun i -> Printf.sprintf "T%d" (i + 1)) in
+    p @ nf @ t
+
+  let split_token_chars = function
+    | ' ' | '\t' | '\n' | '\r' | '.' | ',' | ';' | ':'
+    | ')' | '(' | '"' | '\'' -> true
+    | _ -> false
+
+  let next_token s i =
+    let n = String.length s in
+    let rec skip_ws j =
+      if j < n && (s.[j] = ' ' || s.[j] = '\t') then skip_ws (j + 1)
+      else j
+    in
+    let j = skip_ws i in
+    let rec scan k =
+      if k >= n then k
+      else if split_token_chars s.[k] then k
+      else scan (k + 1)
+    in
+    let e = scan j in
+    String.sub s j (e - j), e
+
+  let p20_invariant_ids_in_closed_set () =
+    let root = find_root (Sys.getcwd ()) in
+    let mli_files = List.filter (fun f ->
+      Filename.check_suffix f ".mli")
+      (Array.to_list (Sys.readdir (Filename.concat root "lib"))) in
+    let bad = ref [] in
+    List.iter (fun f ->
+      let path = Filename.concat root (Filename.concat "lib" f) in
+      match read_if_exists path with
+      | None -> ()
+      | Some s ->
+          let pat = "@invariant " in
+          let lp = String.length pat and ls = String.length s in
+          let i = ref 0 in
+          while !i + lp <= ls do
+            if String.sub s !i lp = pat then begin
+              let token, e = next_token s (!i + lp) in
+              if token <> ""
+                 && not (List.mem token known_invariant_ids)
+              then bad := (f, token) :: !bad;
+              i := e
+            end else
+              incr i
+          done
+    ) mli_files;
+    if !bad <> [] then
+      Alcotest.failf
+        "P20 lint: %d @invariant annotation(s) cite unknown ID(s): %s"
+        (List.length !bad)
+        (String.concat ", "
+           (List.map (fun (f, t) -> Printf.sprintf "%s:%s" f t) !bad))
+
   let p_three_tests_per_file () =
     let root = find_root (Sys.getcwd ()) in
     let test_src = read_all
@@ -3351,6 +3413,8 @@ module Lint = struct
     Alcotest.test_case "tests_per_file_minimum" `Quick p_three_tests_per_file;
     Alcotest.test_case "P20_invariant_coverage_at_least_80_percent"
       `Quick p20_invariant_coverage_lint;
+    Alcotest.test_case "P20_invariant_ids_in_closed_set"
+      `Quick p20_invariant_ids_in_closed_set;
   ]
 end
 

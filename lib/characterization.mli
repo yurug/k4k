@@ -4,8 +4,10 @@
     canonicalization in [Canonicalize]. The split keeps every file under
     the 200-line cap.
 
-    @invariant P2/P4 — every two equivalent ASTs (after canonicalization)
-    serialize to the same canonical bytes. *)
+    @invariant P2 — semantic stability sees ASTs through the canonical
+                    encoding only.
+    @invariant P4 — every two equivalent ASTs (after canonicalization)
+                    serialize to the same canonical bytes. *)
 
 type stream_kind = [ `Text | `Binary | `None ]
 type stream_spec = {

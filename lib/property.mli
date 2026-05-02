@@ -70,7 +70,8 @@ val with_status : t -> status -> t
     derived from [d]; each gets a stable id via [Property_id.of_path],
     a default [status = `Required], and a freshly computed [risk_score].
 
-    @invariant Property_id stability across runs. *)
+    @invariant P4 — IDs are part of the canonical AST and must be
+                    stable across runs (deterministic on canonical D). *)
 val from_characterization : Characterization.t -> t list
 
 (** [make ~source ~statement ()] builds a property with a stable id and

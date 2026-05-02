@@ -8,7 +8,9 @@
 (** [of_path ["errors"; "EBADARG"; "when"]] returns ["P" ^ first7hex of
     sha256 of length-prefixed encoding].
 
-    @invariant P_property_ids_stable_across_runs. *)
+    @invariant P4 — Property IDs are deterministic on the canonical
+                    aspect path; equal paths yield equal IDs across
+                    runs. *)
 val of_path : string list -> string
 
 (** Internal length-prefixed encoding; exposed for tests. *)

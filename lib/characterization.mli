@@ -1,13 +1,11 @@
 (** [Characterization] — formal AST per [kb/spec/data-model.md].
 
-    This module is responsible for the in-memory shape of the desired and
-    current characterizations and their JSON round-trip. It implements the
-    schema half of P2/P4: every two equivalent ASTs (after canonicalization)
-    serialize to the same canonical bytes.
+    Pure types only. Encoders/decoders live in [Characterization_json];
+    canonicalization in [Canonicalize]. The split keeps every file under
+    the 200-line cap.
 
-    Key design decisions: hand-written to_/of_yojson (no ppx) to keep
-    full control over canonical-JSON formatting; the [hash] field is
-    populated by [Canonicalize.canonicalize], not by this module. *)
+    @invariant P2/P4 — every two equivalent ASTs (after canonicalization)
+    serialize to the same canonical bytes. *)
 
 type stream_kind = [ `Text | `Binary | `None ]
 type stream_spec = {
@@ -88,16 +86,5 @@ type t = {
   hash            : string;
 }
 
-(** [to_yojson t] serializes to a yojson tree. The output is *not*
-    canonical-JSON; use [Canonicalize] to produce a canonical form. *)
-val to_yojson : t -> Yojson.Safe.t
-
-(** [of_yojson v] parses a yojson tree into a Characterization.
-
-    @raise Error.K4k_error E_format on malformed input.
-    @invariant P4 — preserves field bytes verbatim (no normalization
-                    happens here). *)
-val of_yojson : Yojson.Safe.t -> t
-
-(** [empty] — a minimal structurally-valid baseline. *)
+(** [empty] — minimal structurally-valid baseline. *)
 val empty : t

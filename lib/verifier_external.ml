@@ -17,17 +17,11 @@ type t = { cfg : config }
 
 let name = "external"
 
-(* H6 — derive a meaningful version from the configured command. The
-   manifest's [verifier_version] used to be hardcoded "0.1.0-stub";
-   instead, expose [external/<basename>] when a command is set, with
-   "external/(unconfigured)" as the fallback (which can only appear
-   in tests that build a verifier without a command). *)
-let version t =
-  match t.cfg.command with
+(* H6 — version reflects the configured command's basename, not a
+   hardcoded "0.1.0-stub". *)
+let version t = match t.cfg.command with
   | [] -> "external/(unconfigured)"
-  | prog :: _ ->
-      let bn = Filename.basename prog in
-      "external/" ^ bn
+  | prog :: _ -> "external/" ^ Filename.basename prog
 
 let default_config = {
   command   = [];      (* must be set explicitly; empty is invalid *)
@@ -87,21 +81,14 @@ let read_output_or_error path =
   else
     try
       let content = Persist.read_file path in
-      (* The path is pre-touched (empty) before the verifier runs
-         (NF4 envelope); treat an empty result as "verifier wrote no
-         output". *)
+      (* Pre-touched empty (NF4); treat empty as "no output". *)
       if content = "" then
         Error ("verifier wrote no output file at " ^ path)
       else Ok content
     with _ -> Error ("could not read verifier output at " ^ path)
 
-(* C1 — NF4 envelope. Verifier output file is written under
-   <k4k_dir>/scratch/<run_id>/ (inside .k4k/), never under /tmp. The
-   trace hook in Persist.atomic_write doesn't fire for files written
-   by the verifier itself, but the path we ask the verifier to write
-   to is now inside the envelope. We touch the path via Persist
-   helpers (ensure_dir + an empty atomic_write so the trace records
-   it). *)
+(* C1 — NF4 envelope: verifier output under <k4k_dir>/scratch/<id>/,
+   never /tmp. Pre-touched so K4K_TEST_TRACE_WRITES sees the path. *)
 let make_output_path ~k4k_dir ~run_id =
   let base = match k4k_dir with
     | Some d -> Filename.concat d "scratch"
@@ -110,8 +97,6 @@ let make_output_path ~k4k_dir ~run_id =
   let dir = Filename.concat base run_id in
   Persist.ensure_dir dir;
   let path = Filename.concat dir "verifier-output.json" in
-  (* Pre-touch so the path appears in K4K_TEST_TRACE_WRITES even if
-     the verifier ultimately fails to write it. *)
   Persist.atomic_write ~path "";
   path
 

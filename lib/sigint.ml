@@ -31,6 +31,9 @@ let should_exit () = Atomic.get flag
 let reset_for_test () =
   Atomic.set flag false
 
+let set_for_test () =
+  Atomic.set flag true
+
 let safe f = try f () with _ -> ()
 
 let register_cleanup f =

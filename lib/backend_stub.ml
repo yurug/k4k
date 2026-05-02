@@ -73,8 +73,30 @@ let _ = truncate_10pct  (* available for future explicit-failure tests *)
 
 (* --- main entry --- *)
 
+(* Cooperative slow mode for SIGINT/NF1 testing. When K4K_STUB_SLOW=N
+   is set, sleep up to N seconds before responding, polling the Sigint
+   flag every 100 ms so the signal handler can interrupt. *)
+let maybe_slow () =
+  match Sys.getenv_opt "K4K_STUB_SLOW" with
+  | None | Some "" -> ()
+  | Some s ->
+      let n = (try float_of_string s with _ -> 0.0) in
+      let deadline = Unix.gettimeofday () +. n in
+      let rec loop () =
+        if Sigint.should_exit () then
+          raise (Error.K4k_error
+                   (Error.E_state_corrupt "interrupted by signal"))
+        else if Unix.gettimeofday () >= deadline then ()
+        else begin
+          ignore (Unix.select [] [] [] 0.1);
+          loop ()
+        end
+      in
+      loop ()
+
 let invoke t ~purpose ~prompt ~budget =
   let _ = budget in
+  maybe_slow ();
   let matching =
     List.find_opt (fun e ->
       e.purpose = purpose && e.trigger prompt

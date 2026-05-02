@@ -13,6 +13,9 @@ val should_exit : unit -> bool
 (** [reset_for_test ()] — clear the flag (test-only). *)
 val reset_for_test : unit -> unit
 
+(** [set_for_test ()] — set the flag (test-only). *)
+val set_for_test : unit -> unit
+
 (** [register_cleanup f] — register [f] both for [at_exit] and for
     invocation when the harness initiates a graceful exit. *)
 val register_cleanup : (unit -> unit) -> unit

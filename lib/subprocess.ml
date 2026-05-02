@@ -39,7 +39,8 @@ let waitpid_with_timeout ~child_pid ~timeout_s =
   let rec poll () =
     match Unix.waitpid [Unix.WNOHANG] child_pid with
     | 0, _ ->
-        if Unix.gettimeofday () >= deadline then `Timeout
+        if Sigint.should_exit () then `Interrupted
+        else if Unix.gettimeofday () >= deadline then `Timeout
         else begin
           (try ignore (Unix.select [] [] [] 0.05) with _ -> ());
           poll ()
@@ -99,6 +100,7 @@ let exit_code_of_outcome = function
   | `Exited rc -> rc
   | `Signaled s -> 128 + s
   | `Timeout -> -1
+  | `Interrupted -> 130
 
 let run ?(env = Unix.environment ()) ?(cwd = ".") ?(timeout_s = 60)
     ~prog ~args () =
@@ -110,7 +112,7 @@ let run ?(env = Unix.environment ()) ?(cwd = ".") ?(timeout_s = 60)
               ~stdout_w ~stderr_w ~stdout_r ~stderr_r in
   let outcome = waitpid_with_timeout ~child_pid:pid ~timeout_s in
   let timed_out = (outcome = `Timeout) in
-  if timed_out then kill_tree pid;
+  if timed_out || outcome = `Interrupted then kill_tree pid;
   let stdout = read_all stdout_r in
   let stderr = read_all stderr_r in
   close_safe stdout_r; close_safe stderr_r;

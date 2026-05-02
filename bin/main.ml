@@ -104,6 +104,7 @@ let make_backend () =
              { Backend_stub.default_config with responses = canned })
 
 let run_check verbosity file =
+  Sigint.install ();
   let k4k_dir = ".k4k" in
   let jsonl_path = Some (Filename.concat k4k_dir "log.jsonl") in
   let logger = Logger.create ~verbosity ~jsonl_path in

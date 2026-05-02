@@ -229,11 +229,70 @@ let s1_echo_first_run_e2e () =
                 ~timeout_s:60 () in
       Alcotest.(check int) "final dune runtest exit 0" 0 r.exit_code)
 
+(* --- NF1 SIGINT subprocess test ---
+
+   Spawn k4k as a subprocess with a stub agent that "sleeps" via the
+   K4K_STUB_SLOW env var (handled in bin/main.ml). After a short delay,
+   send SIGINT and assert exit within 5 s. *)
+
+let nf1_sigint_during_agent () =
+  if not (dune_available ()) then
+    print_endline "NF1: skipped (dune not on PATH)"
+  else
+    with_workdir_and_git (fun dir ->
+      let f = Filename.concat dir "echo-upper.k4k" in
+      copy_file (fixture_path "echo-upper.k4k") f;
+      let _ = K4k.Git.commit_all ~cwd:dir ~message:"add spec" in
+      let canned = fixture_path "echo-upper-canned.json" in
+      (* Spawn the binary, send SIGINT after 1 s, measure wall-clock
+         until it exits. *)
+      let bin_path = bin () in
+      let stdout_r, stdout_w = Unix.pipe () in
+      let stderr_r, stderr_w = Unix.pipe () in
+      let env = Array.append (Unix.environment ())
+        [| "K4K_STUB_RESPONSES=" ^ canned;
+           "K4K_STUB_SLOW=10" |] in
+      let prev_cwd = Unix.getcwd () in
+      Unix.chdir dir;
+      let argv = [| bin_path; "--max-steps"; "30"; "echo-upper.k4k" |] in
+      let pid = Unix.create_process_env bin_path argv env
+                  Unix.stdin stdout_w stderr_w in
+      Unix.chdir prev_cwd;
+      Unix.close stdout_w; Unix.close stderr_w;
+      Unix.sleep 1;
+      let t_signal = Unix.gettimeofday () in
+      Unix.kill pid Sys.sigint;
+      let rec wait_done () =
+        match Unix.waitpid [Unix.WNOHANG] pid with
+        | 0, _ ->
+            if Unix.gettimeofday () -. t_signal > 6.0 then begin
+              (try Unix.kill pid Sys.sigkill with _ -> ());
+              ignore (Unix.waitpid [] pid);
+              false
+            end else begin
+              ignore (Unix.select [] [] [] 0.1);
+              wait_done ()
+            end
+        | _, _ -> true
+        | exception _ -> true
+      in
+      let exited = wait_done () in
+      let dt = Unix.gettimeofday () -. t_signal in
+      (try Unix.close stdout_r with _ -> ());
+      (try Unix.close stderr_r with _ -> ());
+      Alcotest.(check bool) "exited within 5 s" true
+        (exited && dt <= 5.0))
+
 let () =
   Alcotest.run "k4k integration"
     [ "S1", [
         Alcotest.test_case
           "S1_echo_first_run_e2e" `Slow s1_echo_first_run_e2e;
+      ];
+      "NF1", [
+        Alcotest.test_case
+          "NF1_sigint_during_agent_exits_within_5s" `Slow
+          nf1_sigint_during_agent;
       ];
       "S5", [
         Alcotest.test_case

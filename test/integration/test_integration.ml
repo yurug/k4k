@@ -182,4 +182,20 @@ let () =
         Alcotest.test_case "spec_json_validates_round_trip" `Quick
           spec_json_validates_round_trip;
       ];
+      "live", [
+        Alcotest.test_case "K4K_LIVE_smoke_against_real_claude" `Slow
+          (fun () ->
+            if Sys.getenv_opt "K4K_LIVE" <> Some "1" then
+              ()  (* skipped *)
+            else
+              with_workdir (fun dir ->
+                let f = Filename.concat dir "in.k4k" in
+                copy_file (fixture_path "well-formed-structural.k4k") f;
+                let (code, so, _se) = run_capture
+                  ~env:["K4K_LIVE", "1"]
+                  ~k4k_args:["--check"; "in.k4k"] ~cwd:dir () in
+                Alcotest.(check int) "exit 0" 0 code;
+                Alcotest.(check bool) "stdout has 'stable'" true
+                  (Astring.String.is_infix ~affix:"stable" so)));
+      ];
     ]

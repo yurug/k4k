@@ -27,14 +27,28 @@ let check_flag_arg =
   Arg.(value & flag &
        info [ "check" ] ~doc:"Run only the stability check.")
 
+let max_steps_arg =
+  let open Cmdliner in
+  Arg.(value & opt int 50 &
+       info [ "max-steps" ] ~docv:"N"
+         ~doc:"Maximum gap-step iterations (default 50).")
+
+let budget_arg =
+  let open Cmdliner in
+  Arg.(value & opt int 1000 &
+       info [ "budget" ] ~docv:"M"
+         ~doc:"Hard budget cap (default 1000 units).")
+
 let live_backend () =
   Sys.getenv_opt "K4K_LIVE" = Some "1"
 
-(* For test environments: a JSON file at $K4K_STUB_RESPONSES whose
-   contents mirror [Backend_stub.config.responses] but with [trigger] as
-   a "match-any" predicate. Each entry: {"purpose": "Formalization",
-   "text": "..."}. The runtime turns these into round-robin canned
-   responses. *)
+(* For test environments: a JSON file at $K4K_STUB_RESPONSES.
+   Round-robin per purpose. Each entry:
+     {"purpose": "Formalization"|"Gap_step", "text": "...",
+      "match": "<substring>"?}
+   When [match] is given, the trigger fires on every prompt
+   containing the substring. Otherwise round-robin per-purpose: the
+   first matching invocation consumes the entry. *)
 let load_stub_canned_from_env () =
   match Sys.getenv_opt "K4K_STUB_RESPONSES" with
   | None | Some "" -> []
@@ -42,8 +56,9 @@ let load_stub_canned_from_env () =
       let raw = Persist.read_file path in
       (match Yojson.Safe.from_string raw with
        | `List entries ->
-           let counter = ref 0 in
-           List.mapi (fun i e ->
+           let f_count = ref 0 in
+           let g_count = ref 0 in
+           let mk_entry idx_in_purpose e =
              let fs = match e with `Assoc xs -> xs | _ -> [] in
              let text = match List.assoc_opt "text" fs with
                | Some (`String s) -> s | _ -> "" in
@@ -51,12 +66,33 @@ let load_stub_canned_from_env () =
                | Some (`String "Gap_step") -> `Gap_step
                | Some (`String "Kb_regen") -> `Kb_regen
                | _ -> `Formalization in
-             { Backend_stub.purpose;
-               trigger = (fun _ ->
-                 let ok = !counter = i in
-                 if ok then incr counter; ok);
-               payload = Ok text })
-             entries
+             let match_sub = match List.assoc_opt "match" fs with
+               | Some (`String s) -> Some s | _ -> None in
+             let counter = match purpose with
+               | `Gap_step -> g_count
+               | _ -> f_count in
+             let trigger prompt =
+               match match_sub with
+               | Some s -> Astring.String.is_infix ~affix:s prompt
+               | None ->
+                   if !counter = idx_in_purpose then begin
+                     incr counter; true
+                   end else false
+             in
+             { Backend_stub.purpose; trigger; payload = Ok text }
+           in
+           let ix = Hashtbl.create 4 in
+           List.map (fun e ->
+             let purpose_str = match e with
+               | `Assoc fs ->
+                   (match List.assoc_opt "purpose" fs with
+                    | Some (`String s) -> s
+                    | _ -> "Formalization")
+               | _ -> "Formalization"
+             in
+             let cur = try Hashtbl.find ix purpose_str with Not_found -> 0 in
+             Hashtbl.replace ix purpose_str (cur + 1);
+             mk_entry cur e) entries
        | _ -> [])
 
 let make_backend () =
@@ -92,17 +128,47 @@ let run_check verbosity file =
       output_string stderr (Printf.sprintf "k4k: BUG: %s\n" msg);
       flush stderr; 64
 
-let dispatch verbosity check_flag file =
-  if not check_flag then begin
-    output_string stderr "k4k: only --check is supported in step 2\n";
-    flush stderr; 1
-  end else
-    run_check verbosity file
+let make_verifier () = Verifier_dune_ocaml.create
+  Verifier_dune_ocaml.default_config
+
+let run_convergence verbosity file ~max_steps ~budget =
+  let k4k_dir = ".k4k" in
+  let jsonl_path = Some (Filename.concat k4k_dir "log.jsonl") in
+  let logger = Logger.create ~verbosity ~jsonl_path in
+  let inputs = Harness.{ file_path = file; k4k_dir; logger } in
+  let cfg = { Run_loop.max_steps; budget } in
+  try
+    let verifier = make_verifier () in
+    let _outcome =
+      match make_backend () with
+      | `Claude b ->
+          Convergence.run
+            (module Backend_claude) (module Verifier_dune_ocaml)
+            ~backend:b ~verifier ~inputs ~cfg
+      | `Stub b ->
+          Convergence.run
+            (module Backend_stub) (module Verifier_dune_ocaml)
+            ~backend:b ~verifier ~inputs ~cfg
+    in
+    Logger.stdout_line logger "done"; 0
+  with
+  | Error.K4k_error err ->
+      Logger.error logger err; Error.exit_code_of err
+  | Error.Invariant_violation msg ->
+      output_string stderr (Printf.sprintf "k4k: BUG: %s\n" msg);
+      flush stderr; 64
+
+let dispatch verbosity check_flag max_steps budget file =
+  if check_flag then run_check verbosity file
+  else run_convergence verbosity file ~max_steps ~budget
 
 let _ = H.check  (* keep step-1 surface alive *)
 
 let check_term =
-  Cmdliner.Term.(const dispatch $ verbosity_arg $ check_flag_arg $ file_arg)
+  Cmdliner.Term.(const dispatch
+                 $ verbosity_arg $ check_flag_arg
+                 $ max_steps_arg $ budget_arg
+                 $ file_arg)
 
 let cmd =
   let info = Cmdliner.Cmd.info "k4k"

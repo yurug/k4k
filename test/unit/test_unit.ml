@@ -1762,6 +1762,165 @@ module GST = struct
   ]
 end
 
+(* ---------------- Run_loop (≥3) ---------------- *)
+module RLT = struct
+  let init_repo dir =
+    let _ = Git.init ~cwd:dir in
+    Git.configure_test_identity ~cwd:dir;
+    let oc = open_out (Filename.concat dir "README") in
+    output_string oc "init"; close_out oc;
+    let oc = open_out (Filename.concat dir ".gitignore") in
+    output_string oc ".k4k/\n"; close_out oc;
+    let _ = Git.commit_all ~cwd:dir ~message:"initial" in
+    Persist.ensure_dir (Filename.concat dir ".k4k");
+    ()
+
+  let canned_verifier ~verdict =
+    fun ~workdir:_ ~focus:_ : Verifier.run_result ->
+      `Ok Verifier.{
+        by_property = verdict;
+        raw_exit_code = 0;
+        stdout_path = ""; stderr_path = "";
+        duration_ms = 0;
+      }
+
+  let mk_resp_diff property_id =
+    let _ = property_id in
+    "```json\n{\"files\":[\"new.txt\"]}\n```\n\
+     ```diff\n\
+     diff --git a/new.txt b/new.txt\n\
+     new file mode 100644\n\
+     --- /dev/null\n\
+     +++ b/new.txt\n\
+     @@ -0,0 +1 @@\n\
+     +ok\n\
+     ```\n"
+
+  let mk_logger dir =
+    Logger.create ~verbosity:`Quiet
+      ~jsonl_path:(Some (Filename.concat dir ".k4k/log.jsonl"))
+
+  let p9_run_loop_budget () =
+    with_tmpdir (fun dir ->
+      init_repo dir;
+      let p = Property.make
+        ~source:{ aspect = "errors"; path = ["errors"; "X"] }
+        ~statement:"X" () in
+      let logger = mk_logger dir in
+      let deps : _ Gap_step.deps = {
+        k4k_dir = Filename.concat dir ".k4k";
+        workdir = dir;
+        agent_invoke = (fun ~purpose:_ ~prompt:_ ~budget:_ ->
+          `Budget_exhausted);
+        verifier_run = canned_verifier ~verdict:[];
+        logger;
+        budget_remaining = ref 100;
+        agent_backend = ();
+      } in
+      try
+        let _ = Run_loop.run ~deps ~d:Characterization.empty
+          ~cfg:Run_loop.default_config
+          ~k4k_dir:(Filename.concat dir ".k4k") ~logger
+          ~initial_gap:[p] in
+        Alcotest.fail "expected E_budget"
+      with Error.K4k_error (Error.E_budget _) -> ())
+
+  let max_steps_terminates () =
+    with_tmpdir (fun dir ->
+      init_repo dir;
+      let p = Property.make
+        ~source:{ aspect = "errors"; path = ["errors"; "X"] }
+        ~statement:"X" () in
+      let logger = mk_logger dir in
+      let deps : _ Gap_step.deps = {
+        k4k_dir = Filename.concat dir ".k4k";
+        workdir = dir;
+        (* Always gives a non-applying response — Rejected each time. *)
+        agent_invoke = (fun ~purpose:_ ~prompt:_ ~budget:_ ->
+          `Ok Agent_backend.{ text = "no diff";
+                              budget_used = 0; duration_ms = 0 });
+        verifier_run = canned_verifier ~verdict:[];
+        logger;
+        budget_remaining = ref 1_000_000;
+        agent_backend = ();
+      } in
+      let cfg = { Run_loop.max_steps = 2; budget = 1_000_000 } in
+      try
+        let _ = Run_loop.run ~deps ~d:Characterization.empty
+          ~cfg ~k4k_dir:(Filename.concat dir ".k4k") ~logger
+          ~initial_gap:[p] in
+        Alcotest.fail "expected E_max_steps"
+      with Error.K4k_error (Error.E_max_steps n) ->
+        Alcotest.(check int) "n" 2 n)
+
+  let convergence_when_accepted () =
+    with_tmpdir (fun dir ->
+      init_repo dir;
+      let p = Property.make
+        ~source:{ aspect = "errors"; path = ["errors"; "X"] }
+        ~statement:"X" () in
+      let logger = mk_logger dir in
+      let deps : _ Gap_step.deps = {
+        k4k_dir = Filename.concat dir ".k4k";
+        workdir = dir;
+        agent_invoke = (fun ~purpose:_ ~prompt:_ ~budget:_ ->
+          `Ok Agent_backend.{ text = mk_resp_diff p.id;
+                              budget_used = 0; duration_ms = 0 });
+        verifier_run = canned_verifier
+          ~verdict:[(p.id, `Established)];
+        logger;
+        budget_remaining = ref 1000;
+        agent_backend = ();
+      } in
+      let r = Run_loop.run ~deps ~d:Characterization.empty
+        ~cfg:Run_loop.default_config
+        ~k4k_dir:(Filename.concat dir ".k4k") ~logger
+        ~initial_gap:[p] in
+      Alcotest.(check bool) "converged" true r.converged;
+      Alcotest.(check int) "no remaining" 0 (List.length r.final_gap);
+      let gap_path = Filename.concat dir ".k4k/gap/properties.json" in
+      Alcotest.(check bool) "gap file persisted" true
+        (Sys.file_exists gap_path))
+
+  let three_strikes_then_loop_stops () =
+    with_tmpdir (fun dir ->
+      init_repo dir;
+      let p = Property.make
+        ~source:{ aspect = "errors"; path = ["errors"; "X"] }
+        ~statement:"X" () in
+      let logger = mk_logger dir in
+      let deps : _ Gap_step.deps = {
+        k4k_dir = Filename.concat dir ".k4k";
+        workdir = dir;
+        agent_invoke = (fun ~purpose:_ ~prompt:_ ~budget:_ ->
+          `Ok Agent_backend.{ text = mk_resp_diff p.id;
+                              budget_used = 0; duration_ms = 0 });
+        verifier_run = canned_verifier
+          ~verdict:[(p.id, `Contradicted)];
+        logger;
+        budget_remaining = ref 1_000_000;
+        agent_backend = ();
+      } in
+      let r = Run_loop.run ~deps ~d:Characterization.empty
+        ~cfg:Run_loop.default_config
+        ~k4k_dir:(Filename.concat dir ".k4k") ~logger
+        ~initial_gap:[p] in
+      Alcotest.(check bool) "not converged" false r.converged;
+      Alcotest.(check bool) "all blocked" true
+        (List.for_all (fun (q : Property.t) -> q.blocked) r.final_gap))
+
+  let tests = [
+    Alcotest.test_case "P9_hard_budget_cap_terminates_gracefully" `Quick
+      p9_run_loop_budget;
+    Alcotest.test_case "EMAXSTEPS_run_loop_max_steps" `Quick
+      max_steps_terminates;
+    Alcotest.test_case "Run_loop_converges_on_accept" `Quick
+      convergence_when_accepted;
+    Alcotest.test_case "Run_loop_stops_when_all_blocked" `Quick
+      three_strikes_then_loop_stops;
+  ]
+end
+
 (* ---------------- Lint-style P7 test ---------------- *)
 module Lint = struct
   let lib_files = [
@@ -1782,6 +1941,7 @@ module Lint = struct
     "lib/subprocess.ml"; "lib/gap_step.ml"; "lib/gap_branch.ml";
     "lib/gap_prompt.ml"; "lib/diff_extract.ml";
     "lib/sigint.ml"; "lib/git.ml";
+    "lib/run_loop.ml"; "lib/convergence.ml";
   ]
 
   let rec find_root dir =
@@ -1888,5 +2048,6 @@ let () =
       "Sigint",       SigT.tests;
       "Gap_prompt",   GPT.tests;
       "Gap_step",     GST.tests;
+      "Run_loop",     RLT.tests;
       "Lint",         Lint.tests;
     ]

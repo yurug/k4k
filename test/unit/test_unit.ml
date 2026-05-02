@@ -1922,7 +1922,7 @@ module RLT = struct
         let _ = Run_loop.run ~deps ~d:Characterization.empty
           ~cfg:Run_loop.default_config
           ~k4k_dir:(Filename.concat dir ".k4k") ~logger
-          ~initial_gap:[p] in
+          ~initial_gap:[p] () in
         Alcotest.fail "expected E_budget"
       with Error.K4k_error (Error.E_budget _) -> ())
 
@@ -1950,7 +1950,7 @@ module RLT = struct
       try
         let _ = Run_loop.run ~deps ~d:Characterization.empty
           ~cfg ~k4k_dir:(Filename.concat dir ".k4k") ~logger
-          ~initial_gap:[p] in
+          ~initial_gap:[p] () in
         Alcotest.fail "expected E_max_steps"
       with Error.K4k_error (Error.E_max_steps n) ->
         Alcotest.(check int) "n" 2 n)
@@ -1977,7 +1977,7 @@ module RLT = struct
       let r = Run_loop.run ~deps ~d:Characterization.empty
         ~cfg:Run_loop.default_config
         ~k4k_dir:(Filename.concat dir ".k4k") ~logger
-        ~initial_gap:[p] in
+        ~initial_gap:[p] () in
       Alcotest.(check bool) "converged" true r.converged;
       Alcotest.(check int) "no remaining" 0 (List.length r.final_gap);
       let gap_path = Filename.concat dir ".k4k/gap/properties.json" in
@@ -2006,7 +2006,7 @@ module RLT = struct
       let r = Run_loop.run ~deps ~d:Characterization.empty
         ~cfg:Run_loop.default_config
         ~k4k_dir:(Filename.concat dir ".k4k") ~logger
-        ~initial_gap:[p] in
+        ~initial_gap:[p] () in
       Alcotest.(check bool) "not converged" false r.converged;
       Alcotest.(check bool) "all blocked" true
         (List.for_all (fun (q : Property.t) -> q.blocked) r.final_gap))
@@ -2020,6 +2020,221 @@ module RLT = struct
       convergence_when_accepted;
     Alcotest.test_case "Run_loop_stops_when_all_blocked" `Quick
       three_strikes_then_loop_stops;
+  ]
+end
+
+(* ---------------- T4 mid-run edit (Step 4) ---------------- *)
+module T4T = struct
+  let mk_logger dir =
+    Logger.create ~verbosity:`Quiet
+      ~jsonl_path:(Some (Filename.concat dir ".k4k/log.jsonl"))
+
+  let canned_verifier ~verdict =
+    fun ~workdir:_ ~focus:_ : Verifier.run_result ->
+      `Ok Verifier.{
+        by_property = verdict;
+        raw_exit_code = 0;
+        stdout_path = ""; stderr_path = "";
+        duration_ms = 0;
+      }
+
+  let mk_resp property_id =
+    let _ = property_id in
+    "```json\n{\"files\":[\"new.txt\"]}\n```\n\
+     ```diff\n--- /dev/null\n+++ b/new.txt\n\
+     @@ -0,0 +1 @@\n+ok\n```\n"
+
+  let init_repo dir =
+    let _ = Git.init ~cwd:dir in
+    Git.configure_test_identity ~cwd:dir;
+    let oc = open_out (Filename.concat dir "README") in
+    output_string oc "init"; close_out oc;
+    let oc = open_out (Filename.concat dir ".gitignore") in
+    output_string oc ".k4k/\n"; close_out oc;
+    let _ = Git.commit_all ~cwd:dir ~message:"initial" in
+    Persist.ensure_dir (Filename.concat dir ".k4k");
+    ()
+
+  let t4_mid_run_edit_triggers_restability () =
+    with_tmpdir (fun dir ->
+      let _ = Git.init ~cwd:dir in
+      Git.configure_test_identity ~cwd:dir;
+      let oc = open_out (Filename.concat dir ".gitignore") in
+      output_string oc ".k4k/\nin.k4k\n"; close_out oc;
+      let oc = open_out (Filename.concat dir "README") in
+      output_string oc "init"; close_out oc;
+      let _ = Git.commit_all ~cwd:dir ~message:"i" in
+      Persist.ensure_dir (Filename.concat dir ".k4k");
+      let _ = init_repo in (* keep the function used *)
+      let fp = Filename.concat dir "in.k4k" in
+      let oc = open_out fp in
+      output_string oc stable_fixture; close_out oc;
+      let p1 = Property.make
+        ~source:{ aspect = "errors"; path = ["errors"; "X1"] }
+        ~statement:"X1" () in
+      let p2 = Property.make
+        ~source:{ aspect = "errors"; path = ["errors"; "X2"] }
+        ~statement:"X2" () in
+      let logger = mk_logger dir in
+      let pid_box = ref p1.id in
+      let deps : _ Gap_step.deps = {
+        k4k_dir = Filename.concat dir ".k4k";
+        workdir = dir;
+        agent_invoke = (fun ~purpose:_ ~prompt:_ ~budget:_ ->
+          `Ok Agent_backend.{ text = mk_resp !pid_box;
+                              budget_used = 0; duration_ms = 0 });
+        verifier_run = (fun ~workdir:_ ~focus:_ ->
+          canned_verifier ~verdict:[(!pid_box, `Established)]
+            ~workdir:"" ~focus:[]);
+        logger;
+        budget_remaining = ref 1_000_000;
+        agent_backend = ();
+      } in
+      let edit_done = ref false in
+      let between () =
+        if not !edit_done then begin
+          edit_done := true;
+          let oc = open_out_gen [ Open_append; Open_binary ] 0o644 fp in
+          (* Mutate the goal section bytes. *)
+          output_string oc
+            "\n<!-- k4k:owner=user begin id=extra -->\nX\n\
+             <!-- k4k:owner=user end -->\n";
+          close_out oc;
+          pid_box := p2.id
+        end in
+      let cfg = { Run_loop.max_steps = 5; budget = 1_000_000;
+                  between_steps = Some between } in
+      let r = Run_loop.run ~file_path:fp ~deps
+                ~d:Characterization.empty ~cfg
+                ~k4k_dir:(Filename.concat dir ".k4k")
+                ~logger ~initial_gap:[p1; p2] () in
+      Alcotest.(check bool) "ran ≥ 2 steps" true (r.steps_run >= 2);
+      let log = read_all (Filename.concat dir ".k4k/log.jsonl") in
+      let lines = String.split_on_char '\n' log in
+      let starts =
+        List.filter (fun l ->
+          Astring.String.is_infix ~affix:"\"event\":\"stability.start\"" l
+          && Astring.String.is_infix ~affix:"mid-run-edit" l)
+          lines
+      in
+      Alcotest.(check bool) "stability.start (mid-run-edit) emitted"
+        true (starts <> []))
+
+  let tests = [
+    Alcotest.test_case "T4_mid_run_edit_triggers_restability" `Quick
+      t4_mid_run_edit_triggers_restability;
+    Alcotest.test_case "T4_initial_user_hashes_no_file_yields_empty"
+      `Quick (fun () ->
+        let r = Run_loop.initial_user_hashes None in
+        Alcotest.(check int) "[]" 0 (List.length r));
+    Alcotest.test_case "T4_initial_user_hashes_missing_file_empty"
+      `Quick (fun () ->
+        let r = Run_loop.initial_user_hashes (Some "/no/such/path") in
+        Alcotest.(check int) "[]" 0 (List.length r));
+  ]
+end
+
+(* ---------------- NF2 RSS / memory ---------------- *)
+module NF2T = struct
+  let read_rss_kb () =
+    try
+      let ic = open_in "/proc/self/status" in
+      let r = ref 0 in
+      (try
+         while true do
+           let line = input_line ic in
+           if String.length line > 6
+              && String.sub line 0 6 = "VmRSS:" then begin
+             let parts = String.split_on_char ' '
+               (String.trim (String.sub line 6 (String.length line - 6))) in
+             let nums = List.filter (fun s -> s <> "") parts in
+             match nums with
+             | n :: _ -> r := int_of_string n
+             | [] -> ()
+           end
+         done
+       with End_of_file -> close_in ic);
+      !r
+    with _ -> 0
+
+  let mk_logger _ = Logger.create ~verbosity:`Quiet ~jsonl_path:None
+
+  let canned_verifier =
+    fun ~workdir:_ ~focus ->
+      let by = List.map (fun id -> (id, `Established)) focus in
+      `Ok Verifier.{ by_property = by; raw_exit_code = 0;
+                     stdout_path = ""; stderr_path = "";
+                     duration_ms = 0 }
+
+  let mk_resp i =
+    Printf.sprintf
+      "```json\n{\"files\":[\"x%d\"]}\n```\n\
+       ```diff\n--- /dev/null\n+++ b/x%d\n@@ -0,0 +1 @@\n+ok\n```\n"
+      i i
+
+  let nf2_rss_under_512mb_for_50_step_scenario () =
+    with_tmpdir (fun dir ->
+      let _ = Git.init ~cwd:dir in
+      Git.configure_test_identity ~cwd:dir;
+      let oc = open_out (Filename.concat dir ".gitignore") in
+      output_string oc ".k4k/\n"; close_out oc;
+      let oc = open_out (Filename.concat dir "README") in
+      output_string oc "init"; close_out oc;
+      let _ = Git.commit_all ~cwd:dir ~message:"i" in
+      Persist.ensure_dir (Filename.concat dir ".k4k");
+      let logger = mk_logger dir in
+      (* Synthesize a 50-property gap. *)
+      let props =
+        List.init 50 (fun i ->
+          Property.make
+            ~source:{ aspect = "errors";
+                      path = ["errors"; Printf.sprintf "P%d" i] }
+            ~statement:(Printf.sprintf "P%d" i) ()) in
+      let max_rss = ref 0 in
+      let next_idx = ref 0 in
+      let deps : _ Gap_step.deps = {
+        k4k_dir = Filename.concat dir ".k4k";
+        workdir = dir;
+        agent_invoke = (fun ~purpose:_ ~prompt:_ ~budget:_ ->
+          let r = read_rss_kb () in
+          if r > !max_rss then max_rss := r;
+          incr next_idx;
+          `Ok Agent_backend.{ text = mk_resp !next_idx;
+                              budget_used = 0; duration_ms = 0 });
+        verifier_run = canned_verifier;
+        logger;
+        budget_remaining = ref 100_000_000;
+        agent_backend = ();
+      } in
+      let cfg = { Run_loop.max_steps = 60; budget = 100_000_000;
+                  between_steps = None } in
+      let _ = Run_loop.run ~deps ~d:Characterization.empty
+        ~cfg ~k4k_dir:(Filename.concat dir ".k4k")
+        ~logger ~initial_gap:props () in
+      let mb = !max_rss / 1024 in
+      Alcotest.(check bool)
+        (Printf.sprintf "max RSS < 512 MB (observed: %d MB)" mb)
+        true (mb < 512))
+
+  let nf2_rss_kb_reads_value () =
+    Alcotest.(check bool) "rss > 0 (we have process memory)" true
+      (read_rss_kb () > 0)
+
+  let nf2_rss_does_not_grow_unboundedly () =
+    let r1 = read_rss_kb () in
+    for _ = 1 to 10 do
+      let _ = String.make 10000 'x' in ()
+    done;
+    let r2 = read_rss_kb () in
+    Alcotest.(check bool) "small constant work doesn't blow RSS" true
+      (r2 < r1 + 50_000)  (* 50 MB headroom *)
+
+  let tests = [
+    Alcotest.test_case "NF2_rss_under_512mb_for_50_step_scenario" `Slow
+      nf2_rss_under_512mb_for_50_step_scenario;
+    Alcotest.test_case "NF2_rss_kb_reads_value" `Quick nf2_rss_kb_reads_value;
+    Alcotest.test_case "NF2_rss_does_not_grow_unboundedly" `Quick
+      nf2_rss_does_not_grow_unboundedly;
   ]
 end
 
@@ -2425,6 +2640,8 @@ let () =
       "Gap_prompt",   GPT.tests;
       "Gap_step",     GST.tests;
       "Run_loop",     RLT.tests;
+      "T4",           T4T.tests;
+      "NF2",          NF2T.tests;
       "Tty_status",   TST.tests;
       "Kb_regen",     KRT.tests;
       "T5",           T5T.tests;

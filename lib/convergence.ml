@@ -46,7 +46,8 @@ let run (type b) (type v)
   let deps = make_deps (module B) (module V)
                ~backend ~verifier ~inputs ~budget_ref in
   let _ : Run_loop.result =
-    Run_loop.run ~deps ~d ~cfg ~k4k_dir:inputs.k4k_dir
-      ~logger:inputs.logger ~initial_gap
+    Run_loop.run ~file_path:inputs.file_path
+      ~deps ~d ~cfg ~k4k_dir:inputs.k4k_dir
+      ~logger:inputs.logger ~initial_gap ()
   in
   Stable_full

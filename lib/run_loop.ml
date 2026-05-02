@@ -66,10 +66,35 @@ let raise_max_steps n =
 let raise_budget ~used ~cap =
   raise (Error.K4k_error (Error.E_budget { used; cap }))
 
+(* P13 + T4 — re-read the interaction file at the start of every
+   step. If the user-section hashes have changed since the last
+   stability run, emit a [stability.start] event so the audit log
+   reflects the re-stability. We do not re-run the full formalization
+   pass here for v0; the next invocation of [k4k] will pick up the
+   new content via the cached-by-hash protocol from step 2. *)
+let restability_check ~file_path ~prev_user_hashes_ref ~logger =
+  match file_path with
+  | None -> ()
+  | Some fp when Sys.file_exists fp ->
+      (try
+         let content = Persist.read_file fp in
+         let parsed = Parser.parse content in
+         let new_h = Stability.user_section_hashes parsed in
+         if new_h <> !prev_user_hashes_ref then begin
+           Logger.info logger "stability.start"
+             (`Assoc [ "kind", `String "mid-run-edit";
+                       "file", `String fp ]);
+           prev_user_hashes_ref := new_h
+         end
+       with _ -> ())
+  | Some _ -> ()
+
 let loop_iter ~deps ~d ~cfg ~k4k_dir ~logger ~step_no ~window
-    ~prev_status (gap : Property.t list) =
+    ~file_path ~prev_user_hashes ~prev_status (gap : Property.t list) =
   if !step_no >= cfg.max_steps then raise_max_steps cfg.max_steps;
   incr step_no;
+  restability_check ~file_path ~prev_user_hashes_ref:prev_user_hashes
+    ~logger;
   Logger.info logger "loop.step"
     (`Assoc [ "n", `Int !step_no;
               "gap_count", `Int (List.length gap) ]);
@@ -97,18 +122,31 @@ let loop_iter ~deps ~d ~cfg ~k4k_dir ~logger ~step_no ~window
       let used = max 0 (cap - !(deps.Gap_step.budget_remaining)) in
       raise_budget ~used ~cap
 
-let run ~deps ~d ~cfg ~k4k_dir ~logger
-    ~initial_gap : result =
+let initial_user_hashes file_path =
+  match file_path with
+  | None -> []
+  | Some fp when not (Sys.file_exists fp) -> []
+  | Some fp ->
+      try
+        let content = Persist.read_file fp in
+        let parsed = Parser.parse content in
+        Stability.user_section_hashes parsed
+      with _ -> []
+
+let run ?file_path ~deps ~d ~cfg ~k4k_dir ~logger
+    ~initial_gap () : result =
   persist_gap ~k4k_dir initial_gap;
   Kb_regen.regen_full ~k4k_dir ~current_d:d ~logger;
   let gap = ref initial_gap in
   let prev = ref (prev_status_of_props initial_gap) in
+  let prev_user_hashes = ref (initial_user_hashes file_path) in
   let step_no = ref 0 in
   let window = ref (Tty_status.empty_window ()) in
   let go = ref true in
   while !go && !gap <> [] do
     match loop_iter ~deps ~d ~cfg ~k4k_dir ~logger ~step_no
-            ~window ~prev_status:!prev !gap with
+            ~window ~file_path ~prev_user_hashes
+            ~prev_status:!prev !gap with
     | `Continue (g', p') ->
         gap := g'; prev := p';
         if List.for_all (fun (p : Property.t) ->

@@ -25,16 +25,29 @@ type result = {
 
 val default_config : config
 
-(** [run ~deps ~d ~cfg ~k4k_dir ~logger ~initial_gap] — drive the loop
-    until convergence / blocked / budget / max-steps.
+(** [initial_user_hashes path] — read [path] (if any) and return the
+    user-section hashes, or [[]] on missing-file / parse failure.
+    Exposed for unit-testing the T4 mid-run-edit hook. *)
+val initial_user_hashes : string option -> (string * string) list
 
+(** [run ?file_path ~deps ~d ~cfg ~k4k_dir ~logger ~initial_gap ()] —
+    drive the loop until convergence / blocked / budget / max-steps.
+
+    @param file_path Optional [<file.k4k>] for P13 mid-run-edit
+                     detection (T4). When provided, the file is
+                     re-read at the start of every step; if the user
+                     section hashes change, a [stability.start]
+                     event is logged.
     @raise Error.K4k_error E_max_steps when the step cap is hit.
-    @raise Error.K4k_error E_budget on hard-cap exhaustion. *)
+    @raise Error.K4k_error E_budget on hard-cap exhaustion.
+    @invariant P13 — file re-read at every step. *)
 val run :
+  ?file_path:string ->
   deps:'b Gap_step.deps ->
   d:Characterization.t ->
   cfg:config ->
   k4k_dir:string ->
   logger:Logger.t ->
   initial_gap:Property.t list ->
+  unit ->
   result

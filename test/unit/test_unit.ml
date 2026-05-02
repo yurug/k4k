@@ -694,6 +694,258 @@ module BSW = struct
   ]
 end
 
+(* ---------------- Stability semantic (step 2) ---------------- *)
+module SS = struct
+  let valid_canon_a = {|{
+    "class": "cli", "goal": "echo argv",
+    "inputs_outputs": {
+      "argv": [{"name":"x","kind":"positional","type":"string","required":false,"repeats":true,"doc":""}],
+      "stdin": {"type":"none","encoding":null,"doc":""},
+      "stdout": {"type":"text","encoding":"utf-8","doc":"argv joined"},
+      "stderr": {"type":"text","encoding":"utf-8","doc":""},
+      "exit_codes": [{"code":0,"condition":"ok"}]
+    },
+    "errors": [],
+    "fs_contract": {"reads": [], "writes": [], "creates": []},
+    "concurrency": "N/A", "perf": "N/A",
+    "examples_accept": [], "examples_refuse": [],
+    "out_of_scope": [], "verifier_pref": null, "hash": ""
+  }|}
+
+  (* Same content, shuffled fields. After canonicalization it must hash
+     equal to [valid_canon_a]. *)
+  let valid_canon_a_shuffled = {|{
+    "concurrency": "N/A", "perf": "N/A",
+    "errors": [],
+    "fs_contract": {"reads": [], "writes": [], "creates": []},
+    "out_of_scope": [],
+    "examples_accept": [], "examples_refuse": [],
+    "inputs_outputs": {
+      "exit_codes": [{"code":0,"condition":"ok"}],
+      "stderr": {"type":"text","encoding":"utf-8","doc":""},
+      "stdout": {"type":"text","encoding":"utf-8","doc":"argv  joined"},
+      "stdin": {"type":"none","encoding":null,"doc":""},
+      "argv": [{"required":false,"name":"x","type":"string","kind":"positional","repeats":true,"doc":""}]
+    },
+    "goal": "echo argv  ",
+    "verifier_pref": null,
+    "class": "cli",
+    "hash": ""
+  }|}
+
+  let valid_canon_b = {|{
+    "class": "cli", "goal": "echo argv DIFFERENT",
+    "inputs_outputs": {
+      "argv": [],
+      "stdin": {"type":"none","encoding":null,"doc":""},
+      "stdout": {"type":"text","encoding":"utf-8","doc":""},
+      "stderr": {"type":"text","encoding":"utf-8","doc":""},
+      "exit_codes": []
+    },
+    "errors": [],
+    "fs_contract": {"reads": [], "writes": [], "creates": []},
+    "concurrency": "N/A", "perf": "N/A",
+    "examples_accept": [], "examples_refuse": [],
+    "out_of_scope": [], "verifier_pref": null, "hash": ""
+  }|}
+
+  let mk_invoker (responses : (Agent_backend.purpose
+                               * (string -> bool)
+                               * (string,
+                                  [ `Budget_exhausted | `Tool_error of string ])
+                                 result) list) =
+    let entries =
+      List.map (fun (p, t, pl) ->
+        { Backend_stub.purpose = p; trigger = t; payload = pl })
+        responses
+    in
+    let b = Backend_stub.create
+      { Backend_stub.default_config with
+        responses = entries; profile = `Strong; }
+    in
+    { Stability.bk = b;
+      invoke = (fun ~purpose ~prompt ~budget ->
+        Backend_stub.invoke b ~purpose ~prompt ~budget) }
+
+  (* Each call sees the next response in a list. We use a counter
+     trigger that returns true exactly once (round-robin). *)
+  let mk_invoker_seq (purpose : Agent_backend.purpose)
+                     (texts : (string,
+                               [ `Budget_exhausted | `Tool_error of string ])
+                              result list) =
+    let counter = ref 0 in
+    let entries =
+      List.mapi (fun i payload ->
+        { Backend_stub.purpose;
+          trigger = (fun _ ->
+            let ok = !counter = i in
+            if ok then incr counter;
+            ok);
+          payload }) texts
+    in
+    let b = Backend_stub.create
+      { Backend_stub.default_config with
+        responses = entries; profile = `Strong; }
+    in
+    { Stability.bk = b;
+      invoke = (fun ~purpose ~prompt ~budget ->
+        Backend_stub.invoke b ~purpose ~prompt ~budget) }
+
+  let with_tmpdir = with_tmpdir   (* alias from outer module *)
+
+  (* P18 — two runs disagree → unstable + divergence file. *)
+  let p18_two_run_minimum_detects_divergence () =
+    with_tmpdir (fun dir ->
+      let inv = mk_invoker_seq `Formalization
+        [ Ok valid_canon_a; Ok valid_canon_b ] in
+      let outcome =
+        Stability.semantic_check_with_backend
+          ~k4k_dir:dir ~prompt:"prompt" ~budget:100
+          ~prev_hashes:[] ~current_hashes:[("goal","X")]
+          ~cached_desired:None inv
+      in
+      match outcome with
+      | Sem_unstable (issues, run_ids) ->
+          Alcotest.(check int) "two run-ids" 2 (List.length run_ids);
+          Alcotest.(check bool) "an issue raised" true (issues <> []);
+          let id_a = List.hd run_ids in
+          let div_path = Filename.concat dir
+            (Filename.concat "agent-runs"
+               (Filename.concat id_a "divergence.json")) in
+          Alcotest.(check bool) "divergence file written" true
+            (Sys.file_exists div_path)
+      | _ -> Alcotest.fail "expected Sem_unstable")
+
+  (* T10 — semantic alias of P18 (for completeness in T-inventory). *)
+  let t10_runs_disagree () = p18_two_run_minimum_detects_divergence ()
+
+  (* T9 — both runs invalid JSON → unstable, both responses persisted. *)
+  let t9_both_runs_invalid_json () =
+    with_tmpdir (fun dir ->
+      let inv = mk_invoker_seq `Formalization
+        [ Ok "no JSON here"; Ok "still no JSON" ] in
+      match Stability.semantic_check_with_backend
+              ~k4k_dir:dir ~prompt:"x" ~budget:1
+              ~prev_hashes:[] ~current_hashes:[("g","x")]
+              ~cached_desired:None inv with
+      | Sem_unstable (_, [id_a; id_b]) ->
+          let response_a = Filename.concat dir
+            (Filename.concat "agent-runs"
+               (Filename.concat id_a "response.md")) in
+          let response_b = Filename.concat dir
+            (Filename.concat "agent-runs"
+               (Filename.concat id_b "response.md")) in
+          Alcotest.(check bool) "raw response a persisted" true
+            (Sys.file_exists response_a);
+          Alcotest.(check bool) "raw response b persisted" true
+            (Sys.file_exists response_b);
+          let desired = Filename.concat dir
+            "characterization/desired/spec.json" in
+          Alcotest.(check bool) "no spec.json written" false
+            (Sys.file_exists desired)
+      | _ -> Alcotest.fail "expected Sem_unstable")
+
+  (* P18 — equivalent paraphrased pairs hash equal → Sem_stable. *)
+  let p18_equivalent_runs_are_stable () =
+    with_tmpdir (fun dir ->
+      let inv = mk_invoker_seq `Formalization
+        [ Ok valid_canon_a; Ok valid_canon_a_shuffled ] in
+      match Stability.semantic_check_with_backend
+              ~k4k_dir:dir ~prompt:"x" ~budget:1
+              ~prev_hashes:[] ~current_hashes:[("g","x")]
+              ~cached_desired:None inv with
+      | Sem_stable (d, [_; _]) ->
+          Alcotest.(check bool) "non-empty hash" true (d.hash <> "")
+      | _ -> Alcotest.fail "expected Sem_stable on equivalent pair")
+
+  (* P19 — cache hit suppresses both invocations. *)
+  let p19_cache_hit_skips_formalization () =
+    with_tmpdir (fun dir ->
+      (* Backend that would refuse on call. We expect zero calls. *)
+      let inv = mk_invoker_seq `Formalization
+        [ Error (`Tool_error "should not be called");
+          Error (`Tool_error "should not be called") ] in
+      let cached = Canonicalize.canonicalize Characterization.empty in
+      let prev_h = [("goal", "abc"); ("inputs-outputs", "def")] in
+      let curr_h = prev_h in
+      match Stability.semantic_check_with_backend
+              ~k4k_dir:dir ~prompt:"x" ~budget:1
+              ~prev_hashes:prev_h ~current_hashes:curr_h
+              ~cached_desired:(Some cached) inv with
+      | Sem_cached d ->
+          Alcotest.(check string) "same hash" cached.hash d.hash
+      | _ -> Alcotest.fail "expected Sem_cached")
+
+  (* T13 — Budget_exhausted at the first call → E_budget; no spec.json. *)
+  let t13_budget_exhausted_during_formalization () =
+    with_tmpdir (fun dir ->
+      let inv = mk_invoker_seq `Formalization
+        [ Error `Budget_exhausted ] in
+      let raised =
+        try
+          let _ = Stability.semantic_check_with_backend
+            ~k4k_dir:dir ~prompt:"x" ~budget:50
+            ~prev_hashes:[] ~current_hashes:[("g","x")]
+            ~cached_desired:None inv
+          in `No
+        with
+        | Error.K4k_error (Error.E_budget _) -> `Yes
+        | _ -> `Other
+      in
+      Alcotest.(check bool) "raised E_budget" true (raised = `Yes);
+      let desired = Filename.concat dir
+        "characterization/desired/spec.json" in
+      Alcotest.(check bool) "no partial spec.json" false
+        (Sys.file_exists desired))
+
+  (* NF8 — full pipeline must work against a *weak*-profile backend
+     that injects code fences + trailing commas around the canned JSON. *)
+  let nf8_formalization_under_weakness_profile () =
+    with_tmpdir (fun dir ->
+      let counter = ref 0 in
+      let entries =
+        List.map (fun text ->
+          { Backend_stub.purpose = `Formalization;
+            trigger = (fun _ ->
+              let i = !counter in
+              counter := i + 1;
+              true);
+            payload = Ok text })
+          [valid_canon_a; valid_canon_a_shuffled]
+      in
+      let b = Backend_stub.create
+        { Backend_stub.default_config with
+          responses = entries;
+          (* default profile is `Weak; this is the load-bearing assertion *) }
+      in
+      let inv = { Stability.bk = b;
+                  invoke = (fun ~purpose ~prompt ~budget ->
+                    Backend_stub.invoke b ~purpose ~prompt ~budget) }
+      in
+      match Stability.semantic_check_with_backend
+              ~k4k_dir:dir ~prompt:"x" ~budget:1
+              ~prev_hashes:[] ~current_hashes:[("g","x")]
+              ~cached_desired:None inv with
+      | Sem_stable _ -> ()
+      | _ -> Alcotest.fail "weak-profile pipeline failed")
+
+  let tests = [
+    Alcotest.test_case "P18_two_run_minimum_detects_divergence" `Quick
+      p18_two_run_minimum_detects_divergence;
+    Alcotest.test_case "T10_runs_disagree" `Quick t10_runs_disagree;
+    Alcotest.test_case "T9_both_runs_invalid_json" `Quick
+      t9_both_runs_invalid_json;
+    Alcotest.test_case "P18_equivalent_runs_are_stable" `Quick
+      p18_equivalent_runs_are_stable;
+    Alcotest.test_case "P19_cache_skips_formalization_when_hash_matches"
+      `Quick p19_cache_hit_skips_formalization;
+    Alcotest.test_case "T13_budget_exhausted_during_formalization" `Quick
+      t13_budget_exhausted_during_formalization;
+    Alcotest.test_case "NF8_formalization_under_weakness_profile" `Quick
+      nf8_formalization_under_weakness_profile;
+  ]
+end
+
 (* ---------------- Lint-style P7 test ---------------- *)
 module Lint = struct
   let lib_files = [
@@ -744,5 +996,6 @@ let () =
       "Permissive_json", PJT.tests;
       "Property_id",  PIDT.tests;
       "Backend_stub_weak", BSW.tests;
+      "Stability_semantic", SS.tests;
       "Lint",         Lint.tests;
     ]

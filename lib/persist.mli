@@ -53,3 +53,37 @@ val sha256_hex : string -> string
 
 (** Maximum interaction-file size in bytes, per [config-and-formats.md]. *)
 val max_interaction_file_bytes : int
+
+(** [agent_run_id ()] — a fresh, monotonic, unique-enough id for an
+    agent-run directory. Format
+    [YYYYMMDD-HHMMSS-XXXXXX] (UTC, hex random). The optional [now] and
+    [rand] parameters exist for testability. *)
+val agent_run_id :
+  ?now:(unit -> float) ->
+  ?rand:(unit -> int) ->
+  unit -> string
+
+(** [write_desired ~k4k_dir ~bytes ~mirror_md] — atomic write of
+    [.k4k/characterization/desired/spec.json] (canonical JSON) and a
+    human-readable mirror [.k4k/characterization/desired/spec.md] (with
+    [owner: k4k] frontmatter).
+
+    @invariant P10 — atomic. *)
+val write_desired :
+  k4k_dir:string -> bytes:string -> mirror_md:string -> unit
+
+(** [write_agent_run ~k4k_dir ~run_id ~prompt ~response ~verdict] —
+    persist a single agent-run's artefacts under
+    [.k4k/agent-runs/<run_id>/]. *)
+val write_agent_run :
+  k4k_dir:string ->
+  run_id:string ->
+  prompt:string ->
+  response:string ->
+  verdict:string ->
+  unit
+
+(** [write_divergence_report ~k4k_dir ~run_id ~report] — persist a
+    divergence-report JSON next to the offending agent-run. *)
+val write_divergence_report :
+  k4k_dir:string -> run_id:string -> report:string -> unit

@@ -99,3 +99,33 @@ let read_file path =
 
 let sha256_hex bytes =
   Digestif.SHA256.(to_hex (digest_string bytes))
+
+(* --- step-2 additions --- *)
+
+let agent_run_id ?(now=Unix.gettimeofday) ?(rand=fun () -> Random.bits ()) () =
+  let t = now () in
+  let tm = Unix.gmtime t in
+  Printf.sprintf "%04d%02d%02d-%02d%02d%02d-%06x"
+    (tm.tm_year + 1900) (tm.tm_mon + 1) tm.tm_mday
+    tm.tm_hour tm.tm_min tm.tm_sec
+    (rand () land 0xffffff)
+
+let write_desired ~k4k_dir ~bytes ~mirror_md =
+  let dir = Filename.concat k4k_dir "characterization/desired" in
+  ensure_dir dir;
+  atomic_write ~path:(Filename.concat dir "spec.json") bytes;
+  atomic_write ~path:(Filename.concat dir "spec.md") mirror_md
+
+let write_agent_run ~k4k_dir ~run_id ~prompt ~response ~verdict =
+  let dir = Filename.concat k4k_dir
+    (Filename.concat "agent-runs" run_id) in
+  ensure_dir dir;
+  atomic_write ~path:(Filename.concat dir "prompt.md") prompt;
+  atomic_write ~path:(Filename.concat dir "response.md") response;
+  atomic_write ~path:(Filename.concat dir "verdict.json") verdict
+
+let write_divergence_report ~k4k_dir ~run_id ~report =
+  let dir = Filename.concat k4k_dir
+    (Filename.concat "agent-runs" run_id) in
+  ensure_dir dir;
+  atomic_write ~path:(Filename.concat dir "divergence.json") report

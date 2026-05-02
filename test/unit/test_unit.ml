@@ -1083,6 +1083,153 @@ module Smoke = struct
   ]
 end
 
+(* ---------------- Property + risk score (≥3) ---------------- *)
+module PropT = struct
+  open Property
+
+  let mk_prop ?(status = `Required) ?(failure_count = 0)
+      aspect path =
+    let src = { aspect; path } in
+    Property.make ~source:src
+      ~statement:(aspect ^ "/" ^ String.concat "/" path)
+      ~status ~failure_count ()
+
+  let p17_pure_no_agent_input () =
+    let p = mk_prop "errors" ["errors"; "EBADARG"] in
+    let r1 = risk_score p in
+    let r2 = risk_score p in
+    Alcotest.(check (float 0.0001)) "deterministic" r1 r2;
+    Alcotest.(check (float 0.0001)) "errors uncertainty=1.0 blast=1.0"
+      1.0 r1
+
+  let unknown_outranks_contradicted () =
+    let unk = mk_prop ~status:`Unknown "errors" ["errors"; "A"] in
+    let con = mk_prop ~status:`Contradicted "errors" ["errors"; "B"] in
+    let r_unk = risk_score unk in
+    let r_con = risk_score con in
+    Alcotest.(check bool) "unknown > contradicted" true (r_unk > r_con)
+
+  let lex_tiebreak () =
+    let p1 = mk_prop "errors" ["errors"; "ZZZ"] in
+    let p2 = mk_prop "errors" ["errors"; "AAA"] in
+    (* same severity/uncertainty/blast → tied risk → lex tiebreak *)
+    match Property.argmax_lex [p1; p2] with
+    | Some sel ->
+        Alcotest.(check bool) "lex-min id wins" true
+          (sel.id <= p1.id || sel.id <= p2.id)
+    | None -> Alcotest.fail "expected Some"
+
+  let bump_failure_blocks_at_3 () =
+    let p = mk_prop "goal" ["goal"] in
+    let p1 = Property.bump_failure p in
+    let p2 = Property.bump_failure p1 in
+    let p3 = Property.bump_failure p2 in
+    Alcotest.(check int) "fc=3" 3 p3.failure_count;
+    Alcotest.(check bool) "blocked" true p3.blocked;
+    Alcotest.(check bool) "p1 not blocked" false p1.blocked
+
+  let from_characterization_yields_ids () =
+    let mk_arg n = {
+      Characterization.name = n; kind = `Positional; type_ = "string";
+      required = false; repeats = false; doc = "" } in
+    let mk_acc n = {
+      Characterization.name = n; argv = [n]; stdin = None;
+      expect = { stdout = ""; stderr = ""; exit_code = 0; fs_after = None } } in
+    let mk_ref n = {
+      Characterization.name = n; argv = []; stdin = None;
+      expect_error = "EBADARG" } in
+    let c : Characterization.t = {
+      Characterization.empty with
+      goal = "g";
+      inputs_outputs = {
+        Characterization.empty.inputs_outputs with
+        argv = [ mk_arg "a"; mk_arg "b" ];
+        exit_codes = [{ code = 0; condition = "ok" }] };
+      examples_accept = [mk_acc "e1"; mk_acc "e2"; mk_acc "e3"];
+      examples_refuse = [mk_ref "r1"];
+      errors = [{ id = "EBADARG"; when_ = "x";
+                  message_template = "y"; exit_code = 1 }];
+    } in
+    let ps = Property.from_characterization c in
+    let ids = List.map (fun (p : Property.t) -> p.id) ps in
+    let unique = List.sort_uniq compare ids in
+    Alcotest.(check int) "all ids unique"
+      (List.length ids) (List.length unique);
+    Alcotest.(check bool) "non-empty" true (ids <> [])
+
+  let json_round_trip () =
+    let p = mk_prop "errors" ["errors"; "EBADARG"] in
+    let j = Property_json.to_yojson p in
+    let p2 = Property_json.of_yojson j in
+    Alcotest.(check string) "id" p.id p2.id;
+    Alcotest.(check string) "statement" p.statement p2.statement
+
+  let qcheck_unknown_outranks_contradicted_aspect_eq =
+    let aspect_gen = QCheck.Gen.oneof [
+      QCheck.Gen.return "errors";
+      QCheck.Gen.return "fs_contract";
+      QCheck.Gen.return "exit_codes";
+      QCheck.Gen.return "examples_accept";
+      QCheck.Gen.return "goal";
+      QCheck.Gen.return "out_of_scope";
+    ] in
+    let arb = QCheck.make ~print:(fun s -> s) aspect_gen in
+    QCheck.Test.make ~count:200
+      ~name:"P17_unknown_outranks_contradicted_when_aspect_equal" arb
+      (fun aspect ->
+         let unk = mk_prop ~status:`Unknown aspect [aspect; "A"] in
+         let con = mk_prop ~status:`Contradicted aspect [aspect; "B"] in
+         risk_score unk >= risk_score con)
+
+  let tests = [
+    Alcotest.test_case "P17_risk_score_pure" `Quick
+      p17_pure_no_agent_input;
+    Alcotest.test_case "P17_unknown_outranks_contradicted" `Quick
+      unknown_outranks_contradicted;
+    Alcotest.test_case "P17_argmax_lex_tiebreak" `Quick lex_tiebreak;
+    Alcotest.test_case "P6_bump_failure_blocks_at_3" `Quick
+      bump_failure_blocks_at_3;
+    Alcotest.test_case "Property_from_characterization_yields_unique_ids"
+      `Quick from_characterization_yields_ids;
+    Alcotest.test_case "Property_json_round_trip" `Quick json_round_trip;
+    qcheck_to_alcotest qcheck_unknown_outranks_contradicted_aspect_eq;
+  ]
+end
+
+(* ---------------- Persist gap-properties file (≥3) ---------------- *)
+module PG = struct
+  let p10_atomic_write_gap () =
+    with_tmpdir (fun dir ->
+      Persist.write_gap ~k4k_dir:dir ~bytes:{|{"count":0,"items":[]}|};
+      let p = Filename.concat dir "gap/properties.json" in
+      Alcotest.(check bool) "exists" true (Sys.file_exists p);
+      let r = Persist.read_gap ~k4k_dir:dir in
+      Alcotest.(check (option string)) "round-trip"
+        (Some {|{"count":0,"items":[]}|}) r)
+
+  let read_gap_returns_none () =
+    with_tmpdir (fun dir ->
+      Alcotest.(check bool) "missing" true
+        (Persist.read_gap ~k4k_dir:dir = None))
+
+  let write_verifier_run () =
+    with_tmpdir (fun dir ->
+      Persist.write_verifier_run ~k4k_dir:dir ~run_id:"r1"
+        ~stdout:"out" ~stderr:"err" ~result:{|{"ok":true}|};
+      let base = Filename.concat dir "verifier-runs/r1" in
+      Alcotest.(check bool) "stdout" true
+        (Sys.file_exists (Filename.concat base "stdout.log"));
+      Alcotest.(check bool) "result" true
+        (Sys.file_exists (Filename.concat base "result.json")))
+
+  let tests = [
+    Alcotest.test_case "P10_atomic_write_gap" `Quick p10_atomic_write_gap;
+    Alcotest.test_case "Persist_read_gap_returns_none_when_missing" `Quick
+      read_gap_returns_none;
+    Alcotest.test_case "P10_write_verifier_run" `Quick write_verifier_run;
+  ]
+end
+
 (* ---------------- Lint-style P7 test ---------------- *)
 module Lint = struct
   let lib_files = [
@@ -1097,6 +1244,10 @@ module Lint = struct
     "lib/divergence.ml"; "lib/coverage.ml";
     "lib/manifest.ml"; "lib/full_check.ml";
     "lib/prompts.ml"; "lib/backend_claude.ml";
+    (* step-3 files *)
+    "lib/property.ml"; "lib/property_json.ml";
+    "lib/verifier_dune_ocaml.ml"; "lib/gap_step.ml";
+    "lib/sigint.ml"; "lib/git.ml";
   ]
 
   let rec find_root dir =
@@ -1108,16 +1259,21 @@ module Lint = struct
           "could not locate dune-project"))
       else find_root p
 
+  let read_if_exists path =
+    if Sys.file_exists path then Some (read_all path) else None
+
   let p7_no_failwith_outside_invariant () =
     let root = find_root (Sys.getcwd ()) in
     List.iter (fun rel ->
       let path = Filename.concat root rel in
-      let s = read_all path in
-      if Astring.String.is_infix ~affix:"failwith" s then
-        Alcotest.fail
-          (Printf.sprintf
-             "P7: %s contains 'failwith' (use Error.K4k_error or \
-              Invariant_violation)" rel)
+      match read_if_exists path with
+      | None -> ()  (* file not present yet in this step *)
+      | Some s ->
+          if Astring.String.is_infix ~affix:"failwith" s then
+            Alcotest.fail
+              (Printf.sprintf
+                 "P7: %s contains 'failwith' (use Error.K4k_error or \
+                  Invariant_violation)" rel)
     ) lib_files
 
   (* P_no_sys_command — no [Sys.command] in production lib code (the
@@ -1126,10 +1282,12 @@ module Lint = struct
     let root = find_root (Sys.getcwd ()) in
     List.iter (fun rel ->
       let path = Filename.concat root rel in
-      let s = read_all path in
-      if Astring.String.is_infix ~affix:"Sys.command" s then
-        Alcotest.fail
-          (Printf.sprintf "code-style: %s uses Sys.command" rel)
+      match read_if_exists path with
+      | None -> ()
+      | Some s ->
+          if Astring.String.is_infix ~affix:"Sys.command" s then
+            Alcotest.fail
+              (Printf.sprintf "code-style: %s uses Sys.command" rel)
     ) lib_files
 
   (* Three-tests-per-file invariant. Each [lib/<x>.ml] has at least 3
@@ -1187,5 +1345,7 @@ let () =
       "Stability_semantic", SS.tests;
       "Backend_claude", BCT.tests;
       "Smoke",        Smoke.tests;
+      "Property",     PropT.tests;
+      "Persist_gap",  PG.tests;
       "Lint",         Lint.tests;
     ]

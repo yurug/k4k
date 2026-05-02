@@ -129,3 +129,27 @@ let write_divergence_report ~k4k_dir ~run_id ~report =
     (Filename.concat "agent-runs" run_id) in
   ensure_dir dir;
   atomic_write ~path:(Filename.concat dir "divergence.json") report
+
+(* --- step-3 additions --- *)
+
+let gap_path k4k_dir =
+  Filename.concat k4k_dir "gap/properties.json"
+
+let write_gap ~k4k_dir ~bytes =
+  let dir = Filename.concat k4k_dir "gap" in
+  ensure_dir dir;
+  atomic_write ~path:(Filename.concat dir "properties.json") bytes
+
+let read_gap ~k4k_dir =
+  let p = gap_path k4k_dir in
+  if Sys.file_exists p then
+    Some (read_file p)
+  else None
+
+let write_verifier_run ~k4k_dir ~run_id ~stdout ~stderr ~result =
+  let dir = Filename.concat k4k_dir
+    (Filename.concat "verifier-runs" run_id) in
+  ensure_dir dir;
+  atomic_write ~path:(Filename.concat dir "stdout.log") stdout;
+  atomic_write ~path:(Filename.concat dir "stderr.log") stderr;
+  atomic_write ~path:(Filename.concat dir "result.json") result

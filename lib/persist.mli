@@ -87,3 +87,25 @@ val write_agent_run :
     divergence-report JSON next to the offending agent-run. *)
 val write_divergence_report :
   k4k_dir:string -> run_id:string -> report:string -> unit
+
+(** [gap_path k4k_dir] = ".k4k/gap/properties.json". *)
+val gap_path : string -> string
+
+(** [write_gap ~k4k_dir ~bytes] atomically writes the gap-property file.
+
+    @invariant P10 — atomic. *)
+val write_gap : k4k_dir:string -> bytes:string -> unit
+
+(** [read_gap ~k4k_dir] returns the file's bytes if it exists. *)
+val read_gap : k4k_dir:string -> string option
+
+(** [write_verifier_run ~k4k_dir ~run_id ~stdout ~stderr ~result] —
+    persist a single verifier-run's artefacts under
+    [.k4k/verifier-runs/<run_id>/]. *)
+val write_verifier_run :
+  k4k_dir:string ->
+  run_id:string ->
+  stdout:string ->
+  stderr:string ->
+  result:string ->
+  unit

@@ -1501,12 +1501,30 @@ module GT = struct
       Alcotest.(check bool) "deleted" false
         (Git.branch_exists ~cwd:dir ~name:n))
 
+  (* Regression: a fresh tempdir with k4k's own state in [.k4k/] and
+     dune's [_build/] must report clean. Without the filter in
+     [Git.is_clean], gap-step errors with [E_state_corrupt] on first run. *)
+  let k4k_state_filtered () =
+    with_tmpdir (fun dir ->
+      init_and_commit dir;
+      Unix.mkdir (Filename.concat dir ".k4k") 0o755;
+      let oc = open_out (Filename.concat dir ".k4k/manifest.json") in
+      output_string oc "{}"; close_out oc;
+      Unix.mkdir (Filename.concat dir "_build") 0o755;
+      let oc = open_out (Filename.concat dir "_build/log") in
+      output_string oc "x"; close_out oc;
+      let c, dirty = Git.is_clean ~cwd:dir in
+      Alcotest.(check bool) "still clean despite .k4k/ and _build/" true c;
+      Alcotest.(check (list string)) "no dirty paths" [] dirty)
+
   let tests = [
     Alcotest.test_case "Git_is_repo_after_init" `Quick is_repo_after_init;
     Alcotest.test_case "Git_scratch_name_format" `Quick scratch_name_format;
     Alcotest.test_case "Git_is_clean_detects_dirty" `Quick dirty_when_modified;
     Alcotest.test_case "Git_create_and_delete_branch" `Quick
       create_and_delete_branch;
+    Alcotest.test_case "Git_k4k_state_filtered_from_clean_check" `Quick
+      k4k_state_filtered;
   ]
 end
 

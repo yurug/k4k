@@ -30,11 +30,27 @@ let current_branch ~cwd : string =
   let r = run_git ~cwd ["rev-parse"; "--abbrev-ref"; "HEAD"] in
   trim r.stdout
 
+(* Paths that are universally regenerable and never part of the user's
+   committed source: [.k4k/] (k4k's own operational state) and [_build/]
+   (dune's build output, written by the verifier subprocess). Both
+   appear as untracked on first run regardless of the user's [.gitignore],
+   so we filter them from the clean-tree check. *)
+let starts_with prefix s =
+  let lp = String.length prefix and ls = String.length s in
+  ls >= lp && String.sub s 0 lp = prefix
+
+let is_ignorable_path line =
+  let len = String.length line in
+  len >= 4 &&
+    let p = String.trim (String.sub line 3 (len - 3)) in
+    p = ".k4k" || p = ".k4k/" || p = "_build" || p = "_build/" ||
+    starts_with ".k4k/" p || starts_with "_build/" p
+
 let is_clean ~cwd : bool * string list =
   let r = run_git ~cwd ["status"; "--porcelain"] in
   let lines =
     String.split_on_char '\n' r.stdout
-    |> List.filter (fun s -> s <> "")
+    |> List.filter (fun s -> s <> "" && not (is_ignorable_path s))
   in
   (lines = [], lines)
 

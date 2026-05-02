@@ -117,9 +117,9 @@ kb/
 | 2k — KB audit (Ralph Loop + KB-quiz)                      | ✓ done (10/10 quiz, 0 criticals)|
 | 3 — Plan (`kb/plan.md`) + simulation gate                 | ✓ done                          |
 | 4 — Implement (Ralph Loops, per step)                     | ✓ done (steps 1–4)              |
-| 5 — Quality audits                                        | dry pass ✓ (0 criticals); 4 highs to address in proper Phase 5 |
-| 6 — KB sync                                               | pending                          |
-| 7 — Documentation & validation                            | pending                          |
+| 5 — Quality audits                                        | ✓ done (0 criticals; 4 Axis-1 highs closed by NF3/NF4/NF6/NF7 named tests) |
+| 6 — KB sync                                               | ✓ done (ADR-007, env-var runbook, alcotest fact, T1 note; sync-quiz 3/3) |
+| 7 — Documentation & validation                            | ✓ done (README.md; e2e validation green from clean tempdir) |
 
 ## Agent notes
 

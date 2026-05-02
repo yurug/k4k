@@ -7,29 +7,56 @@ type t = {
 
 let create ~verbosity ~jsonl_path = { verbosity; jsonl_path }
 
-(* Match common secret-shaped strings: KEY=val, token: val, etc.
-   The regex is intentionally simple and reviewed rather than expanded. *)
-let secret_re =
+(* Match common secret-shaped strings (NF5).
+   Two complementary patterns:
+   - keyword <separator: : | => value: redacts everything from the
+     keyword to the next whitespace / quote / comma / brace boundary.
+   - "Bearer <token>" / "Token <token>" — redacts the value following
+     a bareword Bearer/Token (HTTP Authorization style). *)
+let secret_kw =
+  Re.alt [
+    Re.no_case (Re.str "api_key");
+    Re.no_case (Re.str "api-key");
+    Re.no_case (Re.str "apikey");
+    Re.no_case (Re.str "token");
+    Re.no_case (Re.str "secret");
+    Re.no_case (Re.str "password");
+    Re.no_case (Re.str "bearer");
+  ]
+
+let stop_chars = [ Re.space; Re.char '"'; Re.char ',';
+                   Re.char '}'; Re.char ')'; Re.char ']' ]
+
+let secret_re_kv =
   Re.compile (
     Re.seq [
-      Re.alt [
-        Re.no_case (Re.str "api_key");
-        Re.no_case (Re.str "api-key");
-        Re.no_case (Re.str "apikey");
-        Re.no_case (Re.str "token");
-        Re.no_case (Re.str "secret");
-        Re.no_case (Re.str "password");
-        Re.no_case (Re.str "bearer");
-      ];
-      Re.rep Re.space;
+      secret_kw;
+      Re.rep (Re.alt
+        [ Re.space; Re.char '"'; Re.char ':'; Re.char '=' ]);
       Re.alt [ Re.char ':'; Re.char '=' ];
-      Re.rep Re.space;
-      Re.rep1 (Re.compl [ Re.space ]);
-    ]
-  )
+      Re.rep (Re.alt [ Re.space; Re.char '"' ]);
+      Re.rep1 (Re.compl stop_chars);
+    ])
+
+(* Bearer-style: "Bearer <value>" / "Token <value>" with whitespace. *)
+let secret_re_bearer =
+  Re.compile (
+    Re.seq [
+      Re.no_case (Re.alt [ Re.str "bearer"; Re.str "token" ]);
+      Re.rep1 Re.space;
+      Re.rep1 (Re.compl stop_chars);
+    ])
+
+(* Hashed API key pattern (e.g. sk-ant-...) — match any
+   POISON-CANARY-shaped uppercase ALL-CAPS-with-DASHES-AND-DIGITS run
+   that follows an API_KEY-shaped name. Already covered by [secret_re_kv]
+   since [API_KEY=...] matches. *)
 
 let scrub s =
-  Re.replace ~all:true secret_re ~f:(fun _ -> "<scrubbed>") s
+  let s = Re.replace ~all:true secret_re_kv
+            ~f:(fun _ -> "<scrubbed>") s in
+  Re.replace ~all:true secret_re_bearer
+    ~f:(fun _ -> "<scrubbed>") s
 
 let now_iso () =
   let t = Unix.gettimeofday () in

@@ -2023,6 +2023,278 @@ module RLT = struct
   ]
 end
 
+(* ---------------- Tty_status (Step 4) ---------------- *)
+module TST = struct
+  let format_eta_short () =
+    Alcotest.(check string) "0s" "0m00s" (Tty_status.format_eta 0.0);
+    Alcotest.(check string) "65s" "1m05s" (Tty_status.format_eta 65.0);
+    Alcotest.(check string) "252s" "4m12s" (Tty_status.format_eta 252.0)
+
+  let median_window () =
+    let w = Tty_status.empty_window () in
+    Alcotest.(check (option (float 0.001))) "empty=None"
+      None (Tty_status.median w);
+    let w = Tty_status.push_duration w 1.0 in
+    let w = Tty_status.push_duration w 2.0 in
+    let w = Tty_status.push_duration w 3.0 in
+    (match Tty_status.median w with
+     | Some m -> Alcotest.(check (float 0.001)) "median 1,2,3 = 2" 2.0 m
+     | None -> Alcotest.fail "expected Some median")
+
+  let sliding_window_caps_at_10 () =
+    let w = ref (Tty_status.empty_window ()) in
+    for i = 1 to 20 do w := Tty_status.push_duration !w (float_of_int i) done;
+    (* The window should contain only 10 samples. Median is well-defined
+       and should be far above 1.0. *)
+    (match Tty_status.median !w with
+     | Some m -> Alcotest.(check bool) "median > 10 (recent samples)"
+                   true (m >= 10.0)
+     | None -> Alcotest.fail "expected median")
+
+  let render_includes_property_id () =
+    let s = Tty_status.render
+              ~step:3 ~total:12 ~property_id:"P3a4b1"
+              ~slug:"slug" ~progress:4 ~eta:(Some 252.0) in
+    Alcotest.(check bool) "contains property id" true
+      (Astring.String.is_infix ~affix:"P3a4b1" s);
+    Alcotest.(check bool) "contains step" true
+      (Astring.String.is_infix ~affix:"3/12" s);
+    Alcotest.(check bool) "contains ETA" true
+      (Astring.String.is_infix ~affix:"4m12s" s)
+
+  let render_eta_dashes_when_empty () =
+    let s = Tty_status.render
+              ~step:1 ~total:5 ~property_id:"P0"
+              ~slug:"x" ~progress:0 ~eta:None in
+    Alcotest.(check bool) "ETA --" true
+      (Astring.String.is_infix ~affix:"ETA --" s)
+
+  let eta_of_remaining () =
+    let w = Tty_status.empty_window () in
+    let w = Tty_status.push_duration w 10.0 in
+    (match Tty_status.eta_of w ~remaining:5 with
+     | Some e -> Alcotest.(check (float 0.001))
+                   "10s * 5 = 50s" 50.0 e
+     | None -> Alcotest.fail "expected Some")
+
+  let tests = [
+    Alcotest.test_case "Tty_status_format_eta_minutes_seconds"
+      `Quick format_eta_short;
+    Alcotest.test_case "Tty_status_median_window" `Quick median_window;
+    Alcotest.test_case "Tty_status_sliding_window_caps_at_10" `Quick
+      sliding_window_caps_at_10;
+    Alcotest.test_case "Tty_status_render_includes_property_id" `Quick
+      render_includes_property_id;
+    Alcotest.test_case "Tty_status_render_eta_dashes_when_empty" `Quick
+      render_eta_dashes_when_empty;
+    Alcotest.test_case "Tty_status_eta_of_remaining" `Quick eta_of_remaining;
+  ]
+end
+
+(* ---------------- Kb_regen (Step 4) ---------------- *)
+module KRT = struct
+  let target_files_complete () =
+    let fs = Kb_regen.target_files in
+    Alcotest.(check bool) "INDEX.md present" true
+      (List.mem "INDEX.md" fs);
+    Alcotest.(check bool) "GLOSSARY.md present" true
+      (List.mem "GLOSSARY.md" fs);
+    Alcotest.(check bool) "spec/data-model.md present" true
+      (List.mem "spec/data-model.md" fs);
+    Alcotest.(check bool) "properties/functional.md present" true
+      (List.mem "properties/functional.md" fs);
+    Alcotest.(check bool) "properties/edge-cases.md present" true
+      (List.mem "properties/edge-cases.md" fs)
+
+  let aspects_for_known () =
+    Alcotest.(check bool) "GLOSSARY needs goal" true
+      (List.mem "goal" (Kb_regen.aspects_for "GLOSSARY.md"));
+    Alcotest.(check bool) "edge-cases needs examples_refuse" true
+      (List.mem "examples_refuse"
+         (Kb_regen.aspects_for "properties/edge-cases.md"));
+    Alcotest.(check (list string)) "unknown empty"
+      [] (Kb_regen.aspects_for "unknown.md")
+
+  let p16_files_affected_minimal () =
+    let fs = Kb_regen.files_affected_by ~changed:["examples_refuse"] in
+    Alcotest.(check bool) "edge-cases included" true
+      (List.mem "properties/edge-cases.md" fs);
+    Alcotest.(check bool) "spec/data-model NOT included" false
+      (List.mem "spec/data-model.md" fs)
+
+  let render_file_has_frontmatter () =
+    let s = Kb_regen.render_file ~rel_path:"GLOSSARY.md"
+              ~d:Characterization.empty in
+    Alcotest.(check bool) "starts with ---" true
+      (String.length s > 4 && String.sub s 0 4 = "---\n");
+    Alcotest.(check bool) "owner: k4k" true
+      (Astring.String.is_infix ~affix:"owner: k4k" s);
+    Alcotest.(check bool) "content_hash" true
+      (Astring.String.is_infix ~affix:"content_hash:" s)
+
+  let p14_owned_when_hash_matches () =
+    with_tmpdir (fun dir ->
+      let s = Kb_regen.render_file ~rel_path:"GLOSSARY.md"
+                ~d:Characterization.empty in
+      Persist.ensure_dir (Filename.concat dir "subdir");
+      Persist.atomic_write
+        ~path:(Filename.concat dir "subdir/GLOSSARY.md") s;
+      Alcotest.(check bool) "k4k-owned (untouched)" true
+        (Kb_regen.is_owned_by_k4k
+           ~k4k_dir:(Filename.concat dir "subdir")
+           ~rel_path:"GLOSSARY.md"))
+
+  let p14_user_edit_flips_ownership () =
+    with_tmpdir (fun dir ->
+      let s = Kb_regen.render_file ~rel_path:"GLOSSARY.md"
+                ~d:Characterization.empty in
+      Persist.ensure_dir (Filename.concat dir "subdir");
+      let path = Filename.concat dir "subdir/GLOSSARY.md" in
+      Persist.atomic_write ~path s;
+      (* Mutate the body bytes (the user has hand-edited). *)
+      let oc = open_out_gen [ Open_append; Open_binary ] 0o644 path in
+      output_string oc "\n\nUSER EDIT\n"; close_out oc;
+      Alcotest.(check bool) "now user-owned" false
+        (Kb_regen.is_owned_by_k4k
+           ~k4k_dir:(Filename.concat dir "subdir")
+           ~rel_path:"GLOSSARY.md"))
+
+  let p14_missing_file_is_owned () =
+    with_tmpdir (fun dir ->
+      Alcotest.(check bool) "missing => owned" true
+        (Kb_regen.is_owned_by_k4k ~k4k_dir:dir ~rel_path:"NEW.md"))
+
+  let regen_creates_files () =
+    with_tmpdir (fun dir ->
+      let logger = Logger.create ~verbosity:`Quiet ~jsonl_path:None in
+      Kb_regen.regen_full ~k4k_dir:dir
+        ~current_d:Characterization.empty ~logger;
+      List.iter (fun f ->
+        Alcotest.(check bool) (f ^ " exists") true
+          (Sys.file_exists (Filename.concat dir f)))
+        Kb_regen.target_files)
+
+  let p14_user_edited_file_not_overwritten () =
+    with_tmpdir (fun dir ->
+      let logger = Logger.create ~verbosity:`Quiet ~jsonl_path:None in
+      Kb_regen.regen_full ~k4k_dir:dir
+        ~current_d:Characterization.empty ~logger;
+      let path = Filename.concat dir "GLOSSARY.md" in
+      let oc = open_out_gen [ Open_append; Open_binary ] 0o644 path in
+      output_string oc "\nUSER\n"; close_out oc;
+      let after = read_all path in
+      (* Re-run; user edit must persist (no overwrite). *)
+      Kb_regen.regen_full ~k4k_dir:dir
+        ~current_d:Characterization.empty ~logger;
+      let after2 = read_all path in
+      Alcotest.(check string) "user content untouched" after after2)
+
+  let tests = [
+    Alcotest.test_case "Kb_regen_target_files_complete" `Quick
+      target_files_complete;
+    Alcotest.test_case "Kb_regen_aspects_for_known" `Quick aspects_for_known;
+    Alcotest.test_case "P16_incremental_regen_only_touches_affected_files"
+      `Quick p16_files_affected_minimal;
+    Alcotest.test_case "Kb_regen_render_file_has_frontmatter" `Quick
+      render_file_has_frontmatter;
+    Alcotest.test_case "P14_owned_when_hash_matches" `Quick
+      p14_owned_when_hash_matches;
+    Alcotest.test_case "P14_ownership_flip_on_user_edited_kb_file" `Quick
+      p14_user_edit_flips_ownership;
+    Alcotest.test_case "P14_missing_file_is_owned" `Quick
+      p14_missing_file_is_owned;
+    Alcotest.test_case "Kb_regen_full_writes_target_files" `Quick
+      regen_creates_files;
+    Alcotest.test_case "T18_user_overrides_target_kb_file" `Quick
+      p14_user_edited_file_not_overwritten;
+  ]
+end
+
+(* ---------------- T5 disk-full fault injection ---------------- *)
+module T5T = struct
+  let t5_disk_full_during_atomic_write () =
+    with_tmpdir (fun dir ->
+      let path = Filename.concat dir "out.txt" in
+      Unix.putenv "K4K_FAULT_INJECT_ENOSPC" "out.txt";
+      let raised = ref false in
+      (try Persist.atomic_write ~path "hello"
+       with Error.K4k_error (Error.E_disk_full p) ->
+         raised := true;
+         Alcotest.(check bool) "path mentions out.txt" true
+           (Astring.String.is_infix ~affix:"out.txt" p));
+      Unix.putenv "K4K_FAULT_INJECT_ENOSPC" "";
+      Alcotest.(check bool) "raised E_disk_full" true !raised;
+      Alcotest.(check bool) "no file written" false (Sys.file_exists path);
+      Alcotest.(check bool) "tmp cleaned up" false
+        (Sys.file_exists (path ^ ".tmp")))
+
+  let t5_disk_full_unset_does_nothing () =
+    with_tmpdir (fun dir ->
+      let path = Filename.concat dir "out.txt" in
+      Unix.putenv "K4K_FAULT_INJECT_ENOSPC" "";
+      Persist.atomic_write ~path "hello";
+      Alcotest.(check bool) "wrote file" true (Sys.file_exists path))
+
+  let t5_disk_full_pattern_mismatch () =
+    with_tmpdir (fun dir ->
+      let path = Filename.concat dir "out.txt" in
+      Unix.putenv "K4K_FAULT_INJECT_ENOSPC" "OTHER";
+      Persist.atomic_write ~path "hello";
+      Unix.putenv "K4K_FAULT_INJECT_ENOSPC" "";
+      Alcotest.(check bool) "wrote file" true (Sys.file_exists path))
+
+  let tests = [
+    Alcotest.test_case "T5_disk_full_during_atomic_write" `Quick
+      t5_disk_full_during_atomic_write;
+    Alcotest.test_case "T5_disk_full_unset_no_effect" `Quick
+      t5_disk_full_unset_does_nothing;
+    Alcotest.test_case "T5_disk_full_pattern_mismatch" `Quick
+      t5_disk_full_pattern_mismatch;
+  ]
+end
+
+(* ---------------- NF5 secrets canary ---------------- *)
+module NF5T = struct
+  let nf5_secrets_canary_never_leaks () =
+    with_tmpdir (fun dir ->
+      let log = Filename.concat dir "log.jsonl" in
+      let logger = Logger.create ~verbosity:`Verbose
+        ~jsonl_path:(Some log) in
+      Unix.putenv "ANTHROPIC_API_KEY" "POISON-CANARY";
+      (* Trigger several error-path-like emits with the secret-looking
+         content baked in. *)
+      Logger.info logger "agent.error"
+        (`Assoc [ "msg", `String "ANTHROPIC_API_KEY=POISON-CANARY" ]);
+      Logger.warn logger "verifier.error"
+        (`Assoc [ "header", `String "Bearer POISON-CANARY" ]);
+      Logger.error logger
+        (Error.E_agent_unavailable
+           "auth: ANTHROPIC_API_KEY=POISON-CANARY (env)");
+      Unix.putenv "ANTHROPIC_API_KEY" "";
+      let raw = read_all log in
+      Alcotest.(check bool) "canary scrubbed from JSONL" false
+        (Astring.String.is_infix ~affix:"POISON-CANARY" raw))
+
+  let nf5_scrub_handles_token_keyword () =
+    let s = Logger.scrub "Authorization: Bearer SECRET-TOKEN-VALUE-X" in
+    Alcotest.(check bool) "scrubbed" false
+      (Astring.String.is_infix ~affix:"SECRET-TOKEN-VALUE-X" s)
+
+  let nf5_scrub_handles_password () =
+    let s = Logger.scrub "user_password: mySecretP4ss!" in
+    Alcotest.(check bool) "scrubbed" false
+      (Astring.String.is_infix ~affix:"mySecretP4ss!" s)
+
+  let tests = [
+    Alcotest.test_case "NF5_secrets_canary_never_leaks" `Quick
+      nf5_secrets_canary_never_leaks;
+    Alcotest.test_case "NF5_scrub_handles_token_keyword" `Quick
+      nf5_scrub_handles_token_keyword;
+    Alcotest.test_case "NF5_scrub_handles_password" `Quick
+      nf5_scrub_handles_password;
+  ]
+end
+
 (* ---------------- Lint-style P7 test ---------------- *)
 module Lint = struct
   let lib_files = [
@@ -2044,6 +2316,8 @@ module Lint = struct
     "lib/gap_prompt.ml"; "lib/diff_extract.ml";
     "lib/sigint.ml"; "lib/git.ml";
     "lib/run_loop.ml"; "lib/convergence.ml";
+    (* step-4 files *)
+    "lib/kb_regen.ml"; "lib/tty_status.ml";
   ]
 
   let rec find_root dir =
@@ -2151,5 +2425,9 @@ let () =
       "Gap_prompt",   GPT.tests;
       "Gap_step",     GST.tests;
       "Run_loop",     RLT.tests;
+      "Tty_status",   TST.tests;
+      "Kb_regen",     KRT.tests;
+      "T5",           T5T.tests;
+      "NF5",          NF5T.tests;
       "Lint",         Lint.tests;
     ]

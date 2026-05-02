@@ -1083,6 +1083,152 @@ module Smoke = struct
   ]
 end
 
+(* ---------------- Dune output parser (≥3) ---------------- *)
+module DOT = struct
+  let parses_ok_line () =
+    let l = "  [OK]          Suite        0   P3a4b1c2_argv_handles_x." in
+    match Dune_output.parse_line l with
+    | Some ln ->
+        Alcotest.(check string) "name"
+          "P3a4b1c2_argv_handles_x" ln.test_name;
+        Alcotest.(check (option string)) "pid"
+          (Some "P3a4b1c2") ln.property_id;
+        Alcotest.(check bool) "OK kind" true (ln.kind = `Ok)
+    | None -> Alcotest.fail "expected match"
+
+  let parses_fail_line () =
+    let l = "  [FAIL]        Suite        1   P5e6f7a8_stdout_is_utf8." in
+    match Dune_output.parse_line l with
+    | Some ln ->
+        Alcotest.(check bool) "FAIL" true (ln.kind = `Fail);
+        Alcotest.(check (option string)) "pid"
+          (Some "P5e6f7a8") ln.property_id
+    | None -> Alcotest.fail "expected match"
+
+  let ignores_other_lines () =
+    Alcotest.(check bool) "no header" true
+      (Dune_output.parse_line "Testing `myproject'." = None);
+    Alcotest.(check bool) "no blank" true
+      (Dune_output.parse_line "" = None)
+
+  let t20_unconventional_name_no_pid () =
+    let l = "  [OK]          Suite        0   weirdname_no_pid." in
+    match Dune_output.parse_line l with
+    | Some ln ->
+        Alcotest.(check (option string)) "no pid" None ln.property_id
+    | None -> Alcotest.fail "expected match"
+
+  let parses_full_output () =
+    let out = String.concat "\n" [
+      "Testing `myproject'.";
+      "  [OK]          Suite        0   P3a4b1c2_argv.";
+      "  [FAIL]        Suite        1   P5e6f7a8_stdout.";
+      "  [OK]          Suite        2   weird_no_pid_test.";
+      "All done."
+    ] in
+    let lines = Dune_output.parse out in
+    Alcotest.(check int) "3 test lines" 3 (List.length lines);
+    Alcotest.(check bool) "build_error_p false" false
+      (Dune_output.build_error_p out)
+
+  let detects_build_error () =
+    Alcotest.(check bool) "no test lines = build error" true
+      (Dune_output.build_error_p "Error: ocaml says no\n")
+
+  let tests = [
+    Alcotest.test_case "Dune_output_parses_OK_line" `Quick parses_ok_line;
+    Alcotest.test_case "Dune_output_parses_FAIL_line" `Quick parses_fail_line;
+    Alcotest.test_case "Dune_output_ignores_other_lines" `Quick
+      ignores_other_lines;
+    Alcotest.test_case "T20_unconventional_test_name_has_no_pid" `Quick
+      t20_unconventional_name_no_pid;
+    Alcotest.test_case "Dune_output_parses_full_output" `Quick
+      parses_full_output;
+    Alcotest.test_case "Dune_output_detects_build_error" `Quick
+      detects_build_error;
+  ]
+end
+
+(* ---------------- Verifier_dune_ocaml (mocked subprocess via fake dune) ---------------- *)
+module VDO = struct
+  let module_conforms_to_verifier () =
+    let module _ : Verifier.S = Verifier_dune_ocaml in ()
+
+  let unavailable_returns_tool_error () =
+    let v = Verifier_dune_ocaml.create
+      { Verifier_dune_ocaml.default_config with
+        dune_binary = "/no/such/dune-binary";
+        timeout_s = 1; } in
+    with_tmpdir (fun dir ->
+      match Verifier_dune_ocaml.run v ~workdir:dir ~focus:[] with
+      | `Tool_error _ -> ()
+      | `Ok _ -> Alcotest.fail "expected Tool_error")
+
+  let name_is_dune_ocaml () =
+    Alcotest.(check string) "name" "dune-ocaml" Verifier_dune_ocaml.name
+
+  let creates_returns_handle () =
+    let v = Verifier_dune_ocaml.create
+      Verifier_dune_ocaml.default_config in
+    Alcotest.(check string) "version" "0.1.0"
+      (Verifier_dune_ocaml.version v)
+
+  (* End-to-end: create a tiny passing dune+alcotest project, run the
+     real verifier, expect [Established] for the named property. *)
+  let write_file p s =
+    let oc = open_out p in output_string oc s; close_out oc
+
+  let mk_passing_project dir =
+    write_file (Filename.concat dir "dune-project") "(lang dune 3.22)\n";
+    Unix.mkdir (Filename.concat dir "test") 0o755;
+    write_file (Filename.concat dir "test/dune")
+      "(test (name run) (libraries alcotest))\n";
+    write_file (Filename.concat dir "test/run.ml")
+      "let () =\n\
+      \  Alcotest.run \"demo\"\n\
+      \    [ \"S\", [ Alcotest.test_case \"P1234567_demo\" `Quick \
+                       (fun () -> ()) ] ]\n"
+
+  (* End-to-end with real dune: skipped under [dune runtest]'s sandbox
+     (which has no $PATH for dune). Runnable manually via
+     [K4K_REAL_DUNE=1 dune runtest --force]. *)
+  let real_dune_pass () =
+    match Sys.getenv_opt "K4K_REAL_DUNE" with
+    | Some "1" ->
+        with_tmpdir (fun dir ->
+          mk_passing_project dir;
+          let v = Verifier_dune_ocaml.create
+            { Verifier_dune_ocaml.default_config with
+              timeout_s = 60 } in
+          match Verifier_dune_ocaml.run v ~workdir:dir
+                  ~focus:["P1234567"] with
+          | `Ok r ->
+              let st =
+                List.assoc_opt "P1234567" r.by_property
+                |> Option.map (function
+                  | `Established -> "established"
+                  | `Contradicted -> "contradicted"
+                  | `Unknown -> "unknown")
+              in
+              Alcotest.(check (option string)) "P1234567 -> Established"
+                (Some "established") st
+          | `Tool_error e ->
+              Alcotest.fail ("real dune: " ^ e))
+    | _ -> ()
+
+  let tests = [
+    Alcotest.test_case "Verifier_dune_ocaml_module_conforms_to_signature"
+      `Quick module_conforms_to_verifier;
+    Alcotest.test_case "EVERIFIER_UNAVAILABLE_missing_dune_binary"
+      `Quick unavailable_returns_tool_error;
+    Alcotest.test_case "Verifier_dune_ocaml_name" `Quick name_is_dune_ocaml;
+    Alcotest.test_case "Verifier_dune_ocaml_creates" `Quick
+      creates_returns_handle;
+    Alcotest.test_case "Verifier_dune_ocaml_real_dune_pass" `Slow
+      real_dune_pass;
+  ]
+end
+
 (* ---------------- Property + risk score (≥3) ---------------- *)
 module PropT = struct
   open Property
@@ -1347,5 +1493,7 @@ let () =
       "Smoke",        Smoke.tests;
       "Property",     PropT.tests;
       "Persist_gap",  PG.tests;
+      "Dune_output",  DOT.tests;
+      "Verifier_dune_ocaml", VDO.tests;
       "Lint",         Lint.tests;
     ]

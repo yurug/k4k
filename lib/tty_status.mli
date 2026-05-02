@@ -53,8 +53,15 @@ val render :
 (** [is_tty ()] — true iff [Unix.isatty Unix.stdout]. *)
 val is_tty : unit -> bool
 
+(** [set_color_enabled b] — globally toggle ANSI escape emission.
+    Defaults to [true]; [bin/main.ml] flips to [false] when the user
+    passes [--no-color]. When disabled, {!print_inplace} degrades to
+    a plain newline-terminated line (no CR, no clear-line escape). *)
+val set_color_enabled : bool -> unit
+
 (** [print_inplace s] — write [\r] + clear-line + [s] to stdout
-    without a trailing newline; only call if {!is_tty} is true. *)
+    without a trailing newline (when ANSI is enabled); only call if
+    {!is_tty} is true. With [--no-color], emits [s ^ "\n"] instead. *)
 val print_inplace : string -> unit
 
 (** [print_final_newline ()] — emit a single ['\n'] to terminate the

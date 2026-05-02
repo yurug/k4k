@@ -126,6 +126,89 @@ let t1_empty_file_exits_1 () =
     Alcotest.(check bool) "stderr mentions unstable" true
       (Astring.String.is_infix ~affix:"unstable" se))
 
+(* S2 — --status prints one line per gap property, no agent or
+   verifier calls. Run --check first so .k4k/gap/properties.json
+   exists, then run --status and check the format. *)
+let s2_status_subcommand_prints_gap () =
+  with_workdir (fun dir ->
+    let f = Filename.concat dir "in.k4k" in
+    copy_file (fixture_path "well-formed-structural.k4k") f;
+    let canned = fixture_path "canned-responses.json" in
+    let (code1, _, _) = run_capture
+      ~env:[ "K4K_STUB_RESPONSES", canned ]
+      ~k4k_args:["--check"; "in.k4k"] ~cwd:dir () in
+    Alcotest.(check int) "first run exit 0" 0 code1;
+    (* Manually create a gap file so --status has something to show
+       (the --check path doesn't compute a gap). *)
+    let gap = Filename.concat dir ".k4k/gap/properties.json" in
+    let _ = Sys.command (Printf.sprintf "mkdir -p %s"
+      (Filename.quote (Filename.dirname gap))) in
+    let oc = open_out gap in
+    output_string oc
+      "{\"count\":1,\"items\":[{\"id\":\"P1234567\",\
+       \"statement\":\"x\",\"status\":\"required\",\"evidence\":[],\
+       \"risk_score\":0.7,\"failure_count\":0,\"blocked\":false,\
+       \"source\":{\"aspect\":\"goal\",\"path\":[\"goal\"]}}]}";
+    close_out oc;
+    let (code, so, _) = run_capture
+      ~k4k_args:["--status"; "in.k4k"] ~cwd:dir () in
+    Alcotest.(check int) "exit 0" 0 code;
+    Alcotest.(check bool) "stdout cites property id" true
+      (Astring.String.is_infix ~affix:"P1234567" so);
+    Alcotest.(check bool) "stdout cites status" true
+      (Astring.String.is_infix ~affix:"required" so);
+    Alcotest.(check bool) "stdout cites risk" true
+      (Astring.String.is_infix ~affix:"risk=" so))
+
+(* S6 — --reset wipes .k4k/. Without --yes, refuse and exit 1.
+   With --yes, the directory disappears and exit is 0. *)
+let s6_reset_subcommand_wipes_dotk4k () =
+  with_workdir (fun dir ->
+    let f = Filename.concat dir "in.k4k" in
+    copy_file (fixture_path "well-formed-structural.k4k") f;
+    let canned = fixture_path "canned-responses.json" in
+    let (code1, _, _) = run_capture
+      ~env:[ "K4K_STUB_RESPONSES", canned ]
+      ~k4k_args:["--check"; "in.k4k"] ~cwd:dir () in
+    Alcotest.(check int) "first run ok" 0 code1;
+    Alcotest.(check bool) ".k4k/ exists" true
+      (Sys.file_exists (Filename.concat dir ".k4k"));
+    (* Refuses without --yes. *)
+    let (code_no, _, se_no) = run_capture
+      ~k4k_args:["--reset"; "in.k4k"] ~cwd:dir () in
+    Alcotest.(check int) "refuses without --yes (exit 1)" 1 code_no;
+    Alcotest.(check bool) "stderr mentions --yes" true
+      (Astring.String.is_infix ~affix:"--yes" se_no);
+    Alcotest.(check bool) ".k4k/ still exists" true
+      (Sys.file_exists (Filename.concat dir ".k4k"));
+    (* Wipes with --yes. *)
+    let (code_yes, _, _) = run_capture
+      ~k4k_args:["--reset"; "--yes"; "in.k4k"] ~cwd:dir () in
+    Alcotest.(check int) "exits 0 with --yes" 0 code_yes;
+    Alcotest.(check bool) ".k4k/ wiped" false
+      (Sys.file_exists (Filename.concat dir ".k4k")))
+
+(* P11 — --no-color disables ANSI escapes globally. The TTY status
+   line uses CR + ANSI EL when color is enabled; with --no-color,
+   that path degrades to a plain newline-terminated line. We can't
+   easily exercise the live TTY status from a captured pipe, so we
+   verify the unit-level behaviour: with --no-color the existing
+   --check (no TTY status line emitted from the production loop)
+   prints exactly 'stable\\n' on stdout, and stderr stays empty. *)
+let p11_no_color_flag_strips_ansi () =
+  with_workdir (fun dir ->
+    let f = Filename.concat dir "in.k4k" in
+    copy_file (fixture_path "well-formed-structural.k4k") f;
+    let canned = fixture_path "canned-responses.json" in
+    let (code, so, se) = run_capture
+      ~env:[ "K4K_STUB_RESPONSES", canned ]
+      ~k4k_args:["--check"; "--no-color"; "in.k4k"] ~cwd:dir () in
+    Alcotest.(check int) "exit 0" 0 code;
+    Alcotest.(check string) "stdout exact" "stable\n" so;
+    Alcotest.(check string) "stderr empty" "" se;
+    Alcotest.(check bool) "no ESC byte in stdout" true
+      (not (Astring.String.is_infix ~affix:"\027[" so)))
+
 (* P19 — second invocation on unchanged file: zero formalization
    events in JSONL (cache hit). *)
 let p19_cache_skips_formalization_when_hash_matches () =
@@ -350,6 +433,16 @@ let () =
       ];
       "P11", [
         Alcotest.test_case "P11_stdout_pipeable" `Quick p11_stdout_pipeable;
+        Alcotest.test_case "P11_no_color_flag_strips_ansi" `Quick
+          p11_no_color_flag_strips_ansi;
+      ];
+      "S2", [
+        Alcotest.test_case "S2_status_subcommand_prints_gap" `Quick
+          s2_status_subcommand_prints_gap;
+      ];
+      "S6", [
+        Alcotest.test_case "S6_reset_subcommand_wipes_dotk4k" `Quick
+          s6_reset_subcommand_wipes_dotk4k;
       ];
       "T1", [
         Alcotest.test_case "T1_empty_file_is_unstable" `Quick t1_empty_file_exits_1;

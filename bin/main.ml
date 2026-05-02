@@ -33,6 +33,31 @@ let check_flag_arg =
   Arg.(value & flag &
        info [ "check" ] ~doc:"Run only the stability check.")
 
+let status_flag_arg =
+  let open Cmdliner in
+  Arg.(value & flag &
+       info [ "status" ]
+         ~doc:"Print the current gap from .k4k/. \
+               No agent or verifier calls.")
+
+let reset_flag_arg =
+  let open Cmdliner in
+  Arg.(value & flag &
+       info [ "reset" ]
+         ~doc:"Wipe .k4k/ for this project. Requires --yes.")
+
+let yes_flag_arg =
+  let open Cmdliner in
+  Arg.(value & flag &
+       info [ "yes" ]
+         ~doc:"Skip the --reset confirmation prompt.")
+
+let no_color_flag_arg =
+  let open Cmdliner in
+  Arg.(value & flag &
+       info [ "no-color" ]
+         ~doc:"Disable ANSI colour / cursor escapes in stdout.")
+
 let max_steps_arg =
   let open Cmdliner in
   Arg.(value & opt int 50 &
@@ -229,9 +254,73 @@ let run_convergence verbosity file ~max_steps ~budget
       output_string stderr (Printf.sprintf "k4k: BUG: %s\n" msg);
       flush stderr; 64
 
-let dispatch verbosity check_flag max_steps budget
+(* C2 — --status. Read .k4k/gap/properties.json and print one line
+   per property: "<id>  <status>  risk=<score>". No agent or verifier
+   calls. Exit 0 always (or 5 if .k4k/ is missing). *)
+let render_status_line (p : K4k.Property.t) =
+  let st = K4k.Property_json.status_to_string p.status in
+  Printf.sprintf "%s  %s  risk=%.4f" p.id st p.risk_score
+
+let run_status _verbosity _file =
+  let k4k_dir = ".k4k" in
+  let dir_present =
+    Sys.file_exists k4k_dir
+    && (try Sys.is_directory k4k_dir with Sys_error _ -> false) in
+  if not dir_present then begin
+    output_string stderr "k4k: state corrupt: .k4k/ not present; \
+                          run k4k <file.k4k> first\n";
+    flush stderr; 5
+  end else
+    match K4k.Persist.read_gap ~k4k_dir with
+    | None ->
+        output_string stdout "(no gap recorded; nothing to report)\n";
+        flush stdout; 0
+    | Some bytes ->
+        let parsed =
+          try Some (Yojson.Safe.from_string bytes) with _ -> None
+        in
+        (match parsed with
+         | None | Some (`Null) ->
+             output_string stdout "(empty gap)\n"; flush stdout; 0
+         | Some j ->
+             let ps = K4k.Property_json.list_of_yojson j in
+             List.iter (fun p ->
+               output_string stdout (render_status_line p ^ "\n"))
+               ps;
+             flush stdout; 0)
+
+(* C2 — --reset. Walk .k4k/ recursively and delete it. Requires
+   --yes; otherwise refuse and print a remediation hint. Exit 0
+   on success; .k4k/ missing is also success. *)
+let rec rm_rf path =
+  match Unix.lstat path with
+  | exception Unix.Unix_error (Unix.ENOENT, _, _) -> ()
+  | st when st.st_kind = Unix.S_DIR ->
+      let entries = Sys.readdir path in
+      Array.iter (fun e ->
+        rm_rf (Filename.concat path e)) entries;
+      (try Unix.rmdir path with _ -> ())
+  | _ ->
+      (try Unix.unlink path with _ -> ())
+
+let run_reset ~yes _verbosity _file =
+  if not yes then begin
+    output_string stderr
+      "k4k: --reset requires --yes (this wipes .k4k/ for this \
+       project); re-run with --reset --yes\n";
+    flush stderr; 1
+  end else begin
+    rm_rf ".k4k";
+    0
+  end
+
+let dispatch verbosity check_flag status_flag reset_flag yes_flag
+    no_color_flag max_steps budget
     cli_verifier cli_verifier_timeout file =
-  if check_flag then run_check verbosity file
+  if no_color_flag then K4k.Logger.Tty_status.set_color_enabled false;
+  if status_flag then run_status verbosity file
+  else if reset_flag then run_reset ~yes:yes_flag verbosity file
+  else if check_flag then run_check verbosity file
   else run_convergence verbosity file ~max_steps ~budget
          ~cli_verifier ~cli_verifier_timeout
 
@@ -240,6 +329,8 @@ let _ = H.check  (* keep step-1 surface alive *)
 let check_term =
   Cmdliner.Term.(const dispatch
                  $ verbosity_arg $ check_flag_arg
+                 $ status_flag_arg $ reset_flag_arg $ yes_flag_arg
+                 $ no_color_flag_arg
                  $ max_steps_arg $ budget_arg
                  $ verifier_cmd_arg $ verifier_timeout_arg
                  $ file_arg)

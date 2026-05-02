@@ -56,6 +56,9 @@ A single developer running on Linux x86_64 or macOS (Intel or ARM), comfortable 
 | `k4k --status <file.k4k>`        | Print current gap from `.k4k/`. No work, no agent calls.              |
 | `k4k --reset <file.k4k> --yes`   | Wipe `.k4k/` for this project. `--yes` required to skip confirmation. |
 | Flags: `-v`, `-vv`, `--no-color`, `--max-steps N` | Verbosity, color suppression, hard step cap.        |
+| Flags: `--budget M`              | Hard budget cap in agent budget units (default 1000).                  |
+| Flags: `--verifier CMD`          | Override the verifier command from the frontmatter.                    |
+| Flags: `--verifier-timeout S`    | Override the verifier wall-clock timeout in seconds.                   |
 
 Exit codes per `spec/error-taxonomy.md`.
 

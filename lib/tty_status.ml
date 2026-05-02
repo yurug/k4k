@@ -57,11 +57,28 @@ let render ~step ~total ~property_id ~slug ~progress ~eta =
 let is_tty () =
   try Unix.isatty Unix.stdout with _ -> false
 
+(* Global color/ANSI gate. Set to [false] by [bin/main.ml] when the
+   user passes [--no-color]; [true] otherwise. The TTY-vs-pipe
+   detection still happens in [is_tty], so the CR+EL escapes are
+   only emitted when stdout is a real TTY *and* [color_enabled].
+   When colour is disabled, [print_inplace] degrades to a one-line
+   newline-terminated print — which is what scripts/pipes already
+   see via the [is_tty]-driven path. *)
+let color_enabled = ref true
+
+let set_color_enabled b = color_enabled := b
+
 let print_inplace s =
-  (* CR + ANSI EL (clear to end of line) + payload, no newline. *)
-  output_string stdout "\r\027[K";
-  output_string stdout s;
-  flush stdout
+  if !color_enabled then begin
+    (* CR + ANSI EL (clear to end of line) + payload, no newline. *)
+    output_string stdout "\r\027[K";
+    output_string stdout s;
+    flush stdout
+  end else begin
+    output_string stdout s;
+    output_char stdout '\n';
+    flush stdout
+  end
 
 let print_final_newline () =
   output_char stdout '\n';

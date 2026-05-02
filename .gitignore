@@ -5,3 +5,4 @@ others/
 *.install
 *~
 .merlin
+.codex

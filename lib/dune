@@ -1,0 +1,4 @@
+(library
+ (name k4k)
+ (public_name k4k)
+ (libraries unix yojson digestif digestif.c re fmt fpath))

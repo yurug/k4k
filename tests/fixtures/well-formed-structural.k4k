@@ -1,0 +1,57 @@
+---
+k4k:
+  version: 1
+  class: cli
+---
+# Well-formed structural fixture (step 1)
+
+<!-- k4k:owner=user begin id=goal -->
+## Goal
+A toy CLI that echoes its argv.
+<!-- k4k:owner=user end -->
+
+<!-- k4k:owner=user begin id=inputs-outputs -->
+## Inputs and outputs
+- argv: any positional args
+- stdin: ignored
+- stdout: argv joined by spaces, plus newline
+- stderr: empty
+- exit codes: 0 on success
+<!-- k4k:owner=user end -->
+
+<!-- k4k:owner=user begin id=errors -->
+## Error taxonomy
+N/A: no error paths in v0
+<!-- k4k:owner=user end -->
+
+<!-- k4k:owner=user begin id=fs -->
+## File-system contract
+N/A
+<!-- k4k:owner=user end -->
+
+<!-- k4k:owner=user begin id=concurrency -->
+## Concurrency
+N/A
+<!-- k4k:owner=user end -->
+
+<!-- k4k:owner=user begin id=perf -->
+## Performance bounds
+N/A
+<!-- k4k:owner=user end -->
+
+<!-- k4k:owner=user begin id=examples-accept -->
+## Acceptance examples
+1. argv=["echo","hi"] stdin="" -> stdout="hi\n" stderr="" exit=0
+2. argv=["echo","a","b"] stdin="" -> stdout="a b\n" stderr="" exit=0
+3. argv=["echo"] stdin="" -> stdout="\n" stderr="" exit=0
+<!-- k4k:owner=user end -->
+
+<!-- k4k:owner=user begin id=examples-refuse -->
+## Refusing examples
+1. (none in v0)
+<!-- k4k:owner=user end -->
+
+<!-- k4k:owner=user begin id=out-of-scope -->
+## Out of scope
+- everything except echo
+<!-- k4k:owner=user end -->

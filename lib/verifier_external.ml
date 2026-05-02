@@ -32,16 +32,6 @@ let truncate_stderr s =
   if n <= 200 then s
   else String.sub s 0 200
 
-let argv_of cfg ~workdir ~focus ~output =
-  let prefix = cfg.command in
-  let focus_args = match focus with
-    | [] -> []
-    | xs -> "--focus" :: xs
-  in
-  prefix @ ["--workdir"; workdir]
-         @ focus_args
-         @ ["--output"; output]
-
 let result_json_of (r : Verifier.result_ok) : string =
   let by =
     List.map (fun (pid, st) ->
@@ -171,6 +161,3 @@ let run t ~workdir ~focus =
   in
   cleanup_output output;
   r
-
-(* Re-export argv helper for tests. *)
-let _ = argv_of

@@ -85,13 +85,35 @@ let read_output_or_error path =
   if not (Sys.file_exists path) then
     Error ("verifier wrote no output file at " ^ path)
   else
-    try Ok (Persist.read_file path)
+    try
+      let content = Persist.read_file path in
+      (* The path is pre-touched (empty) before the verifier runs
+         (NF4 envelope); treat an empty result as "verifier wrote no
+         output". *)
+      if content = "" then
+        Error ("verifier wrote no output file at " ^ path)
+      else Ok content
     with _ -> Error ("could not read verifier output at " ^ path)
 
-let make_output_path () =
-  let tmp = Filename.get_temp_dir_name () in
-  let id = Persist.agent_run_id () in
-  Filename.concat tmp ("k4k-verifier-" ^ id ^ ".json")
+(* C1 — NF4 envelope. Verifier output file is written under
+   <k4k_dir>/scratch/<run_id>/ (inside .k4k/), never under /tmp. The
+   trace hook in Persist.atomic_write doesn't fire for files written
+   by the verifier itself, but the path we ask the verifier to write
+   to is now inside the envelope. We touch the path via Persist
+   helpers (ensure_dir + an empty atomic_write so the trace records
+   it). *)
+let make_output_path ~k4k_dir ~run_id =
+  let base = match k4k_dir with
+    | Some d -> Filename.concat d "scratch"
+    | None -> Filename.concat ".k4k" "scratch"
+  in
+  let dir = Filename.concat base run_id in
+  Persist.ensure_dir dir;
+  let path = Filename.concat dir "verifier-output.json" in
+  (* Pre-touch so the path appears in K4K_TEST_TRACE_WRITES even if
+     the verifier ultimately fails to write it. *)
+  Persist.atomic_write ~path "";
+  path
 
 let cleanup_output path =
   try Sys.remove path with Sys_error _ -> ()
@@ -150,13 +172,23 @@ let split_command cfg =
   | [] -> raise_invalid_config ()
   | prog :: rest -> prog, rest
 
+let debug_argv t ~prog ~args =
+  match t.cfg.logger with
+  | None -> ()
+  | Some lg ->
+      let argv_json : Yojson.Safe.t =
+        `List (List.map (fun s -> `String s) (prog :: args)) in
+      Logger.debug lg "verifier.argv"
+        (`Assoc [ "argv", argv_json ])
+
 let run t ~workdir ~focus =
   let prog, rest = split_command t.cfg in
   let run_id = Persist.agent_run_id () in
-  let output = make_output_path () in
+  let output = make_output_path ~k4k_dir:t.cfg.k4k_dir ~run_id in
   let args = rest @ ["--workdir"; workdir]
              @ (if focus = [] then [] else "--focus" :: focus)
              @ ["--output"; output] in
+  debug_argv t ~prog ~args;
   let res =
     match Subprocess.run ~prog ~args ~timeout_s:t.cfg.timeout_s () with
     | exception Unix.Unix_error (Unix.ENOENT, _, _) ->

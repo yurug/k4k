@@ -72,13 +72,16 @@ let delete_branch ~cwd ~name : (unit, string) result =
   let r = run_git ~cwd ["branch"; "-D"; name] in
   if r.exit_code = 0 then Ok () else Error (trim r.stderr)
 
+(* C1 — NF4 envelope. The patch file used to land in /tmp via
+   [Filename.temp_file]; route it under [<cwd>/.k4k/scratch/<id>/]
+   instead. The directory and file are created via [Persist] so the
+   K4K_TEST_TRACE_WRITES hook captures them. *)
 let apply_diff ~cwd ~diff : (unit, string) result =
-  (* Pipe the diff via a temporary file (no clean way to write to git's
-     stdin via Subprocess at present). *)
-  let tmp = Filename.temp_file "k4k-gap-" ".patch" in
-  let oc = open_out tmp in
-  output_string oc diff;
-  close_out oc;
+  let id = Persist.agent_run_id () in
+  let scratch_dir = Filename.concat cwd
+    (Filename.concat ".k4k" (Filename.concat "scratch" id)) in
+  let tmp = Filename.concat scratch_dir "gap.patch" in
+  Persist.atomic_write ~path:tmp diff;
   let r = run_git ~cwd ["apply"; "--index"; tmp] in
   (try Sys.remove tmp with _ -> ());
   if r.exit_code = 0 then Ok () else Error (trim r.stderr)

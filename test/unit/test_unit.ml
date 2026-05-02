@@ -128,10 +128,51 @@ module LT = struct
       List.iter (fun l ->
         let _ = Yojson.Safe.from_string l in ()) lines)
 
+  (* H3 — Debug emits a JSONL line at debug level. Verbose does not.
+     This is the additivity check: any event observable at Verbose
+     must also be observable at Debug, and Debug must produce events
+     that Verbose does not. *)
+  let p11_debug_is_additive_over_verbose () =
+    with_tmpdir (fun dir ->
+      let v_path = Filename.concat dir "v.jsonl" in
+      let d_path = Filename.concat dir "d.jsonl" in
+      let lv = Logger.create ~verbosity:`Verbose
+        ~jsonl_path:(Some v_path) in
+      let ld = Logger.create ~verbosity:`Debug
+        ~jsonl_path:(Some d_path) in
+      Logger.info lv "evt.info" (`Assoc []);
+      Logger.debug lv "evt.debug" (`Assoc []);
+      Logger.info ld "evt.info" (`Assoc []);
+      Logger.debug ld "evt.debug" (`Assoc []);
+      let read p =
+        if not (Sys.file_exists p) then []
+        else String.split_on_char '\n' (read_all p)
+             |> List.filter (fun s -> s <> "") in
+      let v_lines = read v_path and d_lines = read d_path in
+      let level_of l =
+        match Yojson.Safe.from_string l with
+        | `Assoc fs ->
+            (match List.assoc_opt "level" fs with
+             | Some (`String s) -> s | _ -> "?")
+        | _ -> "?"
+      in
+      let v_levels = List.map level_of v_lines in
+      let d_levels = List.map level_of d_lines in
+      Alcotest.(check bool) "verbose has info" true
+        (List.mem "info" v_levels);
+      Alcotest.(check bool) "verbose has debug too" true
+        (List.mem "debug" v_levels);
+      Alcotest.(check bool) "debug has info" true
+        (List.mem "info" d_levels);
+      Alcotest.(check bool) "debug has debug" true
+        (List.mem "debug" d_levels))
+
   let tests = [
     Alcotest.test_case "P11_scrub_redacts_token" `Quick p11_scrub_redacts_token;
     Alcotest.test_case "P11_scrub_idempotent_on_plain" `Quick p11_scrub_idempotent;
     Alcotest.test_case "P11_jsonl_appends_event" `Quick p11_jsonl_appends_event;
+    Alcotest.test_case "P11_debug_is_additive_over_verbose" `Quick
+      p11_debug_is_additive_over_verbose;
   ]
 end
 
@@ -2799,6 +2840,53 @@ module NF4T = struct
             p (String.concat "," prefixes)
       ) lines)
 
+  (* C1 — the dry-pass NF4 test only used Verifier_stub, so the
+     /tmp-write that Verifier_external used to do was never observed.
+     Drive a tiny external verifier under the trace hook and assert
+     no /tmp write appears. *)
+  let nf4_verifier_external_no_tmp_writes () =
+    with_tmpdir (fun dir ->
+      let trace = Filename.concat dir "trace.log" in
+      let k4k_dir = Filename.concat dir ".k4k" in
+      Persist.ensure_dir k4k_dir;
+      Unix.putenv "K4K_TEST_TRACE_WRITES" trace;
+      let prog = Filename.concat dir "_verifier.sh" in
+      let body =
+        "#!/bin/sh\n\
+         OUTPUT=\"\"\n\
+         while [ $# -gt 0 ]; do\n\
+         \  case \"$1\" in\n\
+         \    --output) OUTPUT=\"$2\"; shift 2 ;;\n\
+         \    *) shift ;;\n\
+         \  esac\n\
+         done\n\
+         cat > \"$OUTPUT\" <<'JEOF'\n\
+         {\"by_property\":{},\"raw_exit_code\":0,\"duration_ms\":1}\n\
+         JEOF\n\
+         exit 0\n" in
+      let oc = open_out prog in
+      output_string oc body; close_out oc;
+      Unix.chmod prog 0o755;
+      let v = Verifier_external.create
+        { Verifier_external.default_config with
+          command = [prog]; timeout_s = 5;
+          k4k_dir = Some k4k_dir } in
+      let _ = Verifier_external.run v ~workdir:dir ~focus:[] in
+      Unix.putenv "K4K_TEST_TRACE_WRITES" "";
+      let lines = read_lines trace in
+      let prefixes = [ k4k_dir; dir ] in
+      Alcotest.(check bool) "trace nonempty" true (lines <> []);
+      let tmp_dir = Filename.get_temp_dir_name () in
+      List.iter (fun p ->
+        if Astring.String.is_prefix ~affix:tmp_dir p
+           && not (Astring.String.is_prefix ~affix:dir p) then
+          Alcotest.failf
+            "NF4 violation (verifier_external): /tmp-style write %s" p;
+        if not (NF4T_helpers.under p prefixes) then
+          Alcotest.failf
+            "NF4 violation (verifier_external): %s outside envelope" p
+      ) lines)
+
   (* Production safety: env var unset → trace not written, behavior
      unchanged. *)
   let nf4_trace_disabled_by_default () =
@@ -2818,6 +2906,8 @@ module NF4T = struct
   let tests = [
     Alcotest.test_case "NF4_state_confinement_envelope" `Quick
       nf4_state_confinement_envelope;
+    Alcotest.test_case "NF4_verifier_external_no_tmp_writes" `Quick
+      nf4_verifier_external_no_tmp_writes;
     Alcotest.test_case "NF4_trace_disabled_by_default" `Quick
       nf4_trace_disabled_by_default;
     Alcotest.test_case "NF4_path_check_helper" `Quick nf4_path_check;

@@ -87,6 +87,18 @@ let stderr_line t s =
   | `Quiet           -> ()
   | `Verbose | `Debug -> output_string stderr (scrub s ^ "\n"); flush stderr
 
+(* H3 — Debug-only stderr line. Visible at [`Debug] verbosity only,
+   so [-vv] is strictly additive over [-v]. Subprocess argv listings
+   and agent prompt prefixes go through this channel. *)
+let debug_line t s =
+  match t.verbosity with
+  | `Debug -> output_string stderr (scrub s ^ "\n"); flush stderr
+  | _ -> ()
+
+let debug t event details =
+  append_jsonl t "debug" event details;
+  debug_line t (Printf.sprintf "[debug] %s" event)
+
 let info t event details =
   append_jsonl t "info" event details;
   stderr_line t (Printf.sprintf "[info] %s" event)

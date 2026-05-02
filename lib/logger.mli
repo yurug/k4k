@@ -35,6 +35,13 @@ val create : verbosity:verbosity -> jsonl_path:string option -> t
     @invariant P11. *)
 val info : t -> string -> Yojson.Safe.t -> unit
 
+(** [debug t event details] — emit a structured DEBUG event. The
+    stderr line is visible at [`Debug] verbosity only ([-vv]), so
+    [-vv] is strictly additive over [-v]; the JSONL line is always
+    written when [jsonl_path] is set. Used for subprocess argv,
+    agent prompt prefixes, and verifier-protocol details. *)
+val debug : t -> string -> Yojson.Safe.t -> unit
+
 (** [warn t event details] — emit a structured WARN event. *)
 val warn : t -> string -> Yojson.Safe.t -> unit
 

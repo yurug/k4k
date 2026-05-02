@@ -328,5 +328,26 @@ let () =
                 Alcotest.(check int) "exit 0" 0 code;
                 Alcotest.(check bool) "stdout has 'stable'" true
                   (Astring.String.is_infix ~affix:"stable" so)));
+        Alcotest.test_case "K4K_LIVE_smoke_gap_step_real_claude" `Slow
+          (fun () ->
+            if Sys.getenv_opt "K4K_LIVE" <> Some "1" then ()
+            else
+              with_workdir_and_git (fun dir ->
+                let f = Filename.concat dir "echo-upper.k4k" in
+                copy_file (fixture_path "echo-upper.k4k") f;
+                let _ = K4k.Git.commit_all ~cwd:dir
+                  ~message:"add spec" in
+                (* Live: real Claude formalizes + proposes patches;
+                   real dune verifies. We bound max-steps tightly. *)
+                let (code, _so, _se) = run_capture
+                  ~env:["K4K_LIVE", "1";
+                        "PATH", Sys.getenv "PATH"]
+                  ~k4k_args:["--max-steps"; "3";
+                             "--budget"; "5000";
+                             "echo-upper.k4k"]
+                  ~cwd:dir () in
+                Alcotest.(check bool)
+                  "exit 0/4 (converged or max-steps)" true
+                  (code = 0 || code = 4)));
       ];
     ]

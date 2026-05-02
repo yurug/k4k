@@ -9,11 +9,26 @@
 let raise_state msg =
   raise (Error.K4k_error (Error.E_state_corrupt msg))
 
+let make_deps (type b) (type v)
+    (module B : Agent_backend.S with type t = b)
+    (module V : Verifier.S with type t = v)
+    ~backend ~verifier ~inputs ~budget_ref : _ Gap_step.deps =
+  {
+    k4k_dir = inputs.Harness.k4k_dir;
+    workdir = ".";
+    agent_invoke = (fun ~purpose ~prompt ~budget ->
+      B.invoke backend ~purpose ~prompt ~budget);
+    verifier_run = (fun ~workdir ~focus ->
+      V.run verifier ~workdir ~focus);
+    logger = inputs.Harness.logger;
+    budget_remaining = budget_ref;
+    agent_backend = backend;
+  }
+
 let run (type b) (type v)
     (module B : Agent_backend.S with type t = b)
     (module V : Verifier.S with type t = v)
-    ~(backend : b)
-    ~(verifier : v)
+    ~(backend : b) ~(verifier : v)
     ~(inputs : Harness.check_inputs)
     ~(cfg : Run_loop.config) : Harness.check_outcome =
   Sigint.install ();
@@ -28,17 +43,8 @@ let run (type b) (type v)
               "budget", `Int cfg.budget ]);
   let initial_gap = Property.from_characterization d in
   let budget_ref = ref cfg.budget in
-  let deps : _ Gap_step.deps = {
-    k4k_dir = inputs.k4k_dir;
-    workdir = ".";
-    agent_invoke = (fun ~purpose ~prompt ~budget ->
-      B.invoke backend ~purpose ~prompt ~budget);
-    verifier_run = (fun ~workdir ~focus ->
-      V.run verifier ~workdir ~focus);
-    logger = inputs.logger;
-    budget_remaining = budget_ref;
-    agent_backend = backend;
-  } in
+  let deps = make_deps (module B) (module V)
+               ~backend ~verifier ~inputs ~budget_ref in
   let _ : Run_loop.result =
     Run_loop.run ~deps ~d ~cfg ~k4k_dir:inputs.k4k_dir
       ~logger:inputs.logger ~initial_gap

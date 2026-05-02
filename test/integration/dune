@@ -1,7 +1,8 @@
 (test
  (name test_integration)
- (libraries k4k alcotest unix)
+ (libraries k4k alcotest unix yojson)
  (deps
   (alias_rec ../../bin/all)
   (file ../../tests/fixtures/well-formed-structural.k4k)
-  (file ../../tests/fixtures/empty.k4k)))
+  (file ../../tests/fixtures/empty.k4k)
+  (file ../../tests/fixtures/canned-responses.json)))

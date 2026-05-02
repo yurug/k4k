@@ -25,11 +25,13 @@ type section = {
   begin_line   : int;                 (* 1-based line of the begin marker *)
 }
 
-(** Parsed frontmatter — only the fields k4k itself needs in step 1. *)
+(** Parsed frontmatter — fields k4k consumes from the YAML head. *)
 type frontmatter = {
   version     : int;
   cls         : string;               (* the [class] value, e.g. "cli" *)
   raw         : string;               (* the bytes between the [---] fences *)
+  verifier_command   : string list option;  (* k4k.verifier.command *)
+  verifier_timeout_s : int option;          (* k4k.verifier.timeout_s *)
 }
 
 (** A parsed interaction file. *)

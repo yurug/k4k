@@ -2,7 +2,13 @@
 
     Step 2 supports [k4k --check <file.k4k>] which runs structural +
     semantic stability and persists [.k4k/characterization/desired/].
-    The full convergence loop (no [--check]) lands in step 3. *)
+    The full convergence loop (no [--check]) lands in step 3.
+
+    Verifier is selected per ADR-008: default [Verifier_external] (the
+    generic adapter), or [Verifier_stub] when [K4K_STUB_RESPONSES] is
+    set (test-only path). The verifier executable + timeout come from
+    the interaction file's [k4k.verifier] frontmatter, optionally
+    overridden by [--verifier]/[--verifier-timeout]. *)
 
 open K4k
 
@@ -39,16 +45,23 @@ let budget_arg =
        info [ "budget" ] ~docv:"M"
          ~doc:"Hard budget cap (default 1000 units).")
 
+let verifier_cmd_arg =
+  let open Cmdliner in
+  Arg.(value & opt (some string) None &
+       info [ "verifier" ] ~docv:"CMD"
+         ~doc:"Override the verifier command (whitespace-separated).")
+
+let verifier_timeout_arg =
+  let open Cmdliner in
+  Arg.(value & opt (some int) None &
+       info [ "verifier-timeout" ] ~docv:"S"
+         ~doc:"Override the verifier timeout in seconds.")
+
 let live_backend () =
   Sys.getenv_opt "K4K_LIVE" = Some "1"
 
 (* For test environments: a JSON file at $K4K_STUB_RESPONSES.
-   Round-robin per purpose. Each entry:
-     {"purpose": "Formalization"|"Gap_step", "text": "...",
-      "match": "<substring>"?}
-   When [match] is given, the trigger fires on every prompt
-   containing the substring. Otherwise round-robin per-purpose: the
-   first matching invocation consumes the entry. *)
+   Round-robin per purpose. *)
 let load_stub_canned_from_env () =
   match Sys.getenv_opt "K4K_STUB_RESPONSES" with
   | None | Some "" -> []
@@ -129,42 +142,98 @@ let run_check verbosity file =
       output_string stderr (Printf.sprintf "k4k: BUG: %s\n" msg);
       flush stderr; 64
 
-let make_verifier ~k4k_dir ~logger =
-  Verifier_dune_ocaml.create
-    { Verifier_dune_ocaml.default_config with
+(* Read the verifier config from frontmatter; merge in CLI overrides. *)
+let read_verifier_config ~file ~cli_cmd ~cli_timeout =
+  let parsed =
+    try
+      let content = Persist.read_file file in
+      Some (Parser.parse content)
+    with _ -> None
+  in
+  let fm_cmd, fm_to = match parsed with
+    | None -> None, None
+    | Some p ->
+        p.Parser.frontmatter.verifier_command,
+        p.Parser.frontmatter.verifier_timeout_s
+  in
+  let cmd = match cli_cmd with
+    | Some s ->
+        Some (List.filter (fun x -> x <> "")
+                (String.split_on_char ' ' s))
+    | None -> fm_cmd
+  in
+  let timeout = match cli_timeout with
+    | Some n when n > 0 -> n
+    | _ ->
+        (match fm_to with
+         | Some n when n > 0 -> n
+         | _ -> 60)
+  in
+  cmd, timeout
+
+let raise_unstable_missing_verifier () =
+  raise (Error.K4k_error
+           (Error.E_unstable
+              [ Error.issue ~section:"frontmatter"
+                  "k4k.verifier.command is required (set in frontmatter \
+                   or pass --verifier)" ]))
+
+let make_external_verifier ~k4k_dir ~logger ~command ~timeout_s =
+  Verifier_external.create
+    { Verifier_external.command;
+      timeout_s;
       k4k_dir = Some k4k_dir;
       logger = Some logger; }
 
-let run_convergence verbosity file ~max_steps ~budget =
+let run_with_external verbosity file ~max_steps ~budget
+    ~command ~timeout_s =
   let k4k_dir = ".k4k" in
   let jsonl_path = Some (Filename.concat k4k_dir "log.jsonl") in
   let logger = Logger.create ~verbosity ~jsonl_path in
   let inputs = Harness.{ file_path = file; k4k_dir; logger } in
   let cfg = { Run_loop.max_steps; budget; between_steps = None } in
+  let verifier = make_external_verifier ~k4k_dir ~logger
+                   ~command ~timeout_s in
+  let _outcome =
+    match make_backend () with
+    | `Claude b ->
+        Convergence.run
+          (module Backend_claude) (module Verifier_external)
+          ~backend:b ~verifier ~inputs ~cfg
+    | `Stub b ->
+        Convergence.run
+          (module Backend_stub) (module Verifier_external)
+          ~backend:b ~verifier ~inputs ~cfg
+  in
+  let _ = _outcome in
+  Logger.stdout_line logger "done"; 0
+
+let run_convergence verbosity file ~max_steps ~budget
+    ~cli_verifier ~cli_verifier_timeout =
+  Sigint.install ();
   try
-    let verifier = make_verifier ~k4k_dir ~logger in
-    let _outcome =
-      match make_backend () with
-      | `Claude b ->
-          Convergence.run
-            (module Backend_claude) (module Verifier_dune_ocaml)
-            ~backend:b ~verifier ~inputs ~cfg
-      | `Stub b ->
-          Convergence.run
-            (module Backend_stub) (module Verifier_dune_ocaml)
-            ~backend:b ~verifier ~inputs ~cfg
-    in
-    Logger.stdout_line logger "done"; 0
+    let cmd, timeout = read_verifier_config ~file
+                        ~cli_cmd:cli_verifier
+                        ~cli_timeout:cli_verifier_timeout in
+    match cmd with
+    | None | Some [] -> raise_unstable_missing_verifier ()
+    | Some command ->
+        run_with_external verbosity file ~max_steps ~budget
+          ~command ~timeout_s:timeout
   with
   | Error.K4k_error err ->
+      let logger = Logger.create ~verbosity
+        ~jsonl_path:(Some ".k4k/log.jsonl") in
       Logger.error logger err; Error.exit_code_of err
   | Error.Invariant_violation msg ->
       output_string stderr (Printf.sprintf "k4k: BUG: %s\n" msg);
       flush stderr; 64
 
-let dispatch verbosity check_flag max_steps budget file =
+let dispatch verbosity check_flag max_steps budget
+    cli_verifier cli_verifier_timeout file =
   if check_flag then run_check verbosity file
   else run_convergence verbosity file ~max_steps ~budget
+         ~cli_verifier ~cli_verifier_timeout
 
 let _ = H.check  (* keep step-1 surface alive *)
 
@@ -172,6 +241,7 @@ let check_term =
   Cmdliner.Term.(const dispatch
                  $ verbosity_arg $ check_flag_arg
                  $ max_steps_arg $ budget_arg
+                 $ verifier_cmd_arg $ verifier_timeout_arg
                  $ file_arg)
 
 let cmd =

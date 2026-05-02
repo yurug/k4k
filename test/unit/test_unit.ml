@@ -1027,7 +1027,7 @@ module Smoke = struct
       ~user_section_hashes:[("g","h")]
       ~agent_name:"stub" ~agent_version:"v"
       ~verifier_name:"stub" ~verifier_version:"v"
-      ~desired_hash:"deadbeef" in
+      ~desired_hash:"deadbeef" () in
     let s = Yojson.Safe.to_string mj in
     Alcotest.(check bool) "json non-empty" true (String.length s > 10)
 
@@ -1083,187 +1083,249 @@ module Smoke = struct
   ]
 end
 
-(* ---------------- Dune output parser (≥3) ---------------- *)
-module DOT = struct
-  let parses_ok_line () =
-    let l = "  [OK]          Suite        0   P3a4b1c2_argv_handles_x." in
-    match Dune_output.parse_line l with
-    | Some ln ->
-        Alcotest.(check string) "name"
-          "P3a4b1c2_argv_handles_x" ln.test_name;
-        Alcotest.(check (option string)) "pid"
-          (Some "P3a4b1c2") ln.property_id;
-        Alcotest.(check bool) "OK kind" true (ln.kind = `Ok)
-    | None -> Alcotest.fail "expected match"
+(* ---------------- Verifier_external_parse (≥3) ---------------- *)
+module VEP = struct
+  module P = Verifier_external_parse
 
-  let parses_fail_line () =
-    let l = "  [FAIL]        Suite        1   P5e6f7a8_stdout_is_utf8." in
-    match Dune_output.parse_line l with
-    | Some ln ->
-        Alcotest.(check bool) "FAIL" true (ln.kind = `Fail);
-        Alcotest.(check (option string)) "pid"
-          (Some "P5e6f7a8") ln.property_id
-    | None -> Alcotest.fail "expected match"
+  let parses_minimal_result () =
+    let s = {|{"by_property":{"P1234567":"established"},
+              "raw_exit_code":0,"duration_ms":42}|} in
+    match P.parse s with
+    | Ok r ->
+        Alcotest.(check int) "1 entry" 1 (List.length r.by_property);
+        Alcotest.(check int) "raw_exit_code" 0 r.raw_exit_code;
+        Alcotest.(check int) "duration_ms" 42 r.duration_ms;
+        Alcotest.(check int) "no warnings" 0 (List.length r.warnings)
+    | Error e -> Alcotest.fail (P.render_error e)
 
-  let ignores_other_lines () =
-    Alcotest.(check bool) "no header" true
-      (Dune_output.parse_line "Testing `myproject'." = None);
-    Alcotest.(check bool) "no blank" true
-      (Dune_output.parse_line "" = None)
+  let parses_warnings () =
+    let s = {|{"by_property":{},"raw_exit_code":0,"duration_ms":1,
+              "warnings":[{"kind":"k1","message":"hi"}]}|} in
+    match P.parse s with
+    | Ok r ->
+        Alcotest.(check int) "one warning" 1 (List.length r.warnings);
+        Alcotest.(check string) "kind" "k1"
+          (List.hd r.warnings).kind
+    | Error e -> Alcotest.fail (P.render_error e)
 
-  let t20_unconventional_name_no_pid () =
-    let l = "  [OK]          Suite        0   weirdname_no_pid." in
-    match Dune_output.parse_line l with
-    | Some ln ->
-        Alcotest.(check (option string)) "no pid" None ln.property_id
-    | None -> Alcotest.fail "expected match"
+  let rejects_invalid_status () =
+    let s = {|{"by_property":{"P1":"sometimes"},
+              "raw_exit_code":0,"duration_ms":1}|} in
+    match P.parse s with
+    | Error (P.Bad_status ("P1", "sometimes")) -> ()
+    | Error _ -> Alcotest.fail "wrong error variant"
+    | Ok _ -> Alcotest.fail "expected Bad_status"
 
-  let parses_full_output () =
-    let out = String.concat "\n" [
-      "Testing `myproject'.";
-      "  [OK]          Suite        0   P3a4b1c2_argv.";
-      "  [FAIL]        Suite        1   P5e6f7a8_stdout.";
-      "  [OK]          Suite        2   weird_no_pid_test.";
-      "All done."
-    ] in
-    let lines = Dune_output.parse out in
-    Alcotest.(check int) "3 test lines" 3 (List.length lines);
-    Alcotest.(check bool) "build_error_p false" false
-      (Dune_output.build_error_p out)
+  let rejects_missing_field () =
+    let s = {|{"by_property":{},"raw_exit_code":0}|} in
+    match P.parse s with
+    | Error (P.Missing_field "duration_ms") -> ()
+    | Error _ -> Alcotest.fail "wrong error variant"
+    | Ok _ -> Alcotest.fail "expected Missing_field"
 
-  let detects_build_error () =
-    Alcotest.(check bool) "no test lines = build error" true
-      (Dune_output.build_error_p "Error: ocaml says no\n")
+  let rejects_invalid_json () =
+    match P.parse "{not json" with
+    | Error (P.Invalid_json _) -> ()
+    | _ -> Alcotest.fail "expected Invalid_json"
+
+  let focus_padding_adds_unknowns () =
+    let bp = [("P1", `Established)] in
+    let r = P.with_focus_padding ~focus:["P1"; "P2"] bp in
+    Alcotest.(check int) "2 entries" 2 (List.length r);
+    Alcotest.(check bool) "P2 unknown" true
+      (List.assoc "P2" r = `Unknown)
+
+  let focus_padding_preserves_extras () =
+    let bp = [("P1", `Established); ("P9", `Contradicted)] in
+    let r = P.with_focus_padding ~focus:["P1"] bp in
+    Alcotest.(check int) "2 entries" 2 (List.length r);
+    Alcotest.(check bool) "P9 retained" true
+      (List.mem_assoc "P9" r)
 
   let tests = [
-    Alcotest.test_case "Dune_output_parses_OK_line" `Quick parses_ok_line;
-    Alcotest.test_case "Dune_output_parses_FAIL_line" `Quick parses_fail_line;
-    Alcotest.test_case "Dune_output_ignores_other_lines" `Quick
-      ignores_other_lines;
-    Alcotest.test_case "T20_unconventional_test_name_has_no_pid" `Quick
-      t20_unconventional_name_no_pid;
-    Alcotest.test_case "Dune_output_parses_full_output" `Quick
-      parses_full_output;
-    Alcotest.test_case "Dune_output_detects_build_error" `Quick
-      detects_build_error;
+    Alcotest.test_case "Verifier_external_parse_minimal" `Quick
+      parses_minimal_result;
+    Alcotest.test_case "Verifier_external_parse_warnings" `Quick
+      parses_warnings;
+    Alcotest.test_case "Verifier_external_parse_invalid_status" `Quick
+      rejects_invalid_status;
+    Alcotest.test_case "Verifier_external_parse_missing_field" `Quick
+      rejects_missing_field;
+    Alcotest.test_case "Verifier_external_parse_invalid_json" `Quick
+      rejects_invalid_json;
+    Alcotest.test_case "Verifier_external_focus_padding_unknowns" `Quick
+      focus_padding_adds_unknowns;
+    Alcotest.test_case "Verifier_external_focus_padding_extras" `Quick
+      focus_padding_preserves_extras;
   ]
 end
 
-(* ---------------- Verifier_dune_ocaml (mocked subprocess via fake dune) ---------------- *)
-module VDO = struct
+(* ---------------- Verifier_external (≥3) ---------------- *)
+module VEXT = struct
   let module_conforms_to_verifier () =
-    let module _ : Verifier.S = Verifier_dune_ocaml in ()
+    let module _ : Verifier.S = Verifier_external in ()
 
-  let unavailable_returns_tool_error () =
-    let v = Verifier_dune_ocaml.create
-      { Verifier_dune_ocaml.default_config with
-        dune_binary = "/no/such/dune-binary";
-        timeout_s = 1; } in
+  let name_is_external () =
+    Alcotest.(check string) "name" "external" Verifier_external.name
+
+  let creates_returns_handle () =
+    let v = Verifier_external.create
+      Verifier_external.default_config in
+    Alcotest.(check string) "version" "0.1.0"
+      (Verifier_external.version v)
+
+  (* Write a tiny shell script that emits a JSON result file then exits. *)
+  let write_executable path body =
+    let oc = open_out path in
+    output_string oc body;
+    close_out oc;
+    Unix.chmod path 0o755
+
+  let make_emit_script ~dir ~json ~exit_code =
+    let path = Filename.concat dir "_verifier.sh" in
+    let body = Printf.sprintf
+      "#!/bin/sh\n\
+       OUTPUT=\"\"\n\
+       while [ $# -gt 0 ]; do\n\
+       \  case \"$1\" in\n\
+       \    --output) OUTPUT=\"$2\"; shift 2 ;;\n\
+       \    *) shift ;;\n\
+       \  esac\n\
+       done\n\
+       cat > \"$OUTPUT\" <<'JEOF'\n\
+       %s\n\
+       JEOF\n\
+       exit %d\n"
+      json exit_code in
+    write_executable path body;
+    path
+
+  let make_no_output_script ~dir ~exit_code =
+    let path = Filename.concat dir "_verifier.sh" in
+    let body = Printf.sprintf
+      "#!/bin/sh\nexit %d\n" exit_code in
+    write_executable path body;
+    path
+
+  let invokes_configured_command () =
     with_tmpdir (fun dir ->
-      match Verifier_dune_ocaml.run v ~workdir:dir ~focus:[] with
+      let json = {|{"by_property":{"P1234567":"established"},
+                    "raw_exit_code":0,"duration_ms":7}|} in
+      let prog = make_emit_script ~dir ~json ~exit_code:0 in
+      let v = Verifier_external.create
+        { Verifier_external.default_config with
+          command = [prog]; timeout_s = 5 } in
+      match Verifier_external.run v ~workdir:dir
+              ~focus:["P1234567"] with
+      | `Ok r ->
+          let s = List.assoc "P1234567" r.by_property in
+          Alcotest.(check bool) "P1234567 established" true
+            (s = `Established);
+          Alcotest.(check int) "duration_ms" 7 r.duration_ms
+      | `Tool_error e -> Alcotest.fail ("expected Ok, got: " ^ e))
+
+  let tool_error_on_nonzero_exit () =
+    with_tmpdir (fun dir ->
+      let prog = make_no_output_script ~dir ~exit_code:1 in
+      let v = Verifier_external.create
+        { Verifier_external.default_config with
+          command = [prog]; timeout_s = 5 } in
+      match Verifier_external.run v ~workdir:dir ~focus:[] with
       | `Tool_error _ -> ()
       | `Ok _ -> Alcotest.fail "expected Tool_error")
 
-  let name_is_dune_ocaml () =
-    Alcotest.(check string) "name" "dune-ocaml" Verifier_dune_ocaml.name
+  let tool_error_on_missing_output () =
+    with_tmpdir (fun dir ->
+      let prog = make_no_output_script ~dir ~exit_code:0 in
+      let v = Verifier_external.create
+        { Verifier_external.default_config with
+          command = [prog]; timeout_s = 5 } in
+      match Verifier_external.run v ~workdir:dir ~focus:[] with
+      | `Tool_error e ->
+          Alcotest.(check bool) "mentions output" true
+            (Astring.String.is_infix ~affix:"output" e
+             || Astring.String.is_infix ~affix:"no output" e
+             || Astring.String.is_infix ~affix:"wrote no" e)
+      | `Ok _ -> Alcotest.fail "expected Tool_error")
 
-  let creates_returns_handle () =
-    let v = Verifier_dune_ocaml.create
-      Verifier_dune_ocaml.default_config in
-    Alcotest.(check string) "version" "0.1.0"
-      (Verifier_dune_ocaml.version v)
+  let tool_error_on_invalid_json () =
+    with_tmpdir (fun dir ->
+      let prog = make_emit_script ~dir
+        ~json:"{not json}" ~exit_code:0 in
+      let v = Verifier_external.create
+        { Verifier_external.default_config with
+          command = [prog]; timeout_s = 5 } in
+      match Verifier_external.run v ~workdir:dir ~focus:[] with
+      | `Tool_error _ -> ()
+      | `Ok _ -> Alcotest.fail "expected Tool_error")
 
-  (* End-to-end: create a tiny passing dune+alcotest project, run the
-     real verifier, expect [Established] for the named property. *)
-  let write_file p s =
-    let oc = open_out p in output_string oc s; close_out oc
+  let focus_unknowns_default_to_unknown () =
+    with_tmpdir (fun dir ->
+      let json = {|{"by_property":{"P1":"established"},
+                    "raw_exit_code":0,"duration_ms":1}|} in
+      let prog = make_emit_script ~dir ~json ~exit_code:0 in
+      let v = Verifier_external.create
+        { Verifier_external.default_config with
+          command = [prog]; timeout_s = 5 } in
+      match Verifier_external.run v ~workdir:dir
+              ~focus:["P1"; "P2"] with
+      | `Ok r ->
+          Alcotest.(check bool) "P1 established" true
+            (List.assoc "P1" r.by_property = `Established);
+          Alcotest.(check bool) "P2 unknown" true
+            (List.assoc "P2" r.by_property = `Unknown)
+      | `Tool_error e -> Alcotest.fail e)
 
-  let mk_passing_project dir =
-    write_file (Filename.concat dir "dune-project") "(lang dune 3.22)\n";
-    Unix.mkdir (Filename.concat dir "test") 0o755;
-    write_file (Filename.concat dir "test/dune")
-      "(test (name run) (libraries alcotest))\n";
-    write_file (Filename.concat dir "test/run.ml")
-      "let () =\n\
-      \  Alcotest.run \"demo\"\n\
-      \    [ \"S\", [ Alcotest.test_case \"P1234567_demo\" `Quick \
-                       (fun () -> ()) ] ]\n"
+  let missing_binary_returns_tool_error () =
+    let v = Verifier_external.create
+      { Verifier_external.default_config with
+        command = ["/no/such/binary"]; timeout_s = 1 } in
+    with_tmpdir (fun dir ->
+      match Verifier_external.run v ~workdir:dir ~focus:[] with
+      | `Tool_error _ -> ()
+      | `Ok _ -> Alcotest.fail "expected Tool_error")
 
-  (* End-to-end with real dune: skipped under [dune runtest]'s sandbox
-     (which has no $PATH for dune). Runnable manually via
-     [K4K_REAL_DUNE=1 dune runtest --force]. *)
-  let real_dune_pass () =
-    match Sys.getenv_opt "K4K_REAL_DUNE" with
-    | Some "1" ->
-        with_tmpdir (fun dir ->
-          mk_passing_project dir;
-          let v = Verifier_dune_ocaml.create
-            { Verifier_dune_ocaml.default_config with
-              timeout_s = 60 } in
-          match Verifier_dune_ocaml.run v ~workdir:dir
-                  ~focus:["P1234567"] with
-          | `Ok r ->
-              let st =
-                List.assoc_opt "P1234567" r.by_property
-                |> Option.map (function
-                  | `Established -> "established"
-                  | `Contradicted -> "contradicted"
-                  | `Unknown -> "unknown")
-              in
-              Alcotest.(check (option string)) "P1234567 -> Established"
-                (Some "established") st
-          | `Tool_error e ->
-              Alcotest.fail ("real dune: " ^ e))
-    | _ -> ()
-
-  (* T20 — when the verifier output contains a non-conforming test
-     name, a verifier.warning JSONL event must be emitted and the
-     property maps to Unknown. *)
-  let t20_warns_on_unconventional_name () =
+  let warnings_emit_logger_event () =
     with_tmpdir (fun dir ->
       let k4k_dir = Filename.concat dir ".k4k" in
       Persist.ensure_dir k4k_dir;
+      let jsonl = Filename.concat k4k_dir "log.jsonl" in
       let logger = Logger.create ~verbosity:`Quiet
-        ~jsonl_path:(Some (Filename.concat k4k_dir "log.jsonl")) in
-      let v = Verifier_dune_ocaml.create
-        { Verifier_dune_ocaml.default_config with
-          k4k_dir = Some k4k_dir;
-          logger = Some logger;
-          dune_binary = "/bin/cat" }
-      in
-      (* We cannot easily run real dune here; instead test the helper
-         function that processes parsed lines directly via
-         [warnings] — populated by [run] but exposed for tests. The
-         full pipeline is exercised by Dune_output tests + S1. *)
-      let _ = v in
-      let lines = [
-        Dune_output.{ kind = `Ok; test_name = "weird_no_pid";
-                      property_id = None };
-        Dune_output.{ kind = `Ok; test_name = "P1234567_x";
-                      property_id = Some "P1234567" };
-      ] in
-      let pid_pairs = List.filter_map
-        (fun (l : Dune_output.test_line) ->
-          if l.property_id = None
-          then Some (l.test_name,
-                     "test name does not match P<id>_<slug>")
-          else None) lines in
-      Alcotest.(check int) "one warning" 1 (List.length pid_pairs);
-      Alcotest.(check string) "first warning name"
-        "weird_no_pid" (fst (List.hd pid_pairs)))
+        ~jsonl_path:(Some jsonl) in
+      let json = {|{"by_property":{},
+                    "raw_exit_code":0,"duration_ms":1,
+                    "warnings":[{"kind":"unconventional-test-name",
+                                 "message":"weird_no_pid"}]}|} in
+      let prog = make_emit_script ~dir ~json ~exit_code:0 in
+      let v = Verifier_external.create
+        { Verifier_external.command = [prog]; timeout_s = 5;
+          k4k_dir = Some k4k_dir; logger = Some logger } in
+      let _ = Verifier_external.run v ~workdir:dir ~focus:[] in
+      Alcotest.(check bool) "log written" true (Sys.file_exists jsonl);
+      let raw = read_all jsonl in
+      Alcotest.(check bool) "verifier.warning event" true
+        (Astring.String.is_infix ~affix:"verifier.warning" raw))
 
   let tests = [
-    Alcotest.test_case "Verifier_dune_ocaml_module_conforms_to_signature"
+    Alcotest.test_case "Verifier_external_module_conforms_to_signature"
       `Quick module_conforms_to_verifier;
-    Alcotest.test_case "EVERIFIER_UNAVAILABLE_missing_dune_binary"
-      `Quick unavailable_returns_tool_error;
-    Alcotest.test_case "Verifier_dune_ocaml_name" `Quick name_is_dune_ocaml;
-    Alcotest.test_case "Verifier_dune_ocaml_creates" `Quick
+    Alcotest.test_case "Verifier_external_name" `Quick name_is_external;
+    Alcotest.test_case "Verifier_external_creates" `Quick
       creates_returns_handle;
-    Alcotest.test_case "Verifier_dune_ocaml_real_dune_pass" `Slow
-      real_dune_pass;
-    Alcotest.test_case "T20_unconventional_test_name_warning" `Quick
-      t20_warns_on_unconventional_name;
+    Alcotest.test_case "Verifier_external_invokes_configured_command"
+      `Quick invokes_configured_command;
+    Alcotest.test_case "Verifier_external_tool_error_on_nonzero_exit"
+      `Quick tool_error_on_nonzero_exit;
+    Alcotest.test_case "Verifier_external_tool_error_on_missing_output_file"
+      `Quick tool_error_on_missing_output;
+    Alcotest.test_case "Verifier_external_tool_error_on_invalid_json"
+      `Quick tool_error_on_invalid_json;
+    Alcotest.test_case "Verifier_external_focus_unknowns_default_to_unknown"
+      `Quick focus_unknowns_default_to_unknown;
+    Alcotest.test_case "EVERIFIER_UNAVAILABLE_missing_binary"
+      `Quick missing_binary_returns_tool_error;
+    Alcotest.test_case "T20_warning_passthrough_emits_logger_event"
+      `Quick warnings_emit_logger_event;
   ]
 end
 
@@ -3173,7 +3235,7 @@ module Lint = struct
     "lib/prompts.ml"; "lib/backend_claude.ml";
     (* step-3 files *)
     "lib/property.ml"; "lib/property_json.ml";
-    "lib/verifier_dune_ocaml.ml"; "lib/dune_output.ml";
+    "lib/verifier_external.ml"; "lib/verifier_external_parse.ml";
     "lib/subprocess.ml"; "lib/gap_step.ml"; "lib/gap_branch.ml";
     "lib/gap_prompt.ml"; "lib/diff_extract.ml";
     "lib/sigint.ml"; "lib/git.ml";
@@ -3311,8 +3373,8 @@ let () =
       "Smoke",        Smoke.tests;
       "Property",     PropT.tests;
       "Persist_gap",  PG.tests;
-      "Dune_output",  DOT.tests;
-      "Verifier_dune_ocaml", VDO.tests;
+      "Verifier_external_parse", VEP.tests;
+      "Verifier_external", VEXT.tests;
       "Diff_extract", DET.tests;
       "Git",          GT.tests;
       "Sigint",       SigT.tests;

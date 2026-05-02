@@ -28,7 +28,7 @@ let manifest_json ~file_path ~file_content ~user_h
     ~user_section_hashes:user_h
     ~agent_name ~agent_version
     ~verifier_name ~verifier_version:"0.1.0-stub"
-    ~desired_hash
+    ~desired_hash ()
 
 let load_cached_desired ~k4k_dir ~hash =
   match hash with

@@ -42,7 +42,7 @@ module Make (B : Agent_backend.S) (V : Verifier.S) : S = struct
           ~user_section_hashes:user_hashes
           ~agent_name:B.name ~agent_version:"0.1.0-stub"
           ~verifier_name:V.name ~verifier_version:"0.1.0-stub"
-          ~desired_hash:"" in
+          ~desired_hash:"" () in
         Persist.atomic_write
           ~path:(Manifest.path inputs.k4k_dir)
           (Yojson.Safe.pretty_to_string ~std:true mj);

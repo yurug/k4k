@@ -30,8 +30,11 @@ val user_section_hashes : t -> (string * string) list
 val desired_hash : t -> string option
 
 (** [build ...] — assembles a manifest JSON value, ready to be
-    [Yojson.Safe.pretty_to_string]'d and atomically written. *)
+    [Yojson.Safe.pretty_to_string]'d and atomically written. The
+    optional [verifier_command] records the exact command line used
+    so audits can reconstruct the invocation. *)
 val build :
+  ?verifier_command:string list ->
   file_path:string ->
   file_sha256:string ->
   user_section_hashes:(string * string) list ->
@@ -40,4 +43,5 @@ val build :
   verifier_name:string ->
   verifier_version:string ->
   desired_hash:string ->
+  unit ->
   Yojson.Safe.t

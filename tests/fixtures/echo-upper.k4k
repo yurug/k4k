@@ -2,6 +2,9 @@
 k4k:
   version: 1
   class: cli
+  verifier:
+    command: ["./_verifier.exe"]
+    timeout_s: 60
 ---
 # echo --upper
 

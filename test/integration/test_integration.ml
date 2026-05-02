@@ -170,6 +170,32 @@ let dune_available () =
     r.exit_code = 0
   with _ -> false
 
+(* Locate the reference verifier binary built from
+   examples/verifiers/dune-ocaml/. Walks up from cwd to find the
+   _build/default/ directory. *)
+let example_verifier_bin () =
+  let rel = "_build/default/examples/verifiers/dune-ocaml/main.exe" in
+  let here = Sys.getcwd () in
+  let rec find dir =
+    let cand = Filename.concat dir rel in
+    if Sys.file_exists cand then cand
+    else
+      let p = Filename.dirname dir in
+      if p = dir then failwith "verify_dune_ocaml binary not found"
+      else find p
+  in
+  find here
+
+(* Place the example verifier as ./_verifier.exe in [dir]. We hard-link
+   when possible (cheap, no chmod needed), else copy + chmod 755. *)
+let install_verifier ~dir =
+  let src = example_verifier_bin () in
+  let dst = Filename.concat dir "_verifier.exe" in
+  (try Unix.symlink src dst
+   with Unix.Unix_error _ ->
+     copy_file src dst;
+     Unix.chmod dst 0o755)
+
 let with_workdir_and_git f =
   with_workdir (fun dir ->
     let _ = K4k.Git.init ~cwd:dir in
@@ -190,6 +216,7 @@ let s1_echo_first_run_e2e () =
     with_workdir_and_git (fun dir ->
       let f = Filename.concat dir "echo-upper.k4k" in
       copy_file (fixture_path "echo-upper.k4k") f;
+      install_verifier ~dir;
       let _ = K4k.Git.commit_all ~cwd:dir ~message:"add spec" in
       let canned = fixture_path "echo-upper-canned.json" in
       let (code, so, se) = run_capture
@@ -263,6 +290,7 @@ let nf1_sigint_during_agent () =
     with_workdir_and_git (fun dir ->
       let f = Filename.concat dir "echo-upper.k4k" in
       copy_file (fixture_path "echo-upper.k4k") f;
+      install_verifier ~dir;
       let _ = K4k.Git.commit_all ~cwd:dir ~message:"add spec" in
       let canned = fixture_path "echo-upper-canned.json" in
       (* Spawn the binary, send SIGINT after 1 s, measure wall-clock
@@ -356,6 +384,7 @@ let () =
               with_workdir_and_git (fun dir ->
                 let f = Filename.concat dir "echo-upper.k4k" in
                 copy_file (fixture_path "echo-upper.k4k") f;
+                install_verifier ~dir;
                 let _ = K4k.Git.commit_all ~cwd:dir
                   ~message:"add spec" in
                 (* Live: real Claude formalizes + proposes patches;

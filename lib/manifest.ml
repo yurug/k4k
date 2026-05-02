@@ -58,6 +58,20 @@ let desired_hash (m : t) : string option =
 let json_named name version : Yojson.Safe.t =
   `Assoc [ "name", `String name; "version", `String version ]
 
+(* Build the verifier-record JSON. [command] is optional; when provided
+   it is recorded so audits can reconstruct the exact invocation. *)
+let json_verifier ~name ~version ~command : Yojson.Safe.t =
+  let fields = [
+    "name", `String name;
+    "version", `String version;
+  ] in
+  let fields = match command with
+    | None -> fields
+    | Some xs ->
+        fields @ [ "command", `List (List.map (fun s -> `String s) xs) ]
+  in
+  `Assoc fields
+
 let interaction_file_json ~file_path ~file_sha256 ~user_section_hashes
     : Yojson.Safe.t =
   let hashes : Yojson.Safe.t =
@@ -69,13 +83,15 @@ let interaction_file_json ~file_path ~file_sha256 ~user_section_hashes
     "last_user_section_hashes", hashes;
   ]
 
-let build ~file_path ~file_sha256 ~user_section_hashes
+let build ?verifier_command ~file_path ~file_sha256 ~user_section_hashes
     ~agent_name ~agent_version ~verifier_name ~verifier_version
-    ~desired_hash : Yojson.Safe.t =
+    ~desired_hash () : Yojson.Safe.t =
   `Assoc [
     "k4k_version", `String k4k_version_string;
     "agent_backend", json_named agent_name agent_version;
-    "verifier", json_named verifier_name verifier_version;
+    "verifier", json_verifier ~name:verifier_name
+                  ~version:verifier_version
+                  ~command:verifier_command;
     "interaction_file",
       interaction_file_json ~file_path ~file_sha256 ~user_section_hashes;
     "desired", `Assoc [

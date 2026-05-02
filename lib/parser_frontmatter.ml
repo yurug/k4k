@@ -1,10 +1,20 @@
 (** Internal hand-written YAML frontmatter scanner used by [Parser].
 
-    Only the two fields k4k actually consumes ([k4k.version] and [class])
-    are extracted; any other YAML constructs are tolerated and ignored.
+    Extracts the fields k4k actually consumes:
+    - [k4k.version], [class] — required
+    - [k4k.verifier.command] — list of strings, required for run flow
+    - [k4k.verifier.timeout_s] — positive int, optional
+    Other YAML constructs are tolerated and ignored.
 *)
 
-type fm = { version : int; cls : string; raw : string; after : int }
+type fm = {
+  version : int;
+  cls : string;
+  raw : string;
+  after : int;
+  verifier_command   : string list option;
+  verifier_timeout_s : int option;
+}
 
 let raise_format ~line ~col reason =
   raise (Error.K4k_error (Error.E_format { line; col; reason }))
@@ -46,6 +56,80 @@ let scan_close_marker raw =
   in
   scan 4
 
+(* Trim quotes (single or double) and surrounding whitespace. *)
+let unquote s =
+  let s = String.trim s in
+  let n = String.length s in
+  if n >= 2 && (s.[0] = '"' || s.[0] = '\'')
+            && s.[n-1] = s.[0]
+  then String.sub s 1 (n - 2)
+  else s
+
+(* Parse a YAML inline list ["a","b"] into ["a";"b"]. Returns None if
+   the surface syntax doesn't match the bracketed form. Tolerant of
+   single quotes and unquoted bare tokens. *)
+let parse_inline_list raw =
+  let s = String.trim raw in
+  let n = String.length s in
+  if n < 2 || s.[0] <> '[' || s.[n-1] <> ']' then None
+  else
+    let inner = String.sub s 1 (n - 2) in
+    let parts = String.split_on_char ',' inner in
+    let xs = List.map unquote parts in
+    let xs = List.filter (fun s -> s <> "") xs in
+    if xs = [] then None else Some xs
+
+(* Find a sub-block under a parent key in the YAML body. We look for
+   the line ["<parent>:"] (no value) and collect subsequent more-indented
+   lines into a sub-body. *)
+let leading_spaces s =
+  let n = String.length s in
+  let rec go i =
+    if i >= n then i
+    else match s.[i] with ' ' -> go (i + 1) | _ -> i
+  in
+  go 0
+
+let find_subblock body parent_key =
+  let lines = split_lines body in
+  let rec find_parent acc parent_indent = function
+    | [] -> None
+    | l :: rest ->
+        let trimmed = String.trim l in
+        if trimmed = parent_key ^ ":" then
+          let indent = leading_spaces l in
+          collect (List.rev acc) indent rest
+        else find_parent (l :: acc) parent_indent rest
+  and collect _outer parent_indent rest =
+    let buf = Buffer.create 64 in
+    let rec take = function
+      | [] -> ()
+      | l :: tail ->
+          let il = leading_spaces l in
+          let trimmed = String.trim l in
+          if trimmed = "" then (Buffer.add_string buf l;
+                                Buffer.add_char buf '\n'; take tail)
+          else if il > parent_indent then
+            (Buffer.add_string buf l;
+             Buffer.add_char buf '\n'; take tail)
+          else ()
+    in
+    take rest;
+    Some (Buffer.contents buf)
+  in
+  find_parent [] 0 lines
+
+let extract_verifier body =
+  match find_subblock body "verifier" with
+  | None -> None, None
+  | Some sub ->
+      let cmd = match find_field sub "command" with
+        | Some raw -> parse_inline_list raw
+        | None -> None
+      in
+      let to_s = int_field sub "timeout_s" in
+      cmd, to_s
+
 let parse raw =
   if not (String.length raw >= 4 && String.sub raw 0 4 = "---\n") then
     raise_format ~line:1 ~col:1 "missing leading '---' frontmatter fence";
@@ -66,4 +150,6 @@ let parse raw =
       (Error.E_version { found = version; supported = supported_versions }));
   if cls <> "cli" then
     raise (Error.K4k_error (Error.E_class_unsupported cls));
-  { version; cls; raw = body; after = close_at + 5 }
+  let verifier_command, verifier_timeout_s = extract_verifier body in
+  { version; cls; raw = body; after = close_at + 5;
+    verifier_command; verifier_timeout_s }

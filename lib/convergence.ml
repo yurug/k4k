@@ -34,7 +34,7 @@ let run (type b) (type v)
   Sigint.install ();
   Persist.ensure_dir inputs.k4k_dir;
   let d = Full_check.run (module B) (module V)
-            ~backend ~inputs in
+            ~verifier ~backend ~inputs () in
   if not (Git.is_repo ~cwd:".") then
     raise_state
       "convergence: working directory is not a git repo (run 'git init')";

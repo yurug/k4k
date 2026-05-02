@@ -22,12 +22,13 @@ let persist_desired ~k4k_dir d =
   Persist.write_desired ~k4k_dir ~bytes ~mirror_md:(mirror_md d)
 
 let manifest_json ~file_path ~file_content ~user_h
-    ~agent_name ~agent_version ~verifier_name ~desired_hash =
+    ~agent_name ~agent_version ~verifier_name ~verifier_version
+    ~desired_hash =
   Manifest.build
     ~file_path ~file_sha256:(Persist.sha256_hex file_content)
     ~user_section_hashes:user_h
     ~agent_name ~agent_version
-    ~verifier_name ~verifier_version:"0.1.0-stub"
+    ~verifier_name ~verifier_version
     ~desired_hash ()
 
 let load_cached_desired ~k4k_dir ~hash =
@@ -62,18 +63,20 @@ let do_structural ~logger parsed =
   | Stability.Stable -> ()
 
 let persist_pass ~inputs ~content ~parsed ~agent_name ~agent_version
-    ~verifier_name (d : Characterization.t) =
+    ~verifier_name ~verifier_version (d : Characterization.t) =
   persist_desired ~k4k_dir:inputs.Harness.k4k_dir d;
   let user_h = Stability.user_section_hashes parsed in
   let mj = manifest_json
     ~file_path:inputs.file_path ~file_content:content ~user_h
-    ~agent_name ~agent_version ~verifier_name ~desired_hash:d.hash in
+    ~agent_name ~agent_version ~verifier_name ~verifier_version
+    ~desired_hash:d.hash in
   Persist.atomic_write
     ~path:(Filename.concat inputs.k4k_dir "manifest.json")
     (Yojson.Safe.pretty_to_string ~std:true mj)
 
 let handle_outcome ~inputs ~content ~parsed
-    ~agent_name ~agent_version ~verifier_name (outcome : Stability.semantic_outcome) =
+    ~agent_name ~agent_version ~verifier_name ~verifier_version
+    (outcome : Stability.semantic_outcome) =
   match outcome with
   | Sem_cached d ->
       Logger.info inputs.Harness.logger "stability.pass"
@@ -88,7 +91,7 @@ let handle_outcome ~inputs ~content ~parsed
         raise_unstable cov
       end;
       persist_pass ~inputs ~content ~parsed
-        ~agent_name ~agent_version ~verifier_name d;
+        ~agent_name ~agent_version ~verifier_name ~verifier_version d;
       Logger.info inputs.logger "stability.pass"
         (`Assoc [ "hash", `String d.hash ]);
       d
@@ -98,10 +101,11 @@ let handle_outcome ~inputs ~content ~parsed
                   "issue_count", `Int (List.length issues) ]);
       raise_unstable issues
 
-let run (type b)
+let run (type b) (type v)
     (module B : Agent_backend.S with type t = b)
-    (module V : Verifier.S)
-    ~(backend : b) ~(inputs : Harness.check_inputs) =
+    (module V : Verifier.S with type t = v)
+    ?verifier
+    ~(backend : b) ~(inputs : Harness.check_inputs) () =
   Persist.ensure_dir inputs.k4k_dir;
   let manifest = Manifest.read_or_init ~k4k_dir:inputs.k4k_dir in
   let content = read_or_raise inputs.file_path in
@@ -124,6 +128,10 @@ let run (type b)
       ~prev_hashes:prev_h ~current_hashes:user_h
       ~cached_desired:cached_d invoker
   in
+  let verifier_version = match verifier with
+    | Some v -> V.version v
+    | None -> "0.1.0-unknown"
+  in
   handle_outcome ~inputs ~content ~parsed
     ~agent_name:B.name ~agent_version:(B.version backend)
-    ~verifier_name:V.name outcome
+    ~verifier_name:V.name ~verifier_version outcome

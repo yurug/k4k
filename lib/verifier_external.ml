@@ -16,7 +16,18 @@ type config = {
 type t = { cfg : config }
 
 let name = "external"
-let version _t = "0.1.0"
+
+(* H6 — derive a meaningful version from the configured command. The
+   manifest's [verifier_version] used to be hardcoded "0.1.0-stub";
+   instead, expose [external/<basename>] when a command is set, with
+   "external/(unconfigured)" as the fallback (which can only appear
+   in tests that build a verifier without a command). *)
+let version t =
+  match t.cfg.command with
+  | [] -> "external/(unconfigured)"
+  | prog :: _ ->
+      let bn = Filename.basename prog in
+      "external/" ^ bn
 
 let default_config = {
   command   = [];      (* must be set explicitly; empty is invalid *)

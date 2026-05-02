@@ -19,7 +19,9 @@
     @invariant P19 — cache hit suppresses both calls. *)
 val run :
   (module Agent_backend.S with type t = 'b) ->
-  (module Verifier.S) ->
+  (module Verifier.S with type t = 'v) ->
+  ?verifier:'v ->
   backend:'b ->
   inputs:Harness.check_inputs ->
+  unit ->
   Characterization.t

@@ -1171,8 +1171,16 @@ module VEXT = struct
   let creates_returns_handle () =
     let v = Verifier_external.create
       Verifier_external.default_config in
-    Alcotest.(check string) "version" "0.1.0"
-      (Verifier_external.version v)
+    (* Version reflects the configured command: with default_config
+       (empty command), the version is "external/(unconfigured)". *)
+    Alcotest.(check string) "version (no command set)"
+      "external/(unconfigured)"
+      (Verifier_external.version v);
+    let v2 = Verifier_external.create
+      { Verifier_external.default_config with
+        command = ["/usr/local/bin/my-verifier"; "--flag"] } in
+    Alcotest.(check string) "version (basename)"
+      "external/my-verifier" (Verifier_external.version v2)
 
   (* Write a tiny shell script that emits a JSON result file then exits. *)
   let write_executable path body =

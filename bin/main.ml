@@ -128,11 +128,11 @@ let run_check verbosity file =
       | `Claude b ->
           Full_check.run
             (module Backend_claude) (module Verifier_stub)
-            ~backend:b ~inputs
+            ~backend:b ~inputs ()
       | `Stub b ->
           Full_check.run
             (module Backend_stub) (module Verifier_stub)
-            ~backend:b ~inputs
+            ~backend:b ~inputs ()
     in
     Logger.stdout_line logger "stable"; 0
   with

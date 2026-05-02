@@ -13,6 +13,8 @@
 type config = {
   max_steps : int;
   budget    : int;
+  between_steps : (unit -> unit) option;
+    (** Test hook: invoked between gap-steps. Used by T4. *)
 }
 
 type result = {

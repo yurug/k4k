@@ -53,6 +53,10 @@ val stdout_line : t -> string -> unit
 (** [scrub s] redacts API key/token-shaped substrings.
 
     @return [s] with key=value-shaped patterns replaced by [<scrubbed>].
-    @invariant NF5 (best-effort secrets quarantine; full canary test
-                    in step 4). *)
+    @invariant NF5 — secrets quarantine; canary-test verified. *)
 val scrub : string -> string
+
+(** Sub-module re-export — see [tty_status.mli] for the full API.
+    Provides the in-place TTY status line used by [Run_loop]. *)
+module Tty_status = Tty_status
+

@@ -140,7 +140,7 @@ let run_convergence verbosity file ~max_steps ~budget =
   let jsonl_path = Some (Filename.concat k4k_dir "log.jsonl") in
   let logger = Logger.create ~verbosity ~jsonl_path in
   let inputs = Harness.{ file_path = file; k4k_dir; logger } in
-  let cfg = { Run_loop.max_steps; budget } in
+  let cfg = { Run_loop.max_steps; budget; between_steps = None } in
   try
     let verifier = make_verifier ~k4k_dir ~logger in
     let _outcome =

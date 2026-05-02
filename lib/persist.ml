@@ -7,6 +7,17 @@ let max_interaction_file_bytes = 10 * 1024 * 1024
 
 let raise_disk_full path = raise (Error.K4k_error (Error.E_disk_full path))
 
+(* Fault-injection hook for T5 (NF3). Activates only when the env var
+   K4K_FAULT_INJECT_ENOSPC=<substring> is set; the next [atomic_write]
+   whose path contains the substring fails with ENOSPC after the tmp
+   file is created (before rename). The tmp file is deleted (rollback).
+   Production runs leave this env unset; the production code path is
+   identical except for the env lookup. *)
+let fault_inject_should_fail path =
+  match Sys.getenv_opt "K4K_FAULT_INJECT_ENOSPC" with
+  | None | Some "" -> false
+  | Some pat -> Astring.String.is_infix ~affix:pat path
+
 let rec ensure_dir path =
   if path = "" || path = "." || path = "/" then ()
   else if Sys.file_exists path && Sys.is_directory path then ()
@@ -63,6 +74,10 @@ let atomic_write ?(crash_hook = no_crash) ~path content =
       write_all fd buf;
       try Unix.fsync fd with _ -> ());
   crash_hook ();
+  if fault_inject_should_fail path then begin
+    (try Unix.unlink tmp with Unix.Unix_error _ -> ());
+    raise_disk_full path
+  end;
   (try Unix.rename tmp path
    with Unix.Unix_error (Unix.ENOSPC, _, _) -> raise_disk_full path);
   fsync_dir parent

@@ -110,11 +110,11 @@ kb/
 
 | Phase | State                                                    |
 |-------|----------------------------------------------------------|
-| 1 — Ambiguity resolution                                  | ✓ done (rounds 1, 2)            |
-| 2 — KB construction                                       | ✓ done (this commit)            |
-| 2k — KB audit (Ralph Loop + KB-quiz)                      | pending                          |
-| 3 — Plan (`kb/plan.md`)                                   | pending                          |
-| 4 — Implement (Ralph Loops, per step)                     | not started                      |
+| 1 — Ambiguity resolution                                  | ✓ done (rounds 1, 2, 3)         |
+| 2 — KB construction                                       | ✓ done                          |
+| 2k — KB audit (Ralph Loop + KB-quiz)                      | ✓ done (10/10 quiz, 0 criticals)|
+| 3 — Plan (`kb/plan.md`) + simulation gate                 | ✓ done                          |
+| 4 — Implement (Ralph Loops, per step)                     | steps 1–3 ✓ ; step 4 pending    |
 | 5 — Quality audits                                        | not started                      |
 | 6 — KB sync                                               | not started                      |
 | 7 — Documentation & validation                            | not started                      |

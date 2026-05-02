@@ -86,3 +86,7 @@ let error t err =
 let stdout_line _t s =
   output_string stdout (s ^ "\n");
   flush stdout
+
+(* Re-export [Tty_status] under a nested submodule so callers can use
+   [Logger.Tty_status] per kb/plan.md#step-4. *)
+module Tty_status = Tty_status

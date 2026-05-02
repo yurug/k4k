@@ -1945,7 +1945,8 @@ module RLT = struct
         budget_remaining = ref 1_000_000;
         agent_backend = ();
       } in
-      let cfg = { Run_loop.max_steps = 2; budget = 1_000_000 } in
+      let cfg = { Run_loop.max_steps = 2; budget = 1_000_000;
+                  between_steps = None } in
       try
         let _ = Run_loop.run ~deps ~d:Characterization.empty
           ~cfg ~k4k_dir:(Filename.concat dir ".k4k") ~logger

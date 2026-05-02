@@ -1,0 +1,5 @@
+(executable
+ (name main)
+ (public_name verify_dune_ocaml)
+ (package k4k)
+ (libraries k4k unix astring yojson))

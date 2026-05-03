@@ -415,6 +415,105 @@ let nf1_sigint_during_agent () =
       Alcotest.(check bool) "exited within 5 s" true
         (exited && dt <= 5.0))
 
+(* ---------------- Ollama backend example ---------------- *)
+
+(* Locate the example binary built by [dune build]. Mirror [bin ()]. *)
+let ollama_bin () =
+  let here = Sys.getcwd () in
+  let rec find dir =
+    let cand = Filename.concat dir
+      "_build/default/examples/backends/ollama/main.exe" in
+    if Sys.file_exists cand then cand
+    else
+      let p = Filename.dirname dir in
+      if p = dir then failwith "ollama_backend binary not found"
+      else find p
+  in find here
+
+let write_file path content =
+  let oc = open_out path in output_string oc content; close_out oc
+
+let run_ollama ~mock ~budget ~prompt ~output =
+  let bin = ollama_bin () in
+  let cmd = Printf.sprintf "%s --mock-response %s --purpose formalization \
+                            --prompt-file %s --budget %d --output %s 2>/dev/null"
+    (Filename.quote bin) (Filename.quote mock)
+    (Filename.quote prompt) budget (Filename.quote output) in
+  Sys.command cmd
+
+let read_json path =
+  let ic = open_in path in
+  let buf = Buffer.create 256 in
+  (try
+     while true do Buffer.add_channel buf ic 4096 done; assert false
+   with End_of_file -> close_in ic);
+  Yojson.Safe.from_string (Buffer.contents buf)
+
+let str_field key (j : Yojson.Safe.t) = match j with
+  | `Assoc fs -> (match List.assoc_opt key fs with
+      | Some (`String s) -> s | _ -> "")
+  | _ -> ""
+
+let int_field key (j : Yojson.Safe.t) = match j with
+  | `Assoc fs -> (match List.assoc_opt key fs with
+      | Some (`Int i) -> i | _ -> -1)
+  | _ -> -1
+
+let ollama_emits_ok_for_well_formed_response () =
+  with_workdir (fun dir ->
+    let p = Filename.concat dir "prompt.txt" in
+    write_file p "translate to JSON";
+    let m = Filename.concat dir "mock.json" in
+    write_file m {|{"model":"qwen3.5:9b","response":"OK","prompt_eval_count":5,"eval_count":3,"done":true}|};
+    let o = Filename.concat dir "result.json" in
+    let code = run_ollama ~mock:m ~budget:1000 ~prompt:p ~output:o in
+    Alcotest.(check int) "exit 0" 0 code;
+    let j = read_json o in
+    Alcotest.(check string) "outcome" "ok" (str_field "outcome" j);
+    Alcotest.(check string) "text" "OK" (str_field "text" j);
+    Alcotest.(check int) "budget_used" 8 (int_field "budget_used" j))
+
+let ollama_maps_error_field_to_tool_error () =
+  with_workdir (fun dir ->
+    let p = Filename.concat dir "prompt.txt" in
+    write_file p "x";
+    let m = Filename.concat dir "mock.json" in
+    write_file m {|{"error":"model 'bogus' not found"}|};
+    let o = Filename.concat dir "result.json" in
+    let code = run_ollama ~mock:m ~budget:100 ~prompt:p ~output:o in
+    Alcotest.(check int) "exit 0" 0 code;
+    let j = read_json o in
+    Alcotest.(check string) "outcome" "tool_error" (str_field "outcome" j);
+    Alcotest.(check bool) "error mentions ollama" true
+      (Astring.String.is_infix ~affix:"ollama error"
+         (str_field "error" j)))
+
+let ollama_budget_exhausted_when_tokens_exceed_cap () =
+  with_workdir (fun dir ->
+    let p = Filename.concat dir "prompt.txt" in
+    write_file p "x";
+    let m = Filename.concat dir "mock.json" in
+    write_file m {|{"response":"R","prompt_eval_count":50,"eval_count":60}|};
+    let o = Filename.concat dir "result.json" in
+    let code = run_ollama ~mock:m ~budget:100 ~prompt:p ~output:o in
+    Alcotest.(check int) "exit 0" 0 code;
+    let j = read_json o in
+    Alcotest.(check string) "outcome" "budget_exhausted"
+      (str_field "outcome" j))
+
+let ollama_no_response_field_is_tool_error () =
+  with_workdir (fun dir ->
+    let p = Filename.concat dir "prompt.txt" in
+    write_file p "x";
+    let m = Filename.concat dir "mock.json" in
+    write_file m {|{"done":true}|};
+    let o = Filename.concat dir "result.json" in
+    let code = run_ollama ~mock:m ~budget:100 ~prompt:p ~output:o in
+    Alcotest.(check int) "exit 0" 0 code;
+    let j = read_json o in
+    Alcotest.(check string) "outcome" "tool_error"
+      (str_field "outcome" j))
+
 let () =
   Alcotest.run "k4k integration"
     [ "S1", [
@@ -454,6 +553,16 @@ let () =
       "spec_round_trip", [
         Alcotest.test_case "spec_json_validates_round_trip" `Quick
           spec_json_validates_round_trip;
+      ];
+      "ollama_backend", [
+        Alcotest.test_case "ollama_emits_ok_for_well_formed_response"
+          `Quick ollama_emits_ok_for_well_formed_response;
+        Alcotest.test_case "ollama_maps_error_field_to_tool_error"
+          `Quick ollama_maps_error_field_to_tool_error;
+        Alcotest.test_case "ollama_budget_exhausted_when_tokens_exceed_cap"
+          `Quick ollama_budget_exhausted_when_tokens_exceed_cap;
+        Alcotest.test_case "ollama_no_response_field_is_tool_error"
+          `Quick ollama_no_response_field_is_tool_error;
       ];
       "live", [
         Alcotest.test_case "K4K_LIVE_smoke_against_real_claude" `Slow

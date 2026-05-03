@@ -4,6 +4,7 @@
  (deps
   (alias_rec ../../bin/all)
   (file ../../examples/verifiers/dune-ocaml/main.exe)
+  (file ../../examples/backends/ollama/main.exe)
   (file ../../tests/fixtures/well-formed-structural.k4k)
   (file ../../tests/fixtures/empty.k4k)
   (file ../../tests/fixtures/canned-responses.json)

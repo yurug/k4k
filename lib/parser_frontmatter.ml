@@ -14,6 +14,8 @@ type fm = {
   after : int;
   verifier_command   : string list option;
   verifier_timeout_s : int option;
+  backend_command    : string list option;
+  backend_timeout_s  : int option;
 }
 
 let raise_format ~line ~col reason =
@@ -119,8 +121,8 @@ let find_subblock body parent_key =
   in
   find_parent [] 0 lines
 
-let extract_verifier body =
-  match find_subblock body "verifier" with
+let extract_subblock_cmd_and_timeout body key =
+  match find_subblock body key with
   | None -> None, None
   | Some sub ->
       let cmd = match find_field sub "command" with
@@ -129,6 +131,10 @@ let extract_verifier body =
       in
       let to_s = int_field sub "timeout_s" in
       cmd, to_s
+
+let extract_verifier body = extract_subblock_cmd_and_timeout body "verifier"
+
+let extract_backend body = extract_subblock_cmd_and_timeout body "backend"
 
 let parse raw =
   if not (String.length raw >= 4 && String.sub raw 0 4 = "---\n") then
@@ -151,5 +157,7 @@ let parse raw =
   if cls <> "cli" then
     raise (Error.K4k_error (Error.E_class_unsupported cls));
   let verifier_command, verifier_timeout_s = extract_verifier body in
+  let backend_command, backend_timeout_s = extract_backend body in
   { version; cls; raw = body; after = close_at + 5;
-    verifier_command; verifier_timeout_s }
+    verifier_command; verifier_timeout_s;
+    backend_command; backend_timeout_s }

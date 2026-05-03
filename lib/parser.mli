@@ -32,6 +32,8 @@ type frontmatter = {
   raw         : string;               (* the bytes between the [---] fences *)
   verifier_command   : string list option;  (* k4k.verifier.command *)
   verifier_timeout_s : int option;          (* k4k.verifier.timeout_s *)
+  backend_command    : string list option;  (* k4k.backend.command *)
+  backend_timeout_s  : int option;          (* k4k.backend.timeout_s *)
 }
 
 (** A parsed interaction file. *)

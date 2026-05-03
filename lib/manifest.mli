@@ -35,6 +35,7 @@ val desired_hash : t -> string option
     so audits can reconstruct the invocation. *)
 val build :
   ?verifier_command:string list ->
+  ?backend_command:string list ->
   file_path:string ->
   file_sha256:string ->
   user_section_hashes:(string * string) list ->

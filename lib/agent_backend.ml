@@ -1,8 +1,9 @@
 (** [Agent_backend] — pluggable agent backend signature.
 
-    See [kb/spec/api-contracts.md#agent-backend]. The real implementations
-    are [Backend_claude] (step 2+) and [Backend_stub] (always available).
-    [Harness] is a functor over this signature.
+    See [kb/spec/api-contracts.md#agent-backend]. The only production
+    implementation is [Backend_external] (per ADR-009 / the wire
+    protocol in [kb/external/backend-protocol.md]); [Backend_stub] is
+    used in tests. [Harness] is a functor over this signature.
 *)
 
 type purpose = [ `Formalization | `Gap_step | `Kb_regen ]

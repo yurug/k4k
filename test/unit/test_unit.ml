@@ -1064,47 +1064,202 @@ module SS = struct
   ]
 end
 
-(* ---------------- Backend_claude tests (≥3, none live) ---------------- *)
-module BCT = struct
-  let default_config_caps () =
-    let c = Backend_claude.default_config in
-    Alcotest.(check int) "hard cap = 1000" 1000 c.hard_per_invocation;
-    Alcotest.(check string) "binary = claude" "claude" c.binary;
-    Alcotest.(check int) "max retries = 3" 3 c.max_retries
+(* ---------------- Backend_external tests (≥3) ---------------- *)
+module BEXT = struct
+  let module_conforms_to_signature () =
+    let module _ : Agent_backend.S = Backend_external in ()
 
-  let name_is_claude_code () =
-    Alcotest.(check string) "name" "claude-code" Backend_claude.name
+  let name_is_external () =
+    Alcotest.(check string) "name" "external" Backend_external.name
 
-  (* Pre-call budget refusal: a tiny cap and a request larger than it
-     yields Budget_exhausted without invoking the binary. *)
-  let p9_pre_call_budget_refusal () =
-    let cfg = { Backend_claude.default_config with
-                binary = "/nonexistent/k4k-test-claude-binary";
-                hard_per_invocation = 1 } in
-    let t = Backend_claude.create cfg in
-    match Backend_claude.invoke t ~purpose:`Formalization
-            ~prompt:"x" ~budget:1000 with
-    | `Budget_exhausted -> ()
-    | _ -> Alcotest.fail "expected Budget_exhausted"
+  let creates_returns_handle () =
+    let v = Backend_external.create
+              Backend_external.default_config in
+    Alcotest.(check string) "version (no command set)"
+      "external/(unconfigured)" (Backend_external.version v);
+    let v2 = Backend_external.create
+      { Backend_external.default_config with
+        command = ["/usr/local/bin/my-backend"; "--flag"] } in
+    Alcotest.(check string) "version (basename)"
+      "external/my-backend" (Backend_external.version v2)
 
-  let missing_binary_yields_tool_error () =
-    let cfg = { Backend_claude.default_config with
-                binary = "/nonexistent/k4k-test-claude-binary";
-                max_retries = 0 } in
-    let t = Backend_claude.create cfg in
-    match Backend_claude.invoke t ~purpose:`Formalization
-            ~prompt:"hi" ~budget:5 with
-    | `Tool_error _ -> ()
-    | `Budget_exhausted -> ()  (* if the create-time probe spent a budget *)
-    | _ -> Alcotest.fail "expected Tool_error / Budget_exhausted"
+  (* Helpers: tiny shell scripts emulating a backend. *)
+  let write_executable path body =
+    let oc = open_out path in
+    output_string oc body;
+    close_out oc;
+    Unix.chmod path 0o755
+
+  let make_emit_script ~dir ~json ~exit_code =
+    let path = Filename.concat dir "_backend.sh" in
+    let body = Printf.sprintf
+      "#!/bin/sh\n\
+       OUTPUT=\"\"\n\
+       while [ $# -gt 0 ]; do\n\
+       \  case \"$1\" in\n\
+       \    --output) OUTPUT=\"$2\"; shift 2 ;;\n\
+       \    *) shift ;;\n\
+       \  esac\n\
+       done\n\
+       cat > \"$OUTPUT\" <<'JEOF'\n\
+       %s\n\
+       JEOF\n\
+       exit %d\n"
+      json exit_code in
+    write_executable path body;
+    path
+
+  (* A counter-based script that records its invocation count to
+     <dir>/calls and exits non-zero each time, no output written.
+     Used to verify retry semantics. *)
+  let make_failing_script ~dir =
+    let path = Filename.concat dir "_backend_fail.sh" in
+    let body = Printf.sprintf
+      "#!/bin/sh\n\
+       echo invoked >> %s/calls\n\
+       exit 1\n"
+      (Filename.quote dir) in
+    write_executable path body;
+    path
+
+  let calls_count dir =
+    let calls = Filename.concat dir "calls" in
+    if not (Sys.file_exists calls) then 0
+    else
+      let ic = open_in calls in
+      let n = ref 0 in
+      (try
+         while true do
+           let _ = input_line ic in incr n
+         done; assert false
+       with End_of_file -> close_in ic);
+      !n
+
+  let mk_k4k_dir dir =
+    let k = Filename.concat dir ".k4k" in
+    Persist.ensure_dir k; k
+
+  let invokes_configured_command () =
+    with_tmpdir (fun dir ->
+      let k4k_dir = mk_k4k_dir dir in
+      let json = {|{"outcome":"ok","text":"hello",
+                    "budget_used":3,"duration_ms":7}|} in
+      let prog = make_emit_script ~dir ~json ~exit_code:0 in
+      let v = Backend_external.create
+        { Backend_external.default_config with
+          command = [prog]; timeout_s = 5;
+          k4k_dir = Some k4k_dir } in
+      match Backend_external.invoke v ~purpose:`Formalization
+              ~prompt:"hi" ~budget:100 with
+      | `Ok r ->
+          Alcotest.(check string) "text" "hello" r.text;
+          Alcotest.(check int) "budget_used" 3 r.budget_used;
+          Alcotest.(check int) "duration_ms" 7 r.duration_ms
+      | `Budget_exhausted -> Alcotest.fail "unexpected budget_exhausted"
+      | `Tool_error e -> Alcotest.fail ("expected Ok, got: " ^ e))
+
+  let tool_error_retries_then_fails () =
+    with_tmpdir (fun dir ->
+      let k4k_dir = mk_k4k_dir dir in
+      let prog = make_failing_script ~dir in
+      let v = Backend_external.create
+        { Backend_external.default_config with
+          command = [prog]; timeout_s = 5;
+          k4k_dir = Some k4k_dir } in
+      let r = Backend_external.invoke v ~purpose:`Formalization
+                ~prompt:"hi" ~budget:100 in
+      (match r with
+       | `Tool_error _ -> ()
+       | _ -> Alcotest.fail "expected Tool_error after retries");
+      Alcotest.(check int) "3 attempts" 3 (calls_count dir))
+
+  let budget_exhausted_short_circuits () =
+    with_tmpdir (fun dir ->
+      let k4k_dir = mk_k4k_dir dir in
+      let json = {|{"outcome":"budget_exhausted","duration_ms":4}|} in
+      let prog = make_emit_script ~dir ~json ~exit_code:0 in
+      let v = Backend_external.create
+        { Backend_external.default_config with
+          command = [prog]; timeout_s = 5;
+          k4k_dir = Some k4k_dir } in
+      match Backend_external.invoke v ~purpose:`Gap_step
+              ~prompt:"hi" ~budget:100 with
+      | `Budget_exhausted -> ()
+      | _ -> Alcotest.fail "expected Budget_exhausted")
+
+  let invalid_json_is_tool_error () =
+    with_tmpdir (fun dir ->
+      let k4k_dir = mk_k4k_dir dir in
+      let prog = make_emit_script ~dir
+                   ~json:"{not json}" ~exit_code:0 in
+      let v = Backend_external.create
+        { Backend_external.default_config with
+          command = [prog]; timeout_s = 5;
+          k4k_dir = Some k4k_dir } in
+      match Backend_external.invoke v ~purpose:`Formalization
+              ~prompt:"hi" ~budget:100 with
+      | `Tool_error _ -> ()
+      | _ -> Alcotest.fail "expected Tool_error")
+
+  (* NF4 regression: prompt file must be written under <k4k_dir>/scratch/,
+     never under /tmp. *)
+  let writes_prompt_under_k4k_dir_not_tmp () =
+    with_tmpdir (fun dir ->
+      let k4k_dir = mk_k4k_dir dir in
+      let trace = Filename.concat dir "trace.log" in
+      Unix.putenv "K4K_TEST_TRACE_WRITES" trace;
+      let json = {|{"outcome":"ok","text":"x",
+                    "budget_used":0,"duration_ms":1}|} in
+      let prog = make_emit_script ~dir ~json ~exit_code:0 in
+      let v = Backend_external.create
+        { Backend_external.default_config with
+          command = [prog]; timeout_s = 5;
+          k4k_dir = Some k4k_dir } in
+      let _ = Backend_external.invoke v ~purpose:`Formalization
+                ~prompt:"the prompt body" ~budget:100 in
+      Unix.putenv "K4K_TEST_TRACE_WRITES" "";
+      let lines =
+        let ic = open_in trace in
+        let buf = Buffer.create 256 in
+        (try
+           while true do Buffer.add_channel buf ic 4096 done; assert false
+         with End_of_file -> close_in ic);
+        String.split_on_char '\n' (Buffer.contents buf)
+        |> List.filter (fun s -> s <> "")
+      in
+      Alcotest.(check bool) "trace nonempty" true (lines <> []);
+      let tmp_dir = Filename.get_temp_dir_name () in
+      List.iter (fun p ->
+        if Astring.String.is_prefix ~affix:tmp_dir p
+           && not (Astring.String.is_prefix ~affix:dir p) then
+          Alcotest.failf
+            "NF4 violation (backend_external): /tmp-style write %s" p
+      ) lines;
+      let any_under_scratch =
+        List.exists (fun p ->
+          Astring.String.is_infix
+            ~affix:(Filename.concat ".k4k" "scratch") p
+          || Astring.String.is_infix ~affix:"scratch" p
+             && Astring.String.is_prefix ~affix:k4k_dir p) lines
+      in
+      Alcotest.(check bool) "prompt path under <k4k>/scratch/" true
+        any_under_scratch)
 
   let tests = [
-    Alcotest.test_case "P9_default_config_caps" `Quick default_config_caps;
-    Alcotest.test_case "P15_backend_claude_name" `Quick name_is_claude_code;
-    Alcotest.test_case "P9_pre_call_budget_refusal" `Quick
-      p9_pre_call_budget_refusal;
-    Alcotest.test_case "EAGENT_UNAVAILABLE_missing_binary" `Quick
-      missing_binary_yields_tool_error;
+    Alcotest.test_case "Backend_external_module_conforms_to_signature"
+      `Quick module_conforms_to_signature;
+    Alcotest.test_case "Backend_external_name" `Quick name_is_external;
+    Alcotest.test_case "Backend_external_creates" `Quick creates_returns_handle;
+    Alcotest.test_case "Backend_external_invokes_configured_command" `Quick
+      invokes_configured_command;
+    Alcotest.test_case "Backend_external_tool_error_retries_then_fails" `Quick
+      tool_error_retries_then_fails;
+    Alcotest.test_case "Backend_external_budget_exhausted_short_circuits" `Quick
+      budget_exhausted_short_circuits;
+    Alcotest.test_case "Backend_external_invalid_json_is_tool_error" `Quick
+      invalid_json_is_tool_error;
+    Alcotest.test_case "Backend_external_writes_prompt_under_k4k_dir_not_tmp"
+      `Quick writes_prompt_under_k4k_dir_not_tmp;
   ]
 end
 
@@ -3483,7 +3638,8 @@ module Lint = struct
     "lib/permissive_json.ml"; "lib/property_id.ml";
     "lib/divergence.ml"; "lib/coverage.ml";
     "lib/manifest.ml"; "lib/full_check.ml";
-    "lib/prompts.ml"; "lib/backend_claude.ml";
+    "lib/prompts.ml"; "lib/backend_external.ml";
+    "lib/backend_external_parse.ml";
     (* step-3 files *)
     "lib/property.ml"; "lib/property_json.ml";
     "lib/verifier_external.ml"; "lib/verifier_external_parse.ml";
@@ -3685,7 +3841,7 @@ let () =
       "Property_id",  PIDT.tests;
       "Backend_stub_weak", BSW.tests;
       "Stability_semantic", SS.tests;
-      "Backend_claude", BCT.tests;
+      "Backend_external", BEXT.tests;
       "Smoke",        Smoke.tests;
       "Property",     PropT.tests;
       "Persist_gap",  PG.tests;

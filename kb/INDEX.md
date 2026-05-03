@@ -108,7 +108,7 @@ kb/
 
 - **Methodology files**: 34 (after ADR-009 retrofit: + ADR-009, + external/backend-protocol.md, − external/claude-code.md)
 - **Reference files** (NOTES, claude-code-report, opencode, questions-round{1,2,3}, plan, plan-simulation report, audit reports): grew through Phases 1–5
-- **Last updated**: 2026-05-02
+- **Last updated**: 2026-05-03
 
 ## Methodology phase tracker
 
@@ -119,9 +119,12 @@ kb/
 | 2k — KB audit (Ralph Loop + KB-quiz)                      | ✓ done (10/10 quiz, 0 criticals)|
 | 3 — Plan (`kb/plan.md`) + simulation gate                 | ✓ done                          |
 | 4 — Implement (Ralph Loops, per step)                     | ✓ done (steps 1–4)              |
-| 5 — Quality audits                                        | ✓ done (0 criticals; 4 Axis-1 highs closed by NF3/NF4/NF6/NF7 named tests) |
+| 5 — Quality audits                                        | ✓ done — dry pass then skeptical real pass (`kb/reports/audit-real-2026-05-02.md`); all 2 criticals + 7 highs closed |
 | 6 — KB sync                                               | ✓ done (ADR-007, env-var runbook, alcotest fact, T1 note; sync-quiz 3/3) |
 | 7 — Documentation & validation                            | ✓ done (README.md; e2e validation green from clean tempdir) |
+| v1 — ADR-008 verifier-protocol retrofit                   | ✓ done (`lib/Verifier_external` + `examples/verifiers/dune-ocaml/`) |
+| v1 — ADR-009 backend-protocol retrofit                    | ✓ done (`lib/Backend_external` + `examples/backends/claude-code/`) |
+| v1 — Reference Ollama backend                             | ✓ done (`examples/backends/ollama/`; live-verified against `qwen3.5:9b`) |
 
 ## Agent notes
 

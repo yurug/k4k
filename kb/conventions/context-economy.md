@@ -133,4 +133,4 @@ Example output:
 - `architecture/decisions/adr-003-pluggable-backend.md` — the load-bearing decision
 - `external/ollama.md` — the capability profile this convention targets
 - `properties/non-functional.md#NF8` — the invariant
-- `external/claude-code.md` — the v0 backend (overshoot capacity is fine, just don't use it)
+- `external/backend-protocol.md` — the wire protocol all backends implement (overshoot in any one backend's native capacity is fine, just don't write prompts that depend on it)

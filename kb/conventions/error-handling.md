@@ -50,7 +50,7 @@ Mapping to exit codes lives in `Error.exit_code_of : error -> int` (table per `s
 
 ## Catching
 
-- `try ... with K4k_error e -> ...` only at the top level (`bin/main.ml`) and at *retry boundaries* (e.g. `Backend_claude` retries on transient failures).
+- `try ... with K4k_error e -> ...` only at the top level (`bin/main.ml`) and at *retry boundaries* (e.g. `Backend_external` retries on transient backend-tool failures).
 - No catch-all (`with _ ->`). Match the specific constructor.
 - A function that catches `K4k_error` must either re-raise after logging, or convert to a domain-specific value (e.g. `Stub_agent` translates network failures into a deterministic `Tool_error`).
 
@@ -91,7 +91,7 @@ Panics dump a truncated stack trace to `.k4k/log.jsonl` (max 8 KB per entry) so 
 ## Retries
 
 Three places allow retries; nowhere else does:
-- **`Backend_claude.invoke`**: up to 3× on transient network/rate-limit failures (exponential backoff). All retries count against budget.
+- **`Backend_external.invoke`**: up to 3× on transient backend-tool failures (exit code 1, exponential backoff). All retries count against budget.
 - **`Verifier_external.run`**: zero retries. A `Tool_error` here (verifier exit ≥ 1, missing/unparseable result file, timeout) is a real error.
 - **`Persist.atomic_write`**: zero retries on `ENOSPC`; rollback and surface `EDISK_FULL`.
 

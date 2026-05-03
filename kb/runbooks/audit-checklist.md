@@ -54,7 +54,7 @@ All six checks pass with attached evidence.
 ### Checks
 1. **Memory ceiling (`NF2`)**: 50-step integration scenario; max RSS < 512 MB.
 2. **Wall-clock per gap-step (median)**: < 60 s under stub backends.
-3. **API request budget**: cumulative `usage.input_tokens + output_tokens` per realistic scenario fits inside the soft caps from `external/claude-code.md`.
+3. **API request budget**: cumulative `budget_used` (per `external/backend-protocol.md`) per realistic scenario fits inside the soft caps in `domain/prd.md#non-functional-expectations` and the per-call max in `conventions/context-economy.md` (R1).
 4. **Atomic writes (`P10`)**: 100 random-kill iterations; manifest parses every time.
 5. **Lock-free reads**: `flock` is held only across writes (verify via instrumented log of lock acquisitions).
 6. **No N+1 agent calls**: KB regeneration touches *only* affected files (`P16`); audit by counting agent calls per gap-step.

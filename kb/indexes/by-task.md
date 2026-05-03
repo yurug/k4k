@@ -103,23 +103,26 @@ Every P/NF/T-id in scope is referenced by ≥ 1 test name.
 
 ---
 
-## #extend-backend — adding an agent backend (e.g. Ollama)
+## #extend-backend — adding an agent backend (e.g. Ollama, OpenAI, OpenRouter)
+
+**Adding a backend requires zero changes to k4k's source** (per ADR-009). Build a standalone executable conforming to the wire protocol; users plug it in via the interaction file's `k4k.backend.command` frontmatter.
 
 **Load:**
-1. `architecture/decisions/adr-003-pluggable-backend.md`
-2. `spec/api-contracts.md#agent-backend`
-3. `external/<your-backend>.md` — write this first if it doesn't exist
-4. `conventions/context-economy.md` — non-negotiable
-5. `properties/non-functional.md#NF8`
+1. `architecture/decisions/adr-009-backend-protocol.md` — why no k4k code change
+2. `external/backend-protocol.md` — the wire contract (CLI shape + JSON result schema + exit codes + budget semantics)
+3. `examples/backends/claude-code/README.md` — worked example to copy from
+4. `conventions/context-economy.md` — prompt-design constraints your backend will receive
+5. `properties/non-functional.md#NF8` — the weakness-profile commitment
 
 **Key questions answered:**
-- What does the `Agent_backend` signature require?
-- Does my backend's failure model fit `EAGENT_UNAVAILABLE`?
-- Does it satisfy NF8 (works under weakness profile)?
-- Where is the new `.opam` dependency declared?
+- What CLI shape do I implement? (`--purpose`, `--prompt-file`, `--budget`, `--output`)
+- What JSON schema does the result file follow? (`outcome`, `text`, `budget_used`, `duration_ms`, `error`)
+- Which exit codes do I use? (0 = result written; 1/130/other = `Tool_error`)
+- How do I report `budget_exhausted` cleanly? (set `outcome: "budget_exhausted"` in the JSON, exit 0)
+- Do I need to honor the no-cache rule for the two-run formalization protocol? (yes — see ADR-005)
 
 **Exit criterion:**
-The full integration test suite passes against `Backend_<your-backend>` substituted at the DI seam.
+Your executable runs against the protocol's compliance checklist (a small test fixture in `examples/backends/claude-code/test/` exercises every contract clause; copy and adapt it).
 
 ---
 

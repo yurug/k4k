@@ -45,14 +45,14 @@ How the modules in `bin/` and `lib/` are wired. *Why* the choices are this way l
              ┌──────────────────────────────┐ ┌────────────────────────┐
              │ Agent_backend (signature)    │ │ Verifier (signature)   │
              │   impls:                     │ │   impls:               │
-             │     Backend_claude           │ │     Verifier_external  │
+             │     Backend_external         │ │     Verifier_external  │
              │     Backend_stub             │ │     Verifier_stub      │
-             │     (future: Backend_ollama) │ │                        │
              └──────────────────────────────┘ └────────────────────────┘
                     │                                │
-                    │  subprocess / HTTP             │  subprocess invocation of any
-                    ▼                                ▼  user-configured executable
-              external service                conforming to external/verifier-protocol.md
+                    │  subprocess invocation of any  │  subprocess invocation of any
+                    ▼  user-configured executable    ▼  user-configured executable
+            conforming to external/        conforming to external/
+            backend-protocol.md            verifier-protocol.md
 ```
 
 `Persist` (file I/O for `.k4k/`, atomic writes, locking) is a peer of the above; every module that writes goes through it. `Canonicalize` is a pure library used by both `Stability` and `Gap_step`.
@@ -91,8 +91,8 @@ The harness is constructed once in `bin/main.ml`:
 let () =
   let agent : (module Agent_backend) =
     match Cli.backend_choice with
-    | `Claude_code -> (module Backend_claude)
-    | `Stub        -> (module Backend_stub)
+    | `External -> (module Backend_external)   (* configured via .k4k frontmatter *)
+    | `Stub     -> (module Backend_stub)
   in
   let verifier : (module Verifier) =
     match Cli.verifier_choice with
@@ -137,6 +137,10 @@ k4k/
   bin/main.ml                       # CLI entry, argv parsing, DI wiring
   lib/                              # see module-by-module list below
   examples/
+    backends/
+      claude-code/                  # reference backend, conforms to wire protocol
+        main.ml                     # standalone OCaml binary
+        README.md                   # invocation + .k4k snippet to plug it in
     verifiers/
       dune-ocaml/                   # reference verifier, conforms to wire protocol
         main.ml                     # standalone OCaml binary
@@ -185,7 +189,7 @@ k4k/
 | `harness`                    | DI seam over `Agent_backend`/`Verifier`; constructed in `bin/main.ml`    |
 | `agent_backend`              | `module type S` for agent backends                                       |
 | `backend_stub`               | DI stub with Strong/Weak profiles + canned responses (Q3.3)              |
-| `backend_claude`             | subprocess `claude -p --output-format json --max-turns 1`                |
+| `backend_external`           | the only production backend adapter — invokes a configured executable per `external/backend-protocol.md`, reads JSON result |
 | `verifier`                   | `module type S` for verifiers (internal scaffolding only — see ADR-008)  |
 | `verifier_stub`              | DI stub                                                                  |
 | `verifier_external`          | the only production verifier adapter — invokes a configured executable per `external/verifier-protocol.md`, reads JSON result |
@@ -214,6 +218,8 @@ Several modules are split (e.g. `characterization` → 3 files; `parser` → 4 f
 - `decisions/adr-005-canonical-ast.md`
 - `decisions/adr-006-two-layer-kb.md`
 - `decisions/adr-007-deterministic-kb-regen.md`
+- `decisions/adr-008-verifier-protocol.md`
+- `decisions/adr-009-backend-protocol.md`
 - `conventions/code-style.md`
 - `conventions/error-handling.md`
 - `runbooks/test-environment.md`

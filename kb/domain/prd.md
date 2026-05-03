@@ -92,7 +92,7 @@ These are NOT in v0. Adding any of them means a v1+ release.
 
 - GUI / TUI dashboards
 - Multi-user / team / SaaS modes
-- Agent backends beyond `claude-code` (Ollama is **architected for** but not shipped — see ADR-003)
+- Agent backends beyond the `examples/backends/claude-code/` reference (Ollama, OpenAI, OpenRouter, etc. — none of these require k4k changes; users plug them in via the wire protocol per ADR-009)
 - Verifiers beyond the `examples/verifiers/dune-ocaml/` reference (Rocq, Lean, Verus, Frama-C, AFL — none of these require k4k changes; users plug them in via the wire protocol per ADR-008)
 - Custom DSL compilation or self-built verifiers
 - Distributed or parallel gap-step execution

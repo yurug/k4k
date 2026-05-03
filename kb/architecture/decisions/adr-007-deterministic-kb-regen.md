@@ -27,7 +27,7 @@ Both options preserve the user-facing contract: target-KB files have valid front
 
 v0 implements **option 2 — deterministic in-process rendering** in `lib/Kb_regen` (the rendering logic) and `lib/Kb_render` (the per-file body composers). The agent path is **wired but inactive**:
 - `prompts/kb-regen.md` ships, embedded into the binary via `lib/Prompts.embedded`.
-- The `Agent_backend` signature accepts `purpose = `Kb_regen`. `Backend_stub` and `Backend_claude` both honor it.
+- The `Agent_backend` signature accepts `purpose = `Kb_regen`. `Backend_stub` and `Backend_external` both honor it (and any executable plugged in via the wire protocol receives `--purpose kb-regen`).
 - `Kb_regen.regen` selects the renderer at runtime based on a configuration flag — currently always `` `Deterministic ``. A v1 switch flips this to `` `Agent_driven ``.
 
 ## Consequences

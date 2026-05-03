@@ -33,7 +33,7 @@ related: []
 | Goal                                      | Load these files (in order)                                                                                      |
 |-------------------------------------------|------------------------------------------------------------------------------------------------------------------|
 | Implement a k4k feature                   | `INDEX.md` → `GLOSSARY.md` → `domain/prd.md` → `kb/plan.md` (Phase 3) → `spec/algorithms.md` + relevant spec/ → `properties/functional.md` → `architecture/overview.md` → `conventions/code-style.md` |
-| Add an agent backend (e.g. Ollama)        | `architecture/decisions/adr-003-pluggable-backend.md` → `spec/api-contracts.md#agent-backend` → `external/ollama.md` (or write your own) → `conventions/context-economy.md` → `properties/non-functional.md#NF8` |
+| Add an agent backend (e.g. Ollama)        | `architecture/decisions/adr-009-backend-protocol.md` → `external/backend-protocol.md` → `examples/backends/claude-code/README.md` (worked example) → `conventions/context-economy.md` → `properties/non-functional.md#NF8` — **no k4k code change required** |
 | Add a verifier (e.g. Rocq)                | `architecture/decisions/adr-008-verifier-protocol.md` → `external/verifier-protocol.md` → `examples/verifiers/dune-ocaml/README.md` (worked example) — **no k4k code change required** |
 | Run a Phase-5 audit                       | `runbooks/audit-checklist.md` → `properties/INDEX.md` → `conventions/testing-strategy.md`                       |
 | Debug an issue                            | `spec/error-taxonomy.md` → `spec/algorithms.md` → `properties/edge-cases.md` → relevant `external/<sdk>.md`     |
@@ -79,13 +79,14 @@ kb/
 │       ├── adr-005-canonical-ast.md
 │       ├── adr-006-two-layer-kb.md
 │       ├── adr-007-deterministic-kb-regen.md
-│       └── adr-008-verifier-protocol.md
+│       ├── adr-008-verifier-protocol.md
+│       └── adr-009-backend-protocol.md
 │
 ├── external/
 │   ├── INDEX.md
-│   ├── claude-code.md               agent backend — runtime behavior, budget, failure modes
+│   ├── backend-protocol.md          wire protocol any agent backend must implement (ADR-009)
 │   ├── verifier-protocol.md         wire protocol any verifier executable must implement (ADR-008)
-│   └── ollama.md                    v1+ target — design constraints applied in v0
+│   └── ollama.md                    architectural guidance for weakness-profile prompt design
 │
 ├── conventions/
 │   ├── code-style.md                OCaml rules, file/function caps, doc-comments
@@ -105,7 +106,7 @@ kb/
 
 ## File count and last updated
 
-- **Methodology files**: 33 (after ADR-008 retrofit: + ADR-008, + external/verifier-protocol.md, − external/dune.md)
+- **Methodology files**: 34 (after ADR-009 retrofit: + ADR-009, + external/backend-protocol.md, − external/claude-code.md)
 - **Reference files** (NOTES, claude-code-report, opencode, questions-round{1,2,3}, plan, plan-simulation report, audit reports): grew through Phases 1–5
 - **Last updated**: 2026-05-02
 

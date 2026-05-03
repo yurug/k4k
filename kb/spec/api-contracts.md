@@ -1,12 +1,12 @@
 ---
 id: spec.api-contracts
 type: spec
-summary: Interfaces k4k depends on — agent backend (pluggable, v0 ships claude-code), verifier (pluggable, v0 ships dune-ocaml) — plus the public CLI contract.
+summary: Interfaces k4k depends on — agent backend (wire protocol, ADR-009), verifier (wire protocol, ADR-008), plus the public CLI contract.
 domain: spec
-last-updated: 2026-05-02
+last-updated: 2026-05-03
 depends-on: [glossary, spec.data-model, spec.algorithms]
 refines: []
-related: [external.claude-code, external.verifier-protocol, external.ollama, architecture.overview]
+related: [external.backend-protocol, external.verifier-protocol, external.ollama, architecture.overview]
 ---
 
 # API Contracts
@@ -40,12 +40,14 @@ Flags: `-v` / `-vv` (verbosity), `--no-color`, `--max-steps N`, `--budget M`. Se
 
 ## Agent backend interface
 
+The OCaml-internal signature retained for type-level wiring inside k4k:
+
 ```ocaml
 module type Agent_backend = sig
   type t
   type config
 
-  val name : string                          (* "claude-code", "ollama-codellama-7b", ... *)
+  val name : string
   val version : t -> string
 
   val create : config -> t
@@ -54,18 +56,20 @@ module type Agent_backend = sig
     t ->
     purpose:[`Formalization | `Gap_step | `Kb_regen] ->
     prompt:string ->
-    budget:int ->                            (* budget units this call may consume *)
+    budget:int ->
     [ `Ok of response
     | `Budget_exhausted
     | `Tool_error of string ]
 
   type response = {
-    text : string;                           (* raw model output *)
-    budget_used : int;                       (* tokens-equivalent *)
+    text : string;
+    budget_used : int;
     duration_ms : int;
   }
 end
 ```
+
+**The signature is internal scaffolding only.** It has exactly two production-grade implementations: `Backend_external` (the generic adapter that delegates to a configured external executable per `external/backend-protocol.md`) and `Backend_stub` (test harness). Adding new backends does not add new modules — it adds new external executables conforming to the wire protocol.
 
 ### Pre-conditions
 - `prompt` ≤ backend's effective context window (caller must pre-trim).
@@ -74,17 +78,23 @@ end
 ### Post-conditions
 - `response.text` is the raw output. Any structure (JSON, diff) is parsed by the caller, not the backend.
 - `budget_used` ≤ `budget` for `Ok` responses. `Budget_exhausted` returned with no text otherwise.
-- The backend never raises; all failures are `Tool_error`.
+- The adapter never raises; all failures are `Tool_error`.
 
 ### Determinism contract
 
 The backend itself is **not** required to be deterministic. The harness's determinism is preserved by canonicalizing the response (`algorithms.md#canonicalize`) and by the two-run protocol (`algorithms.md#formalization`).
 
-### Concrete v0 backend
-`claude-code` — see `external/claude-code.md` for invocation surface, runtime behavior, request budget model.
+### Public extension surface
 
-### Architected v1+ backend
-`ollama-*` — see `external/ollama.md` and ADR-003. Prompts must be designed against this backend's smaller context window and weaker reasoning, *not* against Claude's.
+Adding a backend is **not** an OCaml change. It is a new executable conforming to the wire protocol in `external/backend-protocol.md`. The user configures the executable via the interaction file's `k4k.backend.command` frontmatter field. No code in `lib/` is backend-specific.
+
+### Reference backend
+
+`examples/backends/claude-code/` ships a reference implementation suitable for users with `claude` (Claude Code) installed. See `external/backend-protocol.md` and the example's own README.
+
+### Weakness-profile design discipline
+
+`conventions/context-economy.md` constrains every prompt template (`prompts/*.md` in this repo) to fit a 7B-class local model's context window and reasoning depth. After ADR-009 these constraints apply to whatever backend the user plugs in — including users who only ever run against Claude. The discipline keeps the prompts portable.
 
 ## Verifier interface
 
@@ -160,9 +170,10 @@ A pure function from `(purpose, D, S, Property?)` to `string`. No randomness. Th
 
 ## Related files
 
-- `external/claude-code.md` — runtime behavior of the v0 agent backend
+- `external/backend-protocol.md` — the wire protocol agent backends must implement
 - `external/verifier-protocol.md` — the wire protocol verifiers must implement
-- `external/ollama.md` — v1+ target, but prompts must already accommodate
-- `architecture/decisions/adr-003-pluggable-backend.md` — why these signatures, why now
+- `external/ollama.md` — architectural guidance for prompt-design constraints under the weakness profile
+- `architecture/decisions/adr-003-pluggable-backend.md` — pluggable-backend rationale (partially superseded by ADR-009)
 - `architecture/decisions/adr-008-verifier-protocol.md` — why the verifier surface is a wire protocol, not an OCaml signature
+- `architecture/decisions/adr-009-backend-protocol.md` — symmetric move for backends
 - `architecture/overview.md` — module boundaries that realize these contracts

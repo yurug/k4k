@@ -49,7 +49,7 @@ A class-keyed list of aspects that an interaction file must mention non-triviall
 The kind of program k4k is being asked to build, declared by the user in the interaction file's YAML frontmatter (`class: cli`). v0 supports `cli` only; future classes (`library`, `filter`, …) are deferred.
 
 ### Agent backend
-A pluggable provider of headless coding-agent calls. v0 ships `claude-code`. The interface is defined in `spec/api-contracts.md#agent-backend` and the design rationale (including local-LLM support via Ollama) in `architecture/decisions/adr-003-pluggable-backend.md`.
+An external executable that, given a prompt and a budget cap, returns text plus token usage (or refuses with `budget_exhausted` / `tool_error`). Per ADR-009, k4k ships **no** backend itself — only the wire-protocol adapter `Backend_external`. A reference backend for Claude Code lives at `examples/backends/claude-code/`. See `external/backend-protocol.md` for the contract; `architecture/decisions/adr-003-pluggable-backend.md` (partially superseded by ADR-009) for the original pluggability commitment.
 
 ### Coding agent / agent
 Used interchangeably for an agent backend. Always headless (no interactive chat from k4k's perspective).

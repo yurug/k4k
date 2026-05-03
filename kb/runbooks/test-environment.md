@@ -23,8 +23,8 @@ Test instrumentation only. None of these are part of the public CLI contract (`s
 
 ### `K4K_LIVE=1`
 **Purpose:** opt into real `claude` and real `dune` invocations during a test run.
-**Default:** unset → `Backend_stub` and (when configured) `Verifier_stub` are used; `Backend_claude` and `Verifier_external` (against the `examples/verifiers/dune-ocaml/` reference binary, which runs real `dune`) are still used for any test that explicitly requests them (e.g. `S1_echo_first_run_e2e` always uses the reference verifier).
-**When the binary itself reads this:** `bin/main.ml` selects `Backend_claude` over `Backend_stub` when set. Test harness code reads it to skip live-only scenarios when unset.
+**Default:** unset → `Backend_stub` and (when configured) `Verifier_stub` are used; `Backend_external` (against the `examples/backends/claude-code/` reference binary) and `Verifier_external` (against the `examples/verifiers/dune-ocaml/` reference binary, which runs real `dune`) are still used for any test that explicitly requests them (e.g. `S1_echo_first_run_e2e` always uses the reference verifier).
+**When the binary itself reads this:** `bin/main.ml` selects `Backend_external` over `Backend_stub` when set. Test harness code reads it to skip live-only scenarios when unset.
 **Production effect:** none unless explicitly set; users who want to run k4k for real *do* want this set.
 
 ### `K4K_STUB_RESPONSES=<path-to-json>`
@@ -65,4 +65,4 @@ These are knobs of **k4k itself**. The interaction file's user does not see or c
 
 - `spec/api-contracts.md` — the public CLI contract (which deliberately excludes these env vars)
 - `properties/non-functional.md#NF4` and `#NF5` — measurement procedures relying on these knobs
-- `external/claude-code.md` — how `Backend_claude` differs from `Backend_stub`
+- `external/backend-protocol.md` — how external backends differ from `Backend_stub`

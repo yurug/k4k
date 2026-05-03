@@ -12,7 +12,7 @@ related: [adr-005, conventions.context-economy, external.claude-code, external.o
 # ADR-003: Pluggable agent backend; design for the weakest supported model
 
 ## Status
-Accepted (2026-05-02).
+Accepted (2026-05-02). **Partially superseded by ADR-009** (2026-05-03): the *pluggable* claim and the *weakness-profile prompt-design discipline* both stand; the *plug shape* moved from "OCaml module signature, one adapter per tool" to "wire protocol over JSON files, one generic adapter". The Claude-Code-specific reasoning below applies to the *example backend* now shipped at `examples/backends/claude-code/`, not to a built-in module.
 
 ## Context
 The user (round 2 user-added) explicitly requested: support for local LLMs via Ollama as a future backend, with the consequence that prompts must be optimized for weak local models because they are less capable than Claude Opus.

@@ -8,7 +8,13 @@
     generic adapter), or [Verifier_stub] when [K4K_STUB_RESPONSES] is
     set (test-only path). The verifier executable + timeout come from
     the interaction file's [k4k.verifier] frontmatter, optionally
-    overridden by [--verifier]/[--verifier-timeout]. *)
+    overridden by [--verifier]/[--verifier-timeout].
+
+    Backend is selected per ADR-009: default [Backend_external] (the
+    generic adapter), or [Backend_stub] when [K4K_STUB_RESPONSES] is
+    set (test-only path). The backend executable + timeout come from
+    [k4k.backend] frontmatter, overridable by
+    [--backend]/[--backend-timeout]. *)
 
 open K4k
 
@@ -82,6 +88,18 @@ let verifier_timeout_arg =
        info [ "verifier-timeout" ] ~docv:"S"
          ~doc:"Override the verifier timeout in seconds.")
 
+let backend_cmd_arg =
+  let open Cmdliner in
+  Arg.(value & opt (some string) None &
+       info [ "backend" ] ~docv:"CMD"
+         ~doc:"Override the backend command (whitespace-separated).")
+
+let backend_timeout_arg =
+  let open Cmdliner in
+  Arg.(value & opt (some int) None &
+       info [ "backend-timeout" ] ~docv:"S"
+         ~doc:"Override the backend timeout in seconds.")
+
 let live_backend () =
   Sys.getenv_opt "K4K_LIVE" = Some "1"
 
@@ -133,26 +151,89 @@ let load_stub_canned_from_env () =
              mk_entry cur e) entries
        | _ -> [])
 
-let make_backend () =
-  if live_backend () then
-    `Claude (Backend_claude.create Backend_claude.default_config)
-  else
+(* When [K4K_STUB_RESPONSES] is set we drive a [Backend_stub], regardless
+   of frontmatter [backend.command] (option (a) from the ADR-009 task).
+   Otherwise [Backend_external] is the only path. *)
+let stub_responses_env () =
+  match Sys.getenv_opt "K4K_STUB_RESPONSES" with
+  | None | Some "" -> false
+  | Some _ -> true
+
+let make_external_backend ~k4k_dir ~logger ~command ~timeout_s =
+  Backend_external.create
+    { Backend_external.command; timeout_s;
+      k4k_dir = Some k4k_dir; logger = Some logger; }
+
+let make_backend ~k4k_dir ~logger ~command ~timeout_s =
+  if stub_responses_env () then
     let canned = load_stub_canned_from_env () in
     `Stub (Backend_stub.create
              { Backend_stub.default_config with responses = canned })
+  else
+    let _ = live_backend () in  (* legacy env, retained as a no-op marker *)
+    `External (make_external_backend ~k4k_dir ~logger ~command ~timeout_s)
 
-let run_check verbosity file =
+(* Read the backend config from frontmatter; merge in CLI overrides.
+   Returns (command_option, timeout_s). *)
+let read_backend_config ~file ~cli_cmd ~cli_timeout =
+  let parsed =
+    try
+      let content = Persist.read_file file in
+      Some (Parser.parse content)
+    with _ -> None
+  in
+  let fm_cmd, fm_to = match parsed with
+    | None -> None, None
+    | Some p ->
+        p.Parser.frontmatter.backend_command,
+        p.Parser.frontmatter.backend_timeout_s
+  in
+  let cmd = match cli_cmd with
+    | Some s ->
+        Some (List.filter (fun x -> x <> "")
+                (String.split_on_char ' ' s))
+    | None -> fm_cmd
+  in
+  let timeout = match cli_timeout with
+    | Some n when n > 0 -> n
+    | _ ->
+        (match fm_to with
+         | Some n when n > 0 -> n
+         | _ -> 300)
+  in
+  cmd, timeout
+
+let raise_unstable_missing_backend () =
+  raise (Error.K4k_error
+           (Error.E_unstable
+              [ Error.issue ~section:"frontmatter"
+                  "k4k.backend.command is required (set in frontmatter \
+                   or pass --backend)" ]))
+
+let run_check verbosity file ~cli_backend ~cli_backend_timeout =
   Sigint.install ();
   let k4k_dir = ".k4k" in
   let jsonl_path = Some (Filename.concat k4k_dir "log.jsonl") in
   let logger = Logger.create ~verbosity ~jsonl_path in
   let inputs = Harness.{ file_path = file; k4k_dir; logger } in
   try
+    let bcmd, btimeout =
+      read_backend_config ~file
+        ~cli_cmd:cli_backend ~cli_timeout:cli_backend_timeout in
+    (* For --check: if no backend command is set we still allow the run
+       to proceed; the cache may make any backend invocation moot.
+       [Backend_external.invoke] raises EAGENT_UNAVAILABLE if it is
+       called with an empty command. *)
+    let backend_command = match bcmd with
+      | None | Some [] -> []
+      | Some xs -> xs
+    in
     let _ : Characterization.t =
-      match make_backend () with
-      | `Claude b ->
+      match make_backend ~k4k_dir ~logger
+              ~command:backend_command ~timeout_s:btimeout with
+      | `External b ->
           Full_check.run
-            (module Backend_claude) (module Verifier_stub)
+            (module Backend_external) (module Verifier_stub)
             ~backend:b ~inputs ()
       | `Stub b ->
           Full_check.run
@@ -211,7 +292,7 @@ let make_external_verifier ~k4k_dir ~logger ~command ~timeout_s =
       logger = Some logger; }
 
 let run_with_external verbosity file ~max_steps ~budget
-    ~command ~timeout_s =
+    ~command ~timeout_s ~backend_command ~backend_timeout_s =
   let k4k_dir = ".k4k" in
   let jsonl_path = Some (Filename.concat k4k_dir "log.jsonl") in
   let logger = Logger.create ~verbosity ~jsonl_path in
@@ -220,10 +301,11 @@ let run_with_external verbosity file ~max_steps ~budget
   let verifier = make_external_verifier ~k4k_dir ~logger
                    ~command ~timeout_s in
   let _outcome =
-    match make_backend () with
-    | `Claude b ->
+    match make_backend ~k4k_dir ~logger
+            ~command:backend_command ~timeout_s:backend_timeout_s with
+    | `External b ->
         Convergence.run
-          (module Backend_claude) (module Verifier_external)
+          (module Backend_external) (module Verifier_external)
           ~backend:b ~verifier ~inputs ~cfg
     | `Stub b ->
         Convergence.run
@@ -233,8 +315,21 @@ let run_with_external verbosity file ~max_steps ~budget
   let _ = _outcome in
   Logger.stdout_line logger "done"; 0
 
+let resolve_backend_command file ~cli_backend ~cli_backend_timeout =
+  let bcmd, btimeout = read_backend_config ~file
+                        ~cli_cmd:cli_backend
+                        ~cli_timeout:cli_backend_timeout in
+  let command = match bcmd with
+    | None | Some [] ->
+        if stub_responses_env () then []
+        else raise_unstable_missing_backend ()
+    | Some xs -> xs
+  in
+  command, btimeout
+
 let run_convergence verbosity file ~max_steps ~budget
-    ~cli_verifier ~cli_verifier_timeout =
+    ~cli_verifier ~cli_verifier_timeout
+    ~cli_backend ~cli_backend_timeout =
   Sigint.install ();
   try
     let cmd, timeout = read_verifier_config ~file
@@ -243,8 +338,12 @@ let run_convergence verbosity file ~max_steps ~budget
     match cmd with
     | None | Some [] -> raise_unstable_missing_verifier ()
     | Some command ->
+        let backend_command, backend_timeout_s =
+          resolve_backend_command file
+            ~cli_backend ~cli_backend_timeout in
         run_with_external verbosity file ~max_steps ~budget
           ~command ~timeout_s:timeout
+          ~backend_command ~backend_timeout_s
   with
   | Error.K4k_error err ->
       let logger = Logger.create ~verbosity
@@ -316,13 +415,17 @@ let run_reset ~yes _verbosity _file =
 
 let dispatch verbosity check_flag status_flag reset_flag yes_flag
     no_color_flag max_steps budget
-    cli_verifier cli_verifier_timeout file =
+    cli_verifier cli_verifier_timeout
+    cli_backend cli_backend_timeout file =
   if no_color_flag then K4k.Logger.Tty_status.set_color_enabled false;
   if status_flag then run_status verbosity file
   else if reset_flag then run_reset ~yes:yes_flag verbosity file
-  else if check_flag then run_check verbosity file
+  else if check_flag then
+    run_check verbosity file
+      ~cli_backend ~cli_backend_timeout
   else run_convergence verbosity file ~max_steps ~budget
          ~cli_verifier ~cli_verifier_timeout
+         ~cli_backend ~cli_backend_timeout
 
 let _ = H.check  (* keep step-1 surface alive *)
 
@@ -333,6 +436,7 @@ let check_term =
                  $ no_color_flag_arg
                  $ max_steps_arg $ budget_arg
                  $ verifier_cmd_arg $ verifier_timeout_arg
+                 $ backend_cmd_arg $ backend_timeout_arg
                  $ file_arg)
 
 let cmd =

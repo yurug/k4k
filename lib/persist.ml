@@ -191,3 +191,107 @@ let write_verifier_run ~k4k_dir ~run_id ~stdout ~stderr ~result =
   atomic_write ~path:(Filename.concat dir "stdout.log") stdout;
   atomic_write ~path:(Filename.concat dir "stderr.log") stderr;
   atomic_write ~path:(Filename.concat dir "result.json") result
+
+(* --- ADR-010: clarification append via cotype --- *)
+
+let timestamp_of_now () =
+  let t = Unix.gettimeofday () in
+  let tm = Unix.gmtime t in
+  Printf.sprintf "%04d-%02d-%02d-%02d%02d%02d"
+    (tm.tm_year + 1900) (tm.tm_mon + 1) tm.tm_mday
+    tm.tm_hour tm.tm_min tm.tm_sec
+
+(* Splice: parse [base_bytes] by H2 headings; preserve every section
+   that doesn't start with `## k4k:clarification:` byte-for-byte, then
+   append a fresh `## k4k:clarification:<ts>` block with [questions]. *)
+let render_clarification_section ~timestamp ~questions =
+  let buf = Buffer.create 256 in
+  Buffer.add_string buf "## k4k:clarification:";
+  Buffer.add_string buf timestamp;
+  Buffer.add_char buf '\n';
+  List.iter (fun q ->
+    Buffer.add_string buf "- "; Buffer.add_string buf q;
+    Buffer.add_char buf '\n') questions;
+  Buffer.contents buf
+
+let splice_clarification ~base_bytes ~timestamp ~questions =
+  let block = render_clarification_section ~timestamp ~questions in
+  let n = String.length base_bytes in
+  let needs_nl =
+    n > 0 && base_bytes.[n - 1] <> '\n'
+  in
+  if needs_nl then base_bytes ^ "\n" ^ block
+  else base_bytes ^ block
+
+(* Cotype-injection seam used by [append_clarification_via] and by
+   tests that want the in-memory stub. Signatures are written against
+   a saturated record so any concrete cotype implementation can be
+   adapted with a thin shim. *)
+
+type cotype_open_result = {
+  base_sha   : string;
+  base_path  : string;
+  conflicted : bool;
+}
+
+type cotype_save_outcome =
+  | Direct   of string
+  | Merged   of string
+  | Noop
+  | Conflict of { conflict_path : string }
+
+let raise_state_corrupt_conflict ~conflict_path =
+  raise (Error.K4k_error
+    (Error.E_state_corrupt
+       (Printf.sprintf
+          "interaction file conflict: cotype reported overlapping edits; \
+           see %s; resolve diff3 markers in your editor and run \
+           `cotype resolve <file>` before re-running k4k"
+          conflict_path)))
+
+let raise_cotype_error msg =
+  raise (Error.K4k_error
+    (Error.E_state_corrupt (Printf.sprintf "cotype error: %s" msg)))
+
+let append_clarification_via
+    ~ensure_init ~open_ ~save ~path ~questions =
+  (match ensure_init ~file:path with
+   | Ok () -> ()
+   | Error msg -> raise_cotype_error msg);
+  let opened : cotype_open_result =
+    match open_ ~file:path with
+    | Ok r -> r
+    | Error msg -> raise_cotype_error msg
+  in
+  let base_bytes = read_file opened.base_path in
+  let proposed = splice_clarification
+    ~base_bytes ~timestamp:(timestamp_of_now ()) ~questions in
+  match save ~file:path ~base_sha:opened.base_sha
+          ~actor:"agent:k4k" ~bytes:proposed with
+  | Ok (Direct _ | Merged _ | Noop) -> ()
+  | Ok (Conflict { conflict_path }) ->
+      raise_state_corrupt_conflict ~conflict_path
+  | Error msg -> raise_cotype_error msg
+
+(* Production helper bound to [Cotype]. Lives here so callers don't
+   need to import Cotype themselves. *)
+let append_clarification ~cotype ~path ~questions =
+  let adapt_open r : cotype_open_result =
+    let r : Cotype.open_result = r in
+    { base_sha = r.base_sha; base_path = r.base_path;
+      conflicted = r.conflicted }
+  in
+  let adapt_save_outcome = function
+    | Cotype.Direct s -> Direct s
+    | Cotype.Merged s -> Merged s
+    | Cotype.Noop -> Noop
+    | Cotype.Conflict { conflict_path } -> Conflict { conflict_path }
+  in
+  append_clarification_via
+    ~ensure_init:(fun ~file -> Cotype.ensure_init cotype ~file)
+    ~open_:(fun ~file ->
+      Result.map adapt_open (Cotype.open_ cotype ~file))
+    ~save:(fun ~file ~base_sha ~actor ~bytes ->
+      Result.map adapt_save_outcome
+        (Cotype.save cotype ~file ~base_sha ~actor ~bytes))
+    ~path ~questions

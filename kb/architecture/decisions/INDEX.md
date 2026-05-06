@@ -28,6 +28,7 @@ ADR format: Status, Context, Decision, Consequences, What this means for impleme
 | ADR-007 | Deterministic in-process kb-regen for v0                                | v0 deviates from `algorithms.md#kb-regen`'s agent-driven model        |
 | ADR-008 | Wire-protocol verifier; k4k ships no verifier-specific code             | Supersedes the v0-only narrowing in ADR-004; verifier moves to a JSON wire protocol |
 | ADR-009 | Wire-protocol backend; k4k ships no backend-specific code               | Supersedes the v0-only narrowing in ADR-003; symmetric to ADR-008                  |
+| ADR-010 | Delegate user-agent interaction-file concurrency to cotype              | Partially supersedes ADR-002 (ownership tags removed); cotype is a hardcoded dep   |
 
 ## How to add a new ADR
 

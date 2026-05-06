@@ -75,7 +75,7 @@ let chdir_safe path =
   try Unix.chdir path; true
   with Unix.Unix_error _ -> false
 
-let spawn_in ~prog ~argv ~env ~cwd ~stdout_w ~stderr_w
+let spawn_in ~prog ~argv ~env ~cwd ~stdin_fd ~stdout_w ~stderr_w
              ~stdout_r ~stderr_r =
   let prev_cwd = try Unix.getcwd () with _ -> "/" in
   if not (chdir_safe cwd) then begin
@@ -86,7 +86,7 @@ let spawn_in ~prog ~argv ~env ~cwd ~stdout_w ~stderr_w
   let pid =
     try
       Unix.create_process_env prog argv env
-        Unix.stdin stdout_w stderr_w
+        stdin_fd stdout_w stderr_w
     with e -> close_safe stdout_w; close_safe stderr_w;
               close_safe stdout_r; close_safe stderr_r;
               let _ = chdir_safe prev_cwd in raise e
@@ -96,6 +96,29 @@ let spawn_in ~prog ~argv ~env ~cwd ~stdout_w ~stderr_w
   close_safe stderr_w;
   pid
 
+(* Make an inheritable read-end pipe for the child's stdin and a
+   non-inheritable write-end the parent uses to feed [payload]. *)
+let make_stdin_pipe () =
+  let r, w = Unix.pipe () in
+  Unix.set_close_on_exec w;
+  r, w
+
+(* Drain [payload] into write fd [w] in chunks; the child reads from
+   the corresponding read end. We close [w] when done. *)
+let pump_stdin w payload =
+  let buf = Bytes.unsafe_of_string payload in
+  let len = Bytes.length buf in
+  let rec loop off =
+    if off >= len then ()
+    else
+      match Unix.write w buf off (len - off) with
+      | n -> loop (off + n)
+      | exception Unix.Unix_error (Unix.EINTR, _, _) -> loop off
+      | exception Unix.Unix_error (Unix.EPIPE, _, _) -> ()
+  in
+  (try loop 0 with _ -> ());
+  close_safe w
+
 let exit_code_of_outcome = function
   | `Exited rc -> rc
   | `Signaled s -> 128 + s
@@ -103,13 +126,26 @@ let exit_code_of_outcome = function
   | `Interrupted -> 130
 
 let run ?(env = Unix.environment ()) ?(cwd = ".") ?(timeout_s = 60)
-    ~prog ~args () =
+    ?stdin ~prog ~args () =
   let stdout_r, stdout_w = make_pipe () in
   let stderr_r, stderr_w = make_pipe () in
+  let stdin_r, stdin_w_opt = match stdin with
+    | None -> Unix.stdin, None
+    | Some _ -> let r, w = make_stdin_pipe () in r, Some w
+  in
   let argv = Array.of_list (prog :: args) in
   let t0 = Unix.gettimeofday () in
-  let pid = spawn_in ~prog ~argv ~env ~cwd
+  let pid = spawn_in ~prog ~argv ~env ~cwd ~stdin_fd:stdin_r
               ~stdout_w ~stderr_w ~stdout_r ~stderr_r in
+  (* If we built our own stdin pipe, close the read-end in the parent
+     so the child sees EOF once we've written everything; then pump
+     the payload into the write-end. The default [Unix.stdin] case
+     intentionally does not close anything. *)
+  (match stdin_w_opt with
+   | None -> ()
+   | Some w ->
+       close_safe stdin_r;
+       pump_stdin w (match stdin with Some s -> s | None -> ""));
   let outcome = waitpid_with_timeout ~child_pid:pid ~timeout_s in
   let timed_out = (outcome = `Timeout) in
   if timed_out || outcome = `Interrupted then kill_tree pid;

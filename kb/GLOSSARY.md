@@ -67,7 +67,10 @@ One iteration of the harness loop: pick the highest-risk property in `G`, ask th
 A deterministic function mapping a property to `[0, 1]`. Used to pick the next gap-step's target. No agent input. See `spec/algorithms.md#risk-score`.
 
 ### Owner (of a section or file)
-Either `user` or `k4k`. User-owned regions are inviolable — k4k never writes to them. k4k-owned regions are machine-managed; the user *may* hand-edit, in which case ownership flips to `user` (detected via content hash mismatch). See `spec/algorithms.md#ownership`.
+**For the interaction file** (post-ADR-010): ownership is *positional* — k4k writes only sections whose H2 heading matches `## k4k:clarification:*`; everything else is user-authored. Concurrency is delegated to `cotype` (3-way merge); a user who edits a k4k-managed section surfaces as a `cotype save → conflict` outcome rather than an in-document ownership flip. **For target-KB files under `.k4k/`**: YAML frontmatter `owner: user | k4k` plus a `content_hash`; hash mismatch on read flips ownership to `user` for the run. See `spec/algorithms.md#ownership`, `external/cotype.md`, ADR-010.
+
+### cotype
+A small CLI (`pipx install cotype`) that provides safe-save concurrency on a single text file via 3-way merge over POSIX `diff3`. k4k delegates the user-agent interaction-file protocol to it (per ADR-010). Hardcoded runtime dependency, like `git`. Six commands: `init`, `open`, `save`, `status`, `resolve`, `cat-base`. The contract k4k depends on is in `external/cotype.md`.
 
 ### KB (knowledge base)
 Used in two senses, never conflate:

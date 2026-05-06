@@ -160,12 +160,10 @@ Coverage of an aspect requires the interaction file to *mention it non-trivially
 
 ## File ownership marker
 
-Every file under k4k's authority (interaction-file sections, KB files, etc.) carries an ownership marker. Two equivalent forms:
+The mechanism varies by file:
 
-- HTML comment for interaction files: `<!-- k4k:owner=user begin id=<section-id> --> ... <!-- end -->` and similarly for `owner=k4k`.
-- YAML frontmatter for KB files: `owner: user | k4k`, `content_hash: <sha256>`.
-
-The k4k-owned variant additionally carries a `content_hash` of the body. On read, k4k recomputes the hash; mismatch ⇒ ownership flips to `user` and k4k logs a warning.
+- **Interaction file** (`<name>.k4k`): post-ADR-010, ownership is *positional* (k4k writes only `## k4k:clarification:*` Markdown sections; everything else is the user's) and **concurrency is delegated to cotype** (`external/cotype.md`). No in-document ownership markers; no `content_hash` attribute. Conflicts surface as cotype `conflict` outcomes, not as hash mismatches.
+- **Target-KB files under `.k4k/`**: YAML frontmatter `owner: user | k4k`, `content_hash: <sha256>`. The k4k-owned variant additionally carries a `content_hash` of the body. On read, k4k recomputes the hash; mismatch ⇒ ownership flips to `user` for the run and k4k logs `ownership.flip`. (cotype is intentionally NOT applied to target-KB files in v0; see ADR-006/007.)
 
 ## Agent notes
 

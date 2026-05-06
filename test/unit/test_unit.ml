@@ -38,20 +38,21 @@ let read_all path =
   close_in ic;
   Bytes.unsafe_to_string b
 
-(* Minimal valid fixture body, parameterizable. *)
+(* Minimal valid fixture body, parameterizable. Post-ADR-010: plain
+   Markdown H2 sections; section IDs are normalized from heading text. *)
 let stable_fixture =
   "---\n\
    k4k:\n  version: 1\n  class: cli\n\
    ---\n\
-   <!-- k4k:owner=user begin id=goal -->\nGoal text\n<!-- k4k:owner=user end -->\n\
-   <!-- k4k:owner=user begin id=inputs-outputs -->\nIO\n<!-- k4k:owner=user end -->\n\
-   <!-- k4k:owner=user begin id=errors -->\nE\n<!-- k4k:owner=user end -->\n\
-   <!-- k4k:owner=user begin id=fs -->\nFS\n<!-- k4k:owner=user end -->\n\
-   <!-- k4k:owner=user begin id=concurrency -->\nC\n<!-- k4k:owner=user end -->\n\
-   <!-- k4k:owner=user begin id=perf -->\nP\n<!-- k4k:owner=user end -->\n\
-   <!-- k4k:owner=user begin id=examples-accept -->\nE\n<!-- k4k:owner=user end -->\n\
-   <!-- k4k:owner=user begin id=examples-refuse -->\nR\n<!-- k4k:owner=user end -->\n\
-   <!-- k4k:owner=user begin id=out-of-scope -->\nO\n<!-- k4k:owner=user end -->\n"
+   ## Goal\nGoal text\n\
+   ## Inputs and outputs\nIO\n\
+   ## Error taxonomy\nE\n\
+   ## File-system contract\nFS\n\
+   ## Concurrency\nC\n\
+   ## Performance bounds\nP\n\
+   ## Acceptance examples\nE\n\
+   ## Refusing examples\nR\n\
+   ## Out of scope\nO\n"
 
 (* ---------------- Error tests (≥3) ---------------- *)
 module ET = struct
@@ -215,80 +216,201 @@ module PT = struct
   ]
 end
 
-(* ---------------- P12 file-locking discipline ---------------- *)
-module P12T = struct
-  (* Two appenders contend for the lock. With flock, the second
-     blocks while the first writes. We use a small helper thread to
-     observe interleaving: each appender writes a marker, sleeps
-     briefly, writes another marker, and releases. If the writes
-     are not serialised, the markers will interleave; if they are
-     serialised, the file's bytes will be 'A1A2B1B2' or 'B1B2A1A2'.
-     Threads share an fd table, so OCaml's [Unix.lockf] (POSIX
-     advisory) does NOT lock different threads of the same process
-     against each other; we therefore use forked subprocesses. *)
-  let p12_concurrent_writers_serialize () =
-    with_tmpdir (fun dir ->
-      let path = Filename.concat dir "in.k4k" in
-      Persist_lock.append_clarification ~path "";
-      let pid_a = Unix.fork () in
-      if pid_a = 0 then begin
-        Persist_lock.with_exclusive_lock ~path (fun () ->
-          let oc = open_out_gen
-            [ Open_append; Open_binary ] 0o644 path in
-          output_string oc "A1"; flush oc;
-          Unix.sleepf 0.2;
-          output_string oc "A2"; flush oc;
-          close_out oc);
-        exit 0
-      end;
-      Unix.sleepf 0.05;
-      let pid_b = Unix.fork () in
-      if pid_b = 0 then begin
-        Persist_lock.with_exclusive_lock ~path (fun () ->
-          let oc = open_out_gen
-            [ Open_append; Open_binary ] 0o644 path in
-          output_string oc "B1"; flush oc;
-          Unix.sleepf 0.05;
-          output_string oc "B2"; flush oc;
-          close_out oc);
-        exit 0
-      end;
-      let _ = Unix.waitpid [] pid_a in
-      let _ = Unix.waitpid [] pid_b in
-      let body = read_all path in
-      Alcotest.(check bool)
-        (Printf.sprintf "no interleave: got %s" body) true
-        (body = "A1A2B1B2" || body = "B1B2A1A2"))
+(* ---------------- Cotype wrapper (real binary) ---------------- *)
+module CotypeT = struct
+  (* Skip these tests if the cotype binary isn't on PATH. Returns true
+     when cotype is callable. *)
+  let cotype_available () =
+    try
+      let r = Subprocess.run ~prog:"cotype" ~args:["--version"]
+                ~timeout_s:5 () in
+      r.exit_code = 0
+    with _ -> false
 
-  (* Sanity: with_exclusive_lock returns the body's value. *)
-  let p12_lock_is_released_on_exception () =
-    with_tmpdir (fun dir ->
-      let path = Filename.concat dir "x.k4k" in
-      (try
-        Persist_lock.with_exclusive_lock ~path (fun () -> raise Exit)
-      with Exit -> ());
-      (* Subsequent acquisition must not block. *)
-      let acquired = ref false in
-      Persist_lock.with_exclusive_lock ~path (fun () ->
-        acquired := true);
-      Alcotest.(check bool) "second acquisition succeeded" true
-        !acquired)
+  let mk_file dir bytes =
+    let p = Filename.concat dir "f.md" in
+    let oc = open_out p in output_string oc bytes; close_out oc;
+    p
 
-  let p12_append_clarification_writes () =
-    with_tmpdir (fun dir ->
-      let path = Filename.concat dir "in.k4k" in
-      Persist_lock.append_clarification ~path "first\n";
-      Persist_lock.append_clarification ~path "second\n";
-      Alcotest.(check string) "appended in order"
-        "first\nsecond\n" (read_all path))
+  let mk () = Cotype.create Cotype.default_config
+
+  let cotype_open_returns_base_sha_and_path () =
+    if not (cotype_available ()) then ()
+    else with_tmpdir (fun dir ->
+      let path = mk_file dir "hello\n" in
+      let t = mk () in
+      match Cotype.open_ t ~file:path with
+      | Ok r ->
+          Alcotest.(check bool) "base_sha non-empty" true
+            (String.length r.base_sha > 0);
+          Alcotest.(check bool) "base_path exists" true
+            (Sys.file_exists r.base_path);
+          Alcotest.(check string) "base_path bytes match" "hello\n"
+            (read_all r.base_path)
+      | Error msg -> Alcotest.failf "cotype open failed: %s" msg)
+
+  let cotype_init_is_idempotent () =
+    if not (cotype_available ()) then ()
+    else with_tmpdir (fun dir ->
+      let path = mk_file dir "x\n" in
+      let t = mk () in
+      (match Cotype.init t ~file:path with
+       | Ok () -> () | Error m -> Alcotest.failf "init1: %s" m);
+      (match Cotype.init t ~file:path with
+       | Ok () -> () | Error m -> Alcotest.failf "init2: %s" m))
+
+  let unwrap label = function
+    | Ok x -> x
+    | Error m -> Alcotest.failf "%s: %s" label m
+
+  let cotype_save_direct () =
+    if not (cotype_available ()) then ()
+    else with_tmpdir (fun dir ->
+      let path = mk_file dir "a\n" in
+      let t = mk () in
+      let r = unwrap "open" (Cotype.open_ t ~file:path) in
+      match Cotype.save t ~file:path ~base_sha:r.base_sha
+              ~actor:"agent:k4k" ~bytes:"b\n" with
+      | Ok (Direct _) ->
+          Alcotest.(check string) "file updated" "b\n" (read_all path)
+      | Ok _ | Error _ -> Alcotest.fail "expected Direct outcome")
+
+  let cotype_save_merged_when_concurrent_non_overlapping () =
+    if not (cotype_available ()) then ()
+    else with_tmpdir (fun dir ->
+      let path = mk_file dir "L1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\n" in
+      let t = mk () in
+      let r1 = unwrap "open1" (Cotype.open_ t ~file:path) in
+      (* Simulate a concurrent user save (different region: line 1). *)
+      let r_user = unwrap "open2" (Cotype.open_ t ~file:path) in
+      (match Cotype.save t ~file:path ~base_sha:r_user.base_sha
+              ~actor:"user" ~bytes:"L1edit\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\n" with
+       | Ok (Direct _ | Merged _) -> ()
+       | _ -> Alcotest.fail "user save did not commit");
+      (* k4k now saves against its earlier r1.base_sha — different
+         region (line 9). cotype's diff3 should merge cleanly. *)
+      match Cotype.save t ~file:path ~base_sha:r1.base_sha
+              ~actor:"agent:k4k"
+              ~bytes:"L1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9edit\n" with
+      | Ok (Merged _) ->
+          let final = read_all path in
+          Alcotest.(check bool) "user edit preserved" true
+            (Astring.String.is_infix ~affix:"L1edit" final);
+          Alcotest.(check bool) "k4k edit preserved" true
+            (Astring.String.is_infix ~affix:"L9edit" final)
+      | Ok other ->
+          let _ = other in
+          Alcotest.fail "expected Merged outcome on non-overlapping edit"
+      | Error m -> Alcotest.failf "save failed: %s" m)
+
+  let cotype_save_conflict_when_overlapping () =
+    if not (cotype_available ()) then ()
+    else with_tmpdir (fun dir ->
+      let path = mk_file dir "L1\n" in
+      let t = mk () in
+      let r1 = unwrap "open" (Cotype.open_ t ~file:path) in
+      (* User overwrites the same line. *)
+      (match Cotype.save t ~file:path ~base_sha:r1.base_sha
+              ~actor:"user" ~bytes:"USER\n" with
+       | Ok (Direct _) -> ()
+       | _ -> Alcotest.fail "user save not direct");
+      (* k4k tries to save its own version of the same region against
+         the stale base. *)
+      match Cotype.save t ~file:path ~base_sha:r1.base_sha
+              ~actor:"agent:k4k" ~bytes:"K4K\n" with
+      | Ok (Conflict _) -> ()
+      | _ -> Alcotest.fail "expected Conflict outcome")
+
+  let cotype_binary_missing_returns_error () =
+    let t = Cotype.create
+      { Cotype.binary = "/nonexistent/cotype-bin-xyz" } in
+    try
+      let _ = Cotype.init t ~file:"/dev/null" in
+      Alcotest.fail "expected EAGENT_UNAVAILABLE"
+    with Error.K4k_error (Error.E_agent_unavailable msg) ->
+      Alcotest.(check bool) "msg mentions install hint" true
+        (Astring.String.is_infix ~affix:"pipx install" msg
+         || Astring.String.is_infix ~affix:"pip install" msg)
+
+  let cotype_status_reports_clean_after_init () =
+    if not (cotype_available ()) then ()
+    else with_tmpdir (fun dir ->
+      let path = mk_file dir "x\n" in
+      let t = mk () in
+      let _ = Cotype.init t ~file:path in
+      match Cotype.status t ~file:path with
+      | Ok `Clean -> ()
+      | Ok `Unmanaged -> Alcotest.fail "expected Clean, got Unmanaged"
+      | Ok `Conflicted -> Alcotest.fail "expected Clean, got Conflicted"
+      | Error m -> Alcotest.failf "status: %s" m)
 
   let tests = [
-    Alcotest.test_case "P12_concurrent_writers_serialize" `Quick
-      p12_concurrent_writers_serialize;
-    Alcotest.test_case "P12_lock_released_on_exception" `Quick
-      p12_lock_is_released_on_exception;
-    Alcotest.test_case "P12_append_clarification_writes" `Quick
-      p12_append_clarification_writes;
+    Alcotest.test_case "Cotype_open_returns_base_sha_and_path" `Quick
+      cotype_open_returns_base_sha_and_path;
+    Alcotest.test_case "Cotype_init_is_idempotent" `Quick
+      cotype_init_is_idempotent;
+    Alcotest.test_case "Cotype_save_direct_when_no_concurrent_edit" `Quick
+      cotype_save_direct;
+    Alcotest.test_case
+      "Cotype_save_merged_when_concurrent_non_overlapping_edits"
+      `Quick cotype_save_merged_when_concurrent_non_overlapping;
+    Alcotest.test_case "Cotype_save_conflict_when_overlapping" `Quick
+      cotype_save_conflict_when_overlapping;
+    Alcotest.test_case "Cotype_binary_missing_returns_error" `Quick
+      cotype_binary_missing_returns_error;
+    Alcotest.test_case "Cotype_status_reports_unmanaged_clean_conflicted"
+      `Quick cotype_status_reports_clean_after_init;
+  ]
+end
+
+(* ---------------- Cotype_stub (in-memory) ---------------- *)
+module CotypeStubT = struct
+  let mk_file dir bytes =
+    let p = Filename.concat dir "f.md" in
+    let oc = open_out p in output_string oc bytes; close_out oc; p
+
+  let unwrap label = function
+    | Ok x -> x
+    | Error m -> Alcotest.failf "%s: %s" label m
+
+  let stub_open_returns_base_sha_and_path () =
+    with_tmpdir (fun dir ->
+      let path = mk_file dir "hi\n" in
+      let t = Cotype_stub.create Cotype_stub.default_config in
+      let r = unwrap "open" (Cotype_stub.open_ t ~file:path) in
+      Alcotest.(check bool) "sha nonempty" true
+        (String.length r.base_sha > 0);
+      Alcotest.(check bool) "base_path exists" true
+        (Sys.file_exists r.base_path))
+
+  let stub_save_direct () =
+    with_tmpdir (fun dir ->
+      let path = mk_file dir "a\n" in
+      let t = Cotype_stub.create Cotype_stub.default_config in
+      let r = unwrap "open" (Cotype_stub.open_ t ~file:path) in
+      match Cotype_stub.save t ~file:path ~base_sha:r.base_sha
+              ~actor:"k4k" ~bytes:"b\n" with
+      | Ok (Direct _) ->
+          Alcotest.(check string) "file updated" "b\n" (read_all path)
+      | _ -> Alcotest.fail "expected Direct")
+
+  let stub_save_conflict_via_config () =
+    with_tmpdir (fun dir ->
+      let path = mk_file dir "a\n" in
+      let t = Cotype_stub.create
+        { Cotype_stub.default_config with conflict_on_save = true } in
+      let r = unwrap "open" (Cotype_stub.open_ t ~file:path) in
+      match Cotype_stub.save t ~file:path ~base_sha:r.base_sha
+              ~actor:"k4k" ~bytes:"b\n" with
+      | Ok (Conflict _) -> ()
+      | _ -> Alcotest.fail "expected Conflict")
+
+  let tests = [
+    Alcotest.test_case "Cotype_stub_open_returns_base_sha_and_path"
+      `Quick stub_open_returns_base_sha_and_path;
+    Alcotest.test_case "Cotype_stub_save_direct" `Quick stub_save_direct;
+    Alcotest.test_case "Cotype_stub_save_conflict_via_config" `Quick
+      stub_save_conflict_via_config;
   ]
 end
 
@@ -319,8 +441,7 @@ module ParT = struct
 
   let efmt_duplicate_id () =
     let bad = "---\nk4k:\n  version: 1\n  class: cli\n---\n\
-               <!-- k4k:owner=user begin id=goal -->\nA\n<!-- k4k:owner=user end -->\n\
-               <!-- k4k:owner=user begin id=goal -->\nB\n<!-- k4k:owner=user end -->\n"
+               ## Goal\nA\n## Goal\nB\n"
     in
     match (try ignore (Parser.parse bad); `Ok with
            | Error.K4k_error (Error.E_format _) -> `Fmt
@@ -351,25 +472,20 @@ module ST = struct
     Alcotest.(check bool) "unstable" false (Stability.is_stable v)
 
   let unstable_when_section_blank () =
-    let blank = String.concat "\n" [
-      "---";
-      "k4k:";
-      "  version: 1";
-      "  class: cli";
-      "---";
-      "<!-- k4k:owner=user begin id=goal -->";
-      "   ";
-      "<!-- k4k:owner=user end -->";
-      "<!-- k4k:owner=user begin id=inputs-outputs -->\nIO\n<!-- k4k:owner=user end -->";
-      "<!-- k4k:owner=user begin id=errors -->\nE\n<!-- k4k:owner=user end -->";
-      "<!-- k4k:owner=user begin id=fs -->\nF\n<!-- k4k:owner=user end -->";
-      "<!-- k4k:owner=user begin id=concurrency -->\nC\n<!-- k4k:owner=user end -->";
-      "<!-- k4k:owner=user begin id=perf -->\nP\n<!-- k4k:owner=user end -->";
-      "<!-- k4k:owner=user begin id=examples-accept -->\nE\n<!-- k4k:owner=user end -->";
-      "<!-- k4k:owner=user begin id=examples-refuse -->\nR\n<!-- k4k:owner=user end -->";
-      "<!-- k4k:owner=user begin id=out-of-scope -->\nO\n<!-- k4k:owner=user end -->";
-      "";
-    ] in
+    let blank =
+      "---\n\
+       k4k:\n  version: 1\n  class: cli\n\
+       ---\n\
+       ## Goal\n   \n\
+       ## Inputs and outputs\nIO\n\
+       ## Error taxonomy\nE\n\
+       ## File-system contract\nF\n\
+       ## Concurrency\nC\n\
+       ## Performance bounds\nP\n\
+       ## Acceptance examples\nE\n\
+       ## Refusing examples\nR\n\
+       ## Out of scope\nO\n"
+    in
     let f = Parser.parse blank in
     let v = Stability.check_structural f in
     Alcotest.(check bool) "blank goal -> unstable" false (Stability.is_stable v)
@@ -984,7 +1100,7 @@ module SS = struct
         [ Error (`Tool_error "should not be called");
           Error (`Tool_error "should not be called") ] in
       let cached = Canonicalize.canonicalize Characterization.empty in
-      let prev_h = [("goal", "abc"); ("inputs-outputs", "def")] in
+      let prev_h = [("goal", "abc"); ("inputs-and-outputs", "def")] in
       let curr_h = prev_h in
       match Stability.semantic_check_with_backend
               ~k4k_dir:dir ~prompt:"x" ~budget:1
@@ -2455,34 +2571,13 @@ module RLT = struct
   ]
 end
 
-(* ---------------- T8 hand-edited owner=k4k section ---------------- *)
+(* ---------------- T8 user edits clarification → cotype conflict ---------- *)
 module T8T = struct
-  let owner_k4k_section_with_hash body =
-    let hash = Persist.sha256_hex body in
-    Printf.sprintf
-      "<!-- k4k:owner=k4k begin id=clarification hash=%s -->\n\
-       %s\
-       <!-- k4k:owner=k4k end -->\n" hash body
-
-  let t8_hand_edited_owner_k4k_section_flips_ownership () =
-    (* Build a fixture with a k4k-owned section whose hash matches the
-       body. After mutation of the body, ownership-flip detection in
-       Parser kicks in. *)
-    let body = "original body\n" in
-    let block = owner_k4k_section_with_hash body in
-    let _ = block in
-    (* The Parser has section parsing; verifying ownership-flip is
-       done by Kb_regen's hash-based detection on KB files (T18). For
-       interaction-file sections we exercise the same hash discipline
-       via [Persist.sha256_hex]: a mutated body fails hash equality. *)
-    let mutated = "mutated body\n" in
-    let h_orig = Persist.sha256_hex body in
-    let h_new = Persist.sha256_hex mutated in
-    Alcotest.(check bool) "hashes differ on mutation" false
-      (String.equal h_orig h_new)
-
+  (* Post-ADR-010: when the user edits a `## k4k:clarification:*`
+     section between cotype open and k4k's next save, cotype returns
+     `conflict`. k4k surfaces ESTATE_CORRUPT. *)
   let t8_kb_file_hand_edit_flips () =
-    (* This is the same shape as T18, focused on a k4k-owned KB file. *)
+    (* Target-KB file ownership flip remains hash-based (P14/T18). *)
     with_tmpdir (fun dir ->
       let logger = Logger.create ~verbosity:`Quiet
         ~jsonl_path:(Some (Filename.concat dir "log.jsonl")) in
@@ -2498,20 +2593,49 @@ module T8T = struct
         (Astring.String.is_infix
            ~affix:"\"event\":\"ownership.flip\"" log))
 
-  let t8_owner_k4k_marker_format () =
-    let block = owner_k4k_section_with_hash "x\n" in
-    Alcotest.(check bool) "begin marker present" true
-      (Astring.String.is_infix ~affix:"k4k:owner=k4k begin" block);
-    Alcotest.(check bool) "hash= attribute present" true
-      (Astring.String.is_infix ~affix:"hash=" block)
+  let t8_user_edits_clarification_section_surfaces_conflict () =
+    (* Use the in-memory Cotype_stub configured to force a conflict on
+       the next save. [Persist.append_clarification_via] should
+       propagate ESTATE_CORRUPT including the conflict path. *)
+    with_tmpdir (fun dir ->
+      let path = Filename.concat dir "in.k4k" in
+      let oc = open_out path in
+      output_string oc "## Goal\nfoo\n"; close_out oc;
+      let cotype_t = Cotype_stub.create
+        { Cotype_stub.default_config with conflict_on_save = true } in
+      let open_ ~file =
+        match Cotype_stub.open_ cotype_t ~file with
+        | Ok (r : Cotype_stub.open_result) ->
+            Ok ({ Persist.base_sha = r.base_sha;
+                  base_path = r.base_path;
+                  conflicted = r.conflicted } : Persist.cotype_open_result)
+        | Error m -> Error m
+      in
+      let save ~file ~base_sha ~actor ~bytes =
+        match Cotype_stub.save cotype_t ~file ~base_sha ~actor ~bytes with
+        | Ok (Cotype_stub.Direct s) -> Ok (Persist.Direct s)
+        | Ok (Cotype_stub.Merged s) -> Ok (Persist.Merged s)
+        | Ok Cotype_stub.Noop -> Ok Persist.Noop
+        | Ok (Cotype_stub.Conflict { conflict_path }) ->
+            Ok (Persist.Conflict { conflict_path })
+        | Error m -> Error m
+      in
+      try
+        Persist.append_clarification_via
+          ~ensure_init:(fun ~file ->
+            Cotype_stub.ensure_init cotype_t ~file)
+          ~open_ ~save ~path ~questions:["clarify the goal"];
+        Alcotest.fail "expected E_state_corrupt"
+      with Error.K4k_error (Error.E_state_corrupt msg) ->
+        Alcotest.(check bool) "msg names conflict path" true
+          (Astring.String.is_infix ~affix:"conflict" msg))
 
   let tests = [
-    Alcotest.test_case "T8_hand_edited_owner_k4k_section_flips_ownership"
-      `Quick t8_hand_edited_owner_k4k_section_flips_ownership;
     Alcotest.test_case "T8_kb_file_hand_edit_flips" `Quick
       t8_kb_file_hand_edit_flips;
-    Alcotest.test_case "T8_owner_k4k_marker_format" `Quick
-      t8_owner_k4k_marker_format;
+    Alcotest.test_case
+      "T8_user_edits_clarification_section_surfaces_conflict" `Quick
+      t8_user_edits_clarification_section_surfaces_conflict;
   ]
 end
 
@@ -2587,10 +2711,8 @@ module T4T = struct
         if not !edit_done then begin
           edit_done := true;
           let oc = open_out_gen [ Open_append; Open_binary ] 0o644 fp in
-          (* Mutate the goal section bytes. *)
-          output_string oc
-            "\n<!-- k4k:owner=user begin id=extra -->\nX\n\
-             <!-- k4k:owner=user end -->\n";
+          (* Append a fresh user section. Plain Markdown — no tags. *)
+          output_string oc "\n## Extra\nX\n";
           close_out oc;
           pid_box := p2.id
         end in
@@ -3830,7 +3952,8 @@ let () =
     [ "Error",        ET.tests;
       "Logger",       LT.tests;
       "Persist",      PT.tests;
-      "P12",          P12T.tests;
+      "Cotype",       CotypeT.tests;
+      "Cotype_stub",  CotypeStubT.tests;
       "Parser",       ParT.tests;
       "Stability",    ST.tests;
       "Backend_stub", BS.tests;

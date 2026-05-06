@@ -38,7 +38,7 @@ main(file.k4k):
 
 Two-stage: structural, then semantic.
 
-**Structural:** parse YAML frontmatter (`EFORMAT` on schema violation); pair `<!-- k4k:owner=... begin/end -->` markers (`EFORMAT` on unmatched/duplicate IDs); confirm every required section ID for `class` is present and non-empty (`EUNSTABLE`).
+**Structural:** parse YAML frontmatter (`EFORMAT` on schema violation); split the body into Markdown sections by H2 heading and normalize each heading text into a section ID (`spec/config-and-formats.md#section-identification`); reject duplicate IDs (`EFORMAT`); confirm every required section ID for `class` is present and non-empty (`EUNSTABLE`).
 
 **Semantic — formalization pass {#formalization}:**
 1. Compute `user_sections_hash = sha256(concat(sorted(user-owned sections)))`.
@@ -166,18 +166,20 @@ Full regeneration only on `--reset`.
 
 ## Ownership-flip detection {#ownership}
 
-On every read of an `owner=k4k` region or KB file:
-1. Recompute body hash.
-2. Compare with `hash=` (interaction file) or `content_hash` frontmatter (KB files).
-3. If equal: untouched, k4k authoritative.
-4. If unequal: log `ownership.flip` event, treat as `owner=user` for this run, do not regenerate. The user's edit is now the source of truth.
+**Interaction-file ownership is no longer detected by hash matching** — per ADR-010, k4k delegates interaction-file concurrency to `cotype`, which uses 3-way merge (`diff3`) on every save against a captured base SHA. The "user took over a k4k-managed section" scenario surfaces as a `cotype save → conflict` outcome, not as a hash mismatch in k4k.
+
+For **target-KB files under `.k4k/`** (which are NOT mediated by cotype — see ADR-006/007 for the two-layer KB scope), k4k still uses the hash-based ownership-flip mechanism: on read, recompute body hash; mismatch → treat as user-owned for this run, log `ownership.flip`, skip regeneration. The user's edit is the source of truth.
 
 ## Concurrent edits {#concurrent-edits}
 
-The user may edit `<file.k4k>` while k4k runs. Contract:
-1. k4k re-reads `<file.k4k>` *at the start of every step* (no in-memory cache).
-2. Writes are `flock(2)`-protected; the lock is held only for the duration of the write itself, never across an agent call.
-3. If user-section hashes change mid-run, the next iteration re-runs the stability check with the new content. In-flight gap-step results are discarded if the property's `source` aspect changed.
+The user may edit `<file.k4k>` while k4k runs. Contract (per ADR-010):
+1. k4k reads the interaction file via `cotype open`, never directly. The result is a base SHA + a path to a frozen base snapshot k4k operates on.
+2. k4k splices its edits *only into k4k-managed sections* (`## k4k:clarification:*`); user-owned sections flow through byte-for-byte from the base snapshot.
+3. k4k writes via `cotype save --base-sha <captured>`. cotype performs a 3-way merge against the user's intervening edits.
+   - `direct` → no concurrent user edit; k4k's bytes were written.
+   - `merged` → user edited a non-overlapping region; cotype merged cleanly.
+   - `conflict` → user edited a `## k4k:clarification:*` section. k4k surfaces the conflict path and exits with `ESTATE_CORRUPT` (exit 5); the user resolves the diff3 markers in their editor and runs `cotype resolve`.
+4. cotype holds an internal `flock` on its sidecar for the duration of any mutating command — k4k itself never calls `flock`.
 
 ## Termination
 

@@ -157,7 +157,7 @@ Tests / theorems / proof obligations are named `P<id>_<slug>` so the verifier ex
 A pure function `parse : string -> (interaction_file, parse_error) result`. No I/O beyond the read itself; no agent calls. Called twice per run: once for stability, once at the start of each gap-step (re-read).
 
 ### Writing the interaction file
-A function `append_clarification : interaction_file -> question list -> unit` that adds an `<!-- k4k:owner=k4k begin id=clarification-<ts> hash=... -->` block at the end. Holds `flock` for the duration; never modifies any existing block.
+A function `append_clarification : interaction_file -> question list -> unit` implemented in `lib/cotype.ml` that goes through cotype: `cotype open` → splice a new `## k4k:clarification:<timestamp>` Markdown section at the end → `cotype save --base-sha <captured> --actor agent:k4k`. Conflict outcomes (user edited a `## k4k:clarification:*` section) surface as `ESTATE_CORRUPT` with the conflict path; k4k itself never calls `flock` (cotype handles its sidecar lock internally).
 
 ### Composing prompts
 A pure function from `(purpose, D, S, Property?)` to `string`. No randomness. The output is logged verbatim to `agent-runs/<id>/prompt.md` so audits can replay.

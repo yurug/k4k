@@ -60,7 +60,7 @@ How the modules in `bin/` and `lib/` are wired. *Why* the choices are this way l
 ## Modules
 
 ### `lib/Parser`
-Pure. Reads a `<file.k4k>` byte-string, returns `interaction_file` or `parse_error`. No I/O beyond the read. Section ownership tags + frontmatter only; *not* the formalization step.
+Pure. Reads a `<file.k4k>` byte-string, returns `interaction_file` or `parse_error`. No I/O beyond the read. Markdown headings + YAML frontmatter only; *not* the formalization step. Bytes come from `cotype open` → `base_path` per ADR-010, never from the file path directly — the wrapper for that is `lib/cotype.ml`.
 
 ### `lib/Stability`
 Two stages — structural validation against the parsed sections, then the formalization pass via `Agent_backend`. Returns `Stable | Unstable of issue list`. On unstable, composes the clarification block (text only; the actual write is `Persist`'s job).
@@ -75,7 +75,7 @@ One iteration of the harness loop. Selects the next property by `risk_score`, co
 Computes the diff between previous and current `(D, S)`; for each affected aspect, identifies the KB files (via `manifest.kb_source_map`) whose ownership is `k4k`, and regenerates them via one agent call per file.
 
 ### `lib/Persist`
-All file I/O. Atomic writes via tmp+fsync+rename. Holds the only handle to `.k4k/`. The `flock(2)` discipline lives in the peer `lib/Persist_lock` module (P12), which guards writes to `<file.k4k>` (the user-owned interaction file) with an advisory exclusive lock held only across the write itself, never across an agent or verifier call.
+All file I/O for `.k4k/` operational state. Atomic writes via tmp+fsync+rename. Holds the only handle to `.k4k/`. **The interaction file (`<file.k4k>`) is NOT written by Persist** — that surface goes through `lib/Cotype` (per ADR-010), which delegates to the `cotype` CLI. `lib/Persist_lock` was removed as part of ADR-010 (cotype owns its sidecar lock internally; k4k never calls `flock` from its own code).
 
 ### `lib/Logger`
 Both human-readable stderr and JSONL `.k4k/log.jsonl`. The TTY status updater is a separate sub-module (`Logger.Tty_status`) that draws the in-place line.
@@ -163,7 +163,8 @@ k4k/
 |------------------------------|--------------------------------------------------------------------------|
 | `error`                      | closed taxonomy, exit-code map                                           |
 | `logger` (+ `Tty_status`)    | stderr text + `.k4k/log.jsonl`; in-place TTY status; secrets scrub       |
-| `persist`                    | atomic tmp+fsync+rename, `flock`, `.k4k/` init, fault-inject hook        |
+| `persist`                    | atomic tmp+fsync+rename, `.k4k/` init, fault-inject hook (NO `flock`; ADR-010 removed it) |
+| `cotype`                     | wrapper around the `cotype` CLI for interaction-file safe-save (ADR-010) |
 | `parser` (+ `_utf8`, `_frontmatter`, `_sections`) | YAML frontmatter + ownership-tag sections             |
 | `manifest`                   | `Manifest.t` schema + atomic update                                      |
 | `characterization` (+ `_json`, `_decoder`) | `Characterization.t` data type + hand-written codecs       |

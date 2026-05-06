@@ -1,11 +1,18 @@
-(** Internal ownership-tag scanner used by [Parser]. Pure. *)
+(** Parse Markdown body into H2 sections. Pure, no I/O.
+
+    Per ADR-010, sections are delimited by `## ` headings; the section
+    ID is derived from the heading text by [normalize_id] (lowercase;
+    runs of non-alphanumeric chars → '-'; trim trailing '-').
+
+    A section heading matching `## k4k:clarification:<rest>` is
+    k4k-managed; all other sections are user-owned. *)
 
 type owner = [ `User | `K4k ]
 
 type section = {
   owner        : owner;
   id           : string;
-  hash         : string option;
+  hash         : string option;        (* always None post-ADR-010 *)
   content      : string;
   start_offset : int;
   end_offset   : int;
@@ -15,33 +22,6 @@ type section = {
 let raise_format ~line ~col reason =
   raise (Error.K4k_error (Error.E_format { line; col; reason }))
 
-let begin_re =
-  Re.compile (
-    Re.seq [
-      Re.str "<!-- k4k:owner=";
-      Re.group (Re.alt [ Re.str "user"; Re.str "k4k" ]);
-      Re.str " begin id=";
-      Re.group (Re.rep1 (Re.compl [ Re.set " \t\n>" ]));
-      Re.opt (Re.seq [
-        Re.rep1 Re.space;
-        Re.str "hash=";
-        Re.group (Re.rep1 (Re.compl [ Re.set " \t\n>" ]));
-      ]);
-      Re.rep Re.space;
-      Re.str "-->";
-    ]
-  )
-
-let end_re =
-  Re.compile (
-    Re.seq [
-      Re.str "<!-- k4k:owner=";
-      Re.group (Re.alt [ Re.str "user"; Re.str "k4k" ]);
-      Re.rep1 Re.space;
-      Re.str "end -->";
-    ]
-  )
-
 let line_of_offset s off =
   let n = ref 1 in
   for i = 0 to min (off - 1) (String.length s - 1) do
@@ -49,82 +29,86 @@ let line_of_offset s off =
   done;
   !n
 
-let owner_of_str = function
-  | "user" -> `User
-  | "k4k"  -> `K4k
-  | _      -> assert false
+(* lowercase + replace runs of non-[a-z0-9] with single '-'; trim
+   trailing '-'. Matches kb/spec/config-and-formats.md#section-identification. *)
+let normalize_id heading =
+  let buf = Buffer.create (String.length heading) in
+  let last_dash = ref true in
+  String.iter (fun c ->
+    let lc = Char.lowercase_ascii c in
+    let is_alnum = (lc >= 'a' && lc <= 'z') || (lc >= '0' && lc <= '9') in
+    if is_alnum then begin Buffer.add_char buf lc; last_dash := false end
+    else if not !last_dash then
+      begin Buffer.add_char buf '-'; last_dash := true end
+  ) heading;
+  let s = Buffer.contents buf in
+  let n = String.length s in
+  if n > 0 && s.[n - 1] = '-' then String.sub s 0 (n - 1) else s
 
-let unmatched_begin_msg id =
-  Printf.sprintf "unmatched begin tag for id=%s" id
+let is_clarification_id id =
+  let prefix = "k4k-clarification" in
+  let lp = String.length prefix in
+  String.length id >= lp && String.sub id 0 lp = prefix
 
-let owner_mismatch_msg id b e =
-  Printf.sprintf "owner mismatch on end tag for id=%s (begin=%s, end=%s)" id b e
+(* Find the start-of-line index for byte offset [off]. *)
+let line_start s off =
+  let rec back i =
+    if i <= 0 then 0
+    else if s.[i - 1] = '\n' then i
+    else back (i - 1)
+  in back off
 
-let missing_hash_msg id =
-  Printf.sprintf "owner=k4k section %s missing hash= attribute" id
+(* Iterate H2 lines (lines starting with "## "). Return a list of
+   (heading_text_offset, heading_text, line_start, next_line_start). *)
+let h2_lines s start =
+  let n = String.length s in
+  let acc = ref [] in
+  let i = ref start in
+  let line_no_start = ref (line_start s start) in
+  while !i < n do
+    let lstart = !line_no_start in
+    (* find end of line *)
+    let j = ref !i in
+    while !j < n && s.[!j] <> '\n' do incr j done;
+    let next = if !j < n then !j + 1 else !j in
+    if !j - lstart >= 3
+       && s.[lstart] = '#' && s.[lstart + 1] = '#' && s.[lstart + 2] = ' '
+    then begin
+      let txt = String.sub s (lstart + 3) (!j - (lstart + 3)) in
+      acc := (lstart, String.trim txt, lstart, next) :: !acc
+    end;
+    i := next;
+    line_no_start := next
+  done;
+  List.rev !acc
 
-type begin_match = {
-  beg_start : int;
-  beg_end   : int;
-  owner_str : string;
-  id        : string;
-  hash      : string option;
-}
-
-let parse_begin g = {
-  beg_start = Re.Group.start g 0;
-  beg_end   = Re.Group.stop  g 0;
-  owner_str = Re.Group.get g 1;
-  id        = Re.Group.get g 2;
-  hash      = (try Some (Re.Group.get g 3) with Not_found -> None);
-}
-
-let find_end raw bm =
-  match Re.exec_opt ~pos:bm.beg_end end_re raw with
-  | Some eg -> eg
-  | None ->
-      raise_format ~line:(line_of_offset raw bm.beg_start) ~col:1
-        (unmatched_begin_msg bm.id)
-
-let validate_owners raw bm eg =
-  let end_start = Re.Group.start eg 0 in
-  let end_owner = Re.Group.get eg 1 in
-  if end_owner <> bm.owner_str then
-    raise_format ~line:(line_of_offset raw end_start) ~col:1
-      (owner_mismatch_msg bm.id bm.owner_str end_owner);
-  end_start
-
-let build_section raw bm end_start = {
-  owner = owner_of_str bm.owner_str;
-  id    = bm.id;
-  hash  = bm.hash;
-  content      = String.sub raw bm.beg_end (end_start - bm.beg_end);
-  start_offset = bm.beg_end;
-  end_offset   = end_start;
-  begin_line   = line_of_offset raw bm.beg_start;
-}
-
-(* Match one section starting at [pos]; return [None] if no further section. *)
-let match_one raw pos seen =
-  match Re.exec_opt ~pos begin_re raw with
-  | None -> None
-  | Some g ->
-      let bm = parse_begin g in
-      if List.mem bm.id seen then
-        raise_format ~line:(line_of_offset raw bm.beg_start) ~col:1
-          (Printf.sprintf "duplicate section id: %s" bm.id);
-      if bm.owner_str = "k4k" && bm.hash = None then
-        raise_format ~line:(line_of_offset raw bm.beg_start) ~col:1
-          (missing_hash_msg bm.id);
-      let eg = find_end raw bm in
-      let end_start = validate_owners raw bm eg in
-      let sec = build_section raw bm end_start in
-      Some (sec, Re.Group.stop eg 0)
-
-let scan raw start =
-  let rec loop pos acc seen =
-    match match_one raw pos seen with
-    | None -> List.rev acc
-    | Some (sec, next_pos) -> loop next_pos (sec :: acc) (sec.id :: seen)
+let build_sections raw start =
+  let headings = h2_lines raw start in
+  let n = String.length raw in
+  let rec loop seen acc = function
+    | [] -> List.rev acc
+    | (heading_start, txt, _, after_heading) :: rest ->
+        let id = normalize_id txt in
+        if id = "" then
+          raise_format ~line:(line_of_offset raw heading_start) ~col:1
+            (Printf.sprintf "empty section id from heading: %S" txt);
+        if List.mem id seen then
+          raise_format ~line:(line_of_offset raw heading_start) ~col:1
+            (Printf.sprintf "duplicate section id: %s" id);
+        let body_end = match rest with
+          | (next_start, _, _, _) :: _ -> next_start
+          | [] -> n
+        in
+        let owner = if is_clarification_id id then `K4k else `User in
+        let content = String.sub raw after_heading (body_end - after_heading) in
+        let sec = {
+          owner; id; hash = None; content;
+          start_offset = after_heading;
+          end_offset   = body_end;
+          begin_line   = line_of_offset raw heading_start;
+        } in
+        loop (id :: seen) (sec :: acc) rest
   in
-  loop start [] []
+  loop [] [] headings
+
+let scan raw start = build_sections raw start

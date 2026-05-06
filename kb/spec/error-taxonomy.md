@@ -53,7 +53,7 @@ User-visible errors (exit codes, stderr messages) plus internal panics. Not for:
 
 ### EFORMAT
 - **Exit:** 1
-- **When:** YAML frontmatter unparseable, ownership tags malformed (unmatched/duplicate IDs), section markers nest improperly.
+- **When:** YAML frontmatter unparseable, duplicate normalized H2 section IDs, or other structural shape violations of the interaction file.
 - **stderr:** `k4k: format error: <details with line:col>`
 - **Recovery:** Fix the structural issue cited.
 
@@ -73,7 +73,7 @@ User-visible errors (exit codes, stderr messages) plus internal panics. Not for:
 - **Exit:** 1
 - **When:** Stability check fails (structural, semantic, or coverage). A clarification block is appended to the interaction file before exit.
 - **stderr:** `k4k: unstable: <one-line summary>; see clarifications appended to <file.k4k>`
-- **Recovery:** Open the file, answer the appended questions in `owner=user` blocks, re-run.
+- **Recovery:** Open the file, answer the appended questions by editing the `## k4k:clarification:*` section directly (cotype handles the concurrency), re-run.
 
 ### EBUDGET
 - **Exit:** 4

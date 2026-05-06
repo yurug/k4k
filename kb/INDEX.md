@@ -80,12 +80,14 @@ kb/
 │       ├── adr-006-two-layer-kb.md
 │       ├── adr-007-deterministic-kb-regen.md
 │       ├── adr-008-verifier-protocol.md
-│       └── adr-009-backend-protocol.md
+│       ├── adr-009-backend-protocol.md
+│       └── adr-010-cotype-delegation.md
 │
 ├── external/
 │   ├── INDEX.md
 │   ├── backend-protocol.md          wire protocol any agent backend must implement (ADR-009)
 │   ├── verifier-protocol.md         wire protocol any verifier executable must implement (ADR-008)
+│   ├── cotype.md                    hardcoded runtime dep for interaction-file concurrency (ADR-010)
 │   └── ollama.md                    architectural guidance for weakness-profile prompt design
 │
 ├── conventions/
@@ -106,7 +108,7 @@ kb/
 
 ## File count and last updated
 
-- **Methodology files**: 34 (after ADR-009 retrofit: + ADR-009, + external/backend-protocol.md, − external/claude-code.md)
+- **Methodology files**: 36 (after ADR-010 retrofit: + ADR-010, + external/cotype.md)
 - **Reference files** (NOTES, claude-code-report, opencode, questions-round{1,2,3}, plan, plan-simulation report, audit reports): grew through Phases 1–5
 - **Last updated**: 2026-05-03
 
@@ -125,6 +127,7 @@ kb/
 | v1 — ADR-008 verifier-protocol retrofit                   | ✓ done (`lib/Verifier_external` + `examples/verifiers/dune-ocaml/`) |
 | v1 — ADR-009 backend-protocol retrofit                    | ✓ done (`lib/Backend_external` + `examples/backends/claude-code/`) |
 | v1 — Reference Ollama backend                             | ✓ done (`examples/backends/ollama/`; live-verified against `qwen3.5:9b`) |
+| v1 — ADR-010 cotype delegation                            | KB design ✓ ; code refactor in progress (`lib/cotype.ml`)               |
 
 ## Agent notes
 

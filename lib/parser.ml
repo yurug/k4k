@@ -26,9 +26,15 @@ type interaction_file = {
 
 let supported_versions = Parser_frontmatter.supported_versions
 
+(* Per kb/spec/config-and-formats.md (post-ADR-010): section IDs are
+   derived from H2 heading text by normalization (lowercase; runs of
+   non-alphanumeric → '-'; trim trailing '-'). The required set
+   below is the result of that normalization for the canonical
+   heading set documented in spec/config-and-formats.md. *)
 let required_user_section_ids = [
-  "goal"; "inputs-outputs"; "errors"; "fs"; "concurrency";
-  "perf"; "examples-accept"; "examples-refuse"; "out-of-scope";
+  "goal"; "inputs-and-outputs"; "error-taxonomy";
+  "file-system-contract"; "concurrency"; "performance-bounds";
+  "acceptance-examples"; "refusing-examples"; "out-of-scope";
 ]
 
 let check_utf8 = Parser_utf8.check

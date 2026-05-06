@@ -126,3 +126,61 @@ val write_verifier_run :
   stderr:string ->
   result:string ->
   unit
+
+(** {1 Clarification append (post-ADR-010, via cotype)}
+
+    Per ADR-010, every k4k mutation of the interaction file flows
+    through cotype: open → splice → save. This module exposes a
+    cotype-agnostic seam ([append_clarification_via]) for tests, plus
+    a thin convenience binding to [Cotype] for production. *)
+
+(** Mirror of [Cotype.open_result] — kept here so callers don't need
+    to depend on [Cotype] directly. *)
+type cotype_open_result = {
+  base_sha   : string;
+  base_path  : string;
+  conflicted : bool;
+}
+
+(** Mirror of [Cotype.save_outcome]. *)
+type cotype_save_outcome =
+  | Direct   of string
+  | Merged   of string
+  | Noop
+  | Conflict of { conflict_path : string }
+
+(** [append_clarification_via ~ensure_init ~open_ ~save ~path
+    ~questions] — splice-and-save a fresh `## k4k:clarification:<ts>`
+    section to [path] via the supplied cotype seam. The base bytes
+    are always read from [open_]'s [base_path] (never from FILE
+    directly), per ADR-010.
+
+    Conflict outcomes raise [Error.K4k_error E_state_corrupt] with
+    the conflict path embedded.
+
+    @invariant P1 — only `## k4k:clarification:*` sections are added;
+                   pre-existing sections flow through byte-for-byte.
+    @invariant P12 — concurrency is delegated to cotype's sidecar lock. *)
+val append_clarification_via :
+  ensure_init:(file:string -> (unit, string) result) ->
+  open_:(file:string -> (cotype_open_result, string) result) ->
+  save:(file:string -> base_sha:string -> actor:string -> bytes:string ->
+        (cotype_save_outcome, string) result) ->
+  path:string ->
+  questions:string list ->
+  unit
+
+(** [append_clarification ~cotype ~path ~questions] — production
+    binding of [append_clarification_via] to a live [Cotype.t]. *)
+val append_clarification :
+  cotype:Cotype.t -> path:string -> questions:string list -> unit
+
+(** [splice_clarification ~base_bytes ~timestamp ~questions] —
+    pure helper: produce the proposed bytes by appending a fresh
+    `## k4k:clarification:<timestamp>` section to [base_bytes]. *)
+val splice_clarification :
+  base_bytes:string -> timestamp:string -> questions:string list -> string
+
+(** [timestamp_of_now ()] — UTC `YYYY-MM-DD-HHMMSS` for use in
+    `## k4k:clarification:<ts>` headings. *)
+val timestamp_of_now : unit -> string

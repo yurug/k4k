@@ -15,6 +15,8 @@ related: [conventions.testing-strategy, runbooks.audit-checklist]
 >
 > **Historical note (2026-05-03, post-v0):** Step 2 below names `lib/Backend_claude` as an in-tree module. **ADR-009 retrofitted this out** (symmetric to ADR-008): k4k now ships only `Backend_external`; the Claude Code integration moved to `examples/backends/claude-code/` as a worked example.
 >
+> **Historical note (2026-05-03, post-v0):** Step 1 below names `lib/parser_sections.ml` parsing HTML ownership tags and Step 4's audit gap closure added `lib/persist_lock.ml` (P12 flock). **ADR-010 retrofitted both out**: k4k now delegates the user-agent interaction-file concurrency to `cotype` (3-way merge over `diff3`). The HTML ownership tags are gone from the file format; flock is gone from k4k's code (cotype handles its sidecar lock); `lib/cotype.ml` is the single wrapper.
+>
 > The other surfaces named in this plan (Step 1's parser/persist, Step 2's canonicalize, Step 3's gap-step loop, Step 4's kb-regen + tty status) are unchanged. This file is kept as the historical record of the v0 build.
 
 ## Conventions

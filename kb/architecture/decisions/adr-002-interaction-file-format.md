@@ -12,7 +12,7 @@ related: [spec.config-and-formats, properties.functional]
 # ADR-002: Markdown interaction file with HTML-comment ownership tags
 
 ## Status
-Accepted (2026-05-02).
+Accepted (2026-05-02). **Partially superseded by ADR-010** (2026-05-03): the *file format* claim (Markdown + YAML frontmatter, `*.k4k` extension) stands; the *HTML ownership-tag mechanism* (`<!-- k4k:owner=... -->` + `hash=` attribute) is replaced by delegation to `cotype` (3-way merge over `diff3`). k4k-managed sections are now identified by a stable Markdown heading pattern (`## k4k:clarification:<timestamp>`); user-vs-k4k concurrency is handled by cotype's sidecar, not by in-document tags.
 
 ## Context
 NOTES.md introduces the *interaction file* as the user's contract with k4k. It must:

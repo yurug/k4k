@@ -26,10 +26,10 @@ Each entry: **ID**, **Statement**, **Violation**, **Why**, **Test strategy**. St
 ---
 
 ### P1 — Ownership inviolability
-- **Statement:** k4k never writes inside an `owner=user` region of any file.
+- **Statement:** For the interaction file, k4k never modifies bytes outside `## k4k:clarification:*` sections — user-owned sections of the interaction file are byte-equal pre- and post-write. (Realized via cotype's `base_path`-flow plus structural splicing; see ADR-010 and `external/cotype.md`.) For target-KB files under `.k4k/`, the original hash-based ownership-flip rule still applies (see P14).
 - **Violation:** k4k overwrites the user's `## Goal` text during a stability run.
 - **Why:** The interaction file is the user's contract. Any silent edit destroys trust and corrupts D-derivation. Per `kb/NOTES.md` and Q12.
-- **Test strategy:** Property-based test — generate random interaction files, run k4k, assert byte-equality of every `owner=user` region pre/post.
+- **Test strategy:** Property-based test — generate random interaction files, run k4k, assert byte-equality of every non-`k4k:clarification:*` section pre/post. Plus a positive test that `cotype save` is the only path through which `lib/cotype.ml` writes the interaction file.
 
 ### P2 — Two-stage stability
 - **Statement:** Stability requires both structural validity *and* semantic validity (formalization + coverage); failure at either stage marks the file `unstable`.
@@ -91,23 +91,24 @@ Each entry: **ID**, **Statement**, **Violation**, **Why**, **Test strategy**. St
 - **Why:** Pipeable & scriptable. See Q34, Q37.
 - **Test strategy:** Run k4k under `2>/dev/null`, capture stdout, assert it parses as the documented machine-readable form; same with `1>/dev/null` and stderr.
 
-### P12 — File-locking discipline
-- **Statement:** Writes to `<file.k4k>` are `flock(2)`-protected; the lock is held only during the write itself, never across an agent or verifier call.
-- **Violation:** A second `k4k` invocation blocks for minutes waiting on the first to finish a gap-step.
-- **Why:** Concurrent edits must be possible (Q15, Q44).
-- **Test strategy:** Two concurrent k4k processes on the same file; assert lock contention only when both are *writing*; never when one is in an agent call.
+### P12 — Concurrency safety on the interaction file
+- **Statement:** Concurrent writes to `<file.k4k>` (by the user, by k4k, or by other cooperating actors) never lose updates. Realized via `cotype` (`external/cotype.md`, ADR-010): every k4k-side mutation goes through `cotype open` → splice → `cotype save --base-sha`, with cotype's 3-way merge handling intervening user edits.
+- **Violation:** A `k4k` clarification append silently clobbers the user's mid-run edit to a different section.
+- **Why:** The user must remain able to edit while k4k runs (Q15, Q44).
+- **Test strategy:** Two concurrent writers (one user-simulating, one k4k) edit different sections of the same file; assert both edits land. Plus a "user edits a `## k4k:clarification:*` section" test asserting k4k surfaces a `conflict` and exits gracefully (no silent overwrite).
+- **Pre-ADR-010 history:** This property previously specified `flock(2)` discipline implemented in `lib/persist_lock.ml`. Both are gone; cotype handles the lock internally on its sidecar.
 
 ### P13 — Fresh-read per step
-- **Statement:** k4k re-reads `<file.k4k>` from disk at the start of every step; no in-memory cache survives across steps.
+- **Statement:** k4k re-reads `<file.k4k>` (via `cotype open` returning a base path) at the start of every step; no in-memory cache survives across steps.
 - **Violation:** A user edit to the file mid-run is visible only on next invocation.
 - **Why:** The user owns the file; their edits are seen as soon as a step boundary admits them. See Q15.
-- **Test strategy:** Modify the file between steps via a hook; assert next step sees the new bytes.
+- **Test strategy:** Modify the file between steps via a hook; assert next step sees the new bytes (via the new `cotype open` base SHA differing).
 
-### P14 — Ownership-flip detection
-- **Statement:** Reading an `owner=k4k` region or KB file with a hash mismatch flips ownership to `user` for the run and emits an `ownership.flip` log event.
-- **Violation:** k4k regenerates a section the user has edited, silently overwriting their work.
-- **Why:** User edits are inviolable; detection is via hash, not heuristic. See Q16.
-- **Test strategy:** Generate a `k4k`-owned KB file; user-edit it; run k4k; assert no regeneration and assert one `ownership.flip` event.
+### P14 — Ownership-flip detection (KB files only, post-ADR-010)
+- **Statement:** For target-KB files under `.k4k/`, reading a `k4k`-owned file with a `content_hash` mismatch flips ownership to `user` for the run and emits an `ownership.flip` log event. (For the interaction file, the equivalent scenario is now a `cotype save → conflict` outcome — see P12.)
+- **Violation:** k4k regenerates a `.k4k/spec/data-model.md` the user has edited, silently overwriting their work.
+- **Why:** User edits are inviolable; detection is via hash, not heuristic. See Q16. Target-KB files do NOT go through cotype (cotype is for the interaction file only — the user-agent contract surface), so the original hash-based mechanism stays.
+- **Test strategy:** Generate a `k4k`-owned KB file under `.k4k/`; user-edit it; run k4k; assert no regeneration and exactly one `ownership.flip` event.
 
 ### P15 — Pluggable backend conformance
 - **Statement:** k4k works against any implementation of `Agent_backend` (resp. `Verifier`) that satisfies the contract in `spec/api-contracts.md`. Switching backends does not require code changes outside the backend module.

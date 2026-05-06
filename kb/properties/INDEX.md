@@ -26,7 +26,7 @@ Source code references these IDs in `@invariant` annotations; tests reference th
 |-------------------------------------------------------------|-----------------------|-------------------------------------------------------------------|
 | The qualitative invariants of k4k's behavior                | `functional.md`       | What guarantees does k4k make about determinism, ownership, …?    |
 | Quantitative thresholds (latency, memory, audit completeness) | `non-functional.md` | What's the Ctrl-C latency budget? The memory ceiling?             |
-| Boundary conditions and their expected behavior             | `edge-cases.md`       | What does k4k do on disk-full? On a hand-edited owner=k4k block?  |
+| Boundary conditions and their expected behavior             | `edge-cases.md`       | What does k4k do on disk-full? On a user-edited `## k4k:clarification:*` section (cotype conflict)? |
 
 ## File counts
 

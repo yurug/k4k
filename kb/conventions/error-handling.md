@@ -45,7 +45,7 @@ Mapping to exit codes lives in `Error.exit_code_of : error -> int` (table per `s
 ## Raising
 
 - **`raise (K4k_error E_x)`** — every user-facing failure. The constructor encodes the *what*; the wrapping `try ... with K4k_error e -> Logger.error e; exit (exit_code_of e)` lives in `bin/main.ml`.
-- **`raise (Invariant_violation msg)`** — for code-internal contradictions (e.g. attempting to write inside an `owner=user` region). Exit 64+. These are bugs; the user should report them.
+- **`raise (Invariant_violation msg)`** — for code-internal contradictions (e.g. `lib/cotype.ml` being bypassed and the interaction file being written through any other path). Exit 64+. These are bugs; the user should report them.
 - **No naked `failwith`** anywhere. Use a typed constructor.
 
 ## Catching

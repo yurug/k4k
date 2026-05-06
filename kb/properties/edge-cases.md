@@ -63,11 +63,12 @@ Each entry: **ID**, **Trigger**, **Expected behavior**, **Observable artefact**,
 - **Observable:** stderr names the size.
 - **Refs:** EFILE_TOO_LARGE.
 
-### T8 — Hand-edited `owner=k4k` region
-- **Trigger:** User modifies bytes inside an `owner=k4k` region; the `hash=` no longer matches.
-- **Expected:** Ownership flips to `user` for this run; no overwrite; `ownership.flip` log event.
-- **Observable:** JSONL `ownership.flip` event with the section id.
-- **Refs:** P14, T18.
+### T8 — User edits a `## k4k:clarification:*` section before k4k's next save
+- **Trigger:** User opens the interaction file in their editor mid-run, edits a `## k4k:clarification:<ts>` section (e.g. answering an appended clarification question by rewriting the block), and saves before k4k's next `cotype save`.
+- **Expected (post-ADR-010):** k4k's next `cotype save --base-sha <captured>` returns `conflict` (exit 1 from cotype). k4k surfaces the conflict path to the user and exits 5 (`ESTATE_CORRUPT`-class). The file on disk has diff3 markers; the user resolves them in their editor and runs `cotype resolve <file>` before re-running k4k.
+- **Observable:** JSONL `cotype.conflict` event with the file path and conflict id; cotype's forensic copy preserved under `.<basename>.cotype/conflicts/<id>/`.
+- **Refs:** P12 (concurrency safety), ADR-010, `external/cotype.md`.
+- **Pre-ADR-010 history:** This trigger previously caused a "hash mismatch → ownership flip → silent skip on next regen" flow. cotype's conflict outcome is louder and more honest about the situation.
 
 ### T9 — Both formalization runs invalid
 - **Trigger:** Stub or genuinely degraded agent returns malformed JSON twice.

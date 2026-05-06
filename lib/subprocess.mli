@@ -24,6 +24,11 @@ val run :
   ?env:string array ->
   ?cwd:string ->
   ?timeout_s:int ->
+  ?stdin:string ->
   prog:string ->
   args:string list ->
   unit -> result
+(** [stdin] (optional): if set, the bytes are written to the child's
+    stdin and the write-end is closed afterwards; the child reads from
+    the corresponding pipe. Used by [Cotype.save] to feed proposed
+    interaction-file bytes through cotype. *)

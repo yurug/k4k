@@ -45,62 +45,45 @@ k4k:
 ---
 # Project name (free-form heading, ignored by k4k)
 
-<!-- k4k:owner=user begin id=goal -->
 ## Goal
 ... prose paragraph ...
-<!-- k4k:owner=user end -->
 
-<!-- k4k:owner=user begin id=inputs-outputs -->
 ## Inputs and outputs
 - argv: ...
 - stdin: ...
 - stdout: ...
 - stderr: ...
 - exit codes: ...
-<!-- k4k:owner=user end -->
 
-<!-- k4k:owner=user begin id=errors -->
 ## Error taxonomy
 - EBADARG when ...
 - EIOFAIL when ...
-<!-- k4k:owner=user end -->
 
-<!-- k4k:owner=user begin id=fs -->
 ## File-system contract
 ... or "N/A: program does not touch the filesystem" ...
-<!-- k4k:owner=user end -->
 
-<!-- k4k:owner=user begin id=concurrency -->
 ## Concurrency
 N/A
-<!-- k4k:owner=user end -->
 
-<!-- k4k:owner=user begin id=perf -->
 ## Performance bounds
 N/A
-<!-- k4k:owner=user end -->
 
-<!-- k4k:owner=user begin id=examples-accept -->
 ## Acceptance examples
 1. argv=["echo","hi"] stdin="" → stdout="hi\n" stderr="" exit=0
 2. ...
 3. ...
-<!-- k4k:owner=user end -->
 
-<!-- k4k:owner=user begin id=examples-refuse -->
 ## Refusing examples
 1. argv=["--unknown-flag"] → error EBADARG, exit=1, stderr matches /unknown flag/
-<!-- k4k:owner=user end -->
 
-<!-- k4k:owner=user begin id=out-of-scope -->
 ## Out of scope
 - ...
-<!-- k4k:owner=user end -->
 
-<!-- k4k:owner=k4k begin id=clarification-2026-05-02-093000 hash=<sha256> -->
-... appended by k4k when stability fails; the user answers in place by re-typing
-the section under <!-- k4k:owner=user --> tags, then re-runs k4k ...
-<!-- k4k:owner=k4k end -->
+## k4k:clarification:2026-05-03-093000
+
+(appended by k4k when stability fails; the user answers in place
+by editing this section freely. cotype's 3-way merge handles the
+concurrency. See `external/cotype.md` and ADR-010.)
 ```
 
 ### Frontmatter rules
@@ -115,16 +98,22 @@ the section under <!-- k4k:owner=user --> tags, then re-runs k4k ...
 
 The CLI flags `--backend '<cmd>'` / `--backend-timeout N` override the backend frontmatter for one run; `--verifier '<cmd>'` / `--verifier-timeout N` override the verifier frontmatter. Overrides do not persist to the manifest.
 
-### Section ownership rules
+### Section identification
 
-- Each `<!-- k4k:owner=X begin id=Y [hash=H] -->` must be paired with a matching `<!-- k4k:owner=X end -->`.
-- IDs must be unique across the file.
-- `hash=` is required when `owner=k4k`; ignored when `owner=user`. On read, k4k recomputes `hash` and on mismatch flips ownership to `user` (logs `OWNERSHIP_FLIP` event).
-- k4k *never* writes inside an `owner=user` block. Attempting to do so is a panic (`EINVARIANT`).
+- The interaction file is parsed by Markdown headings (`##`).
+- Each H2 heading delimits one section; section identity is derived by *normalizing* the heading text (lowercase, replace runs of non-alphanumeric chars with `-`, trim trailing `-`). E.g. `## Inputs and outputs` → `inputs-and-outputs`; `## File-system contract` → `file-system-contract`.
+- A section heading matching the pattern `## k4k:clarification:<timestamp>` (where `<timestamp>` matches `\d{4}-\d{2}-\d{2}-\d{6}` or similar) is **k4k-managed**. All other H2 sections are user-owned.
+- HTML ownership tags from ADR-002 (`<!-- k4k:owner=... -->`) are now ignored by the parser (treated as plain HTML comments) — see ADR-010. Old fixtures with the tags still parse; the tags are inert.
+
+### Concurrency
+
+User and k4k may both write to the file. **All writes from k4k go through `cotype`** (see `external/cotype.md` and ADR-010). The user installs cotype as a runtime dependency (`pipx install cotype`); k4k's `lib/cotype.ml` wraps the CLI per cotype's "Caller protocols → Agent / process" pattern. k4k never reads the interaction file's bytes directly — it reads from `cotype open`'s `base_path` and writes via `cotype save --base-sha`.
+
+The structural-splicing recipe k4k uses (per cotype's docs and ADR-010) preserves user-owned sections byte-for-byte: when k4k writes, it copies all non-`k4k:clarification:*` sections from `base_path` unchanged, and only rewrites the k4k-managed sections. User vs k4k edits are non-overlapping by construction; `cotype save` returns `direct` or `merged` in normal operation, and `conflict` only when the user explicitly edited a `## k4k:clarification:*` section.
 
 ### Required user-owned sections (per `cli` class)
 
-`goal`, `inputs-outputs`, `errors`, `fs`, `concurrency`, `perf`, `examples-accept`, `examples-refuse`, `out-of-scope`. Section IDs are normative — the parser keys on them.
+`goal`, `inputs-and-outputs`, `error-taxonomy`, `file-system-contract`, `concurrency`, `performance-bounds`, `acceptance-examples`, `refusing-examples`, `out-of-scope`. Section IDs are normative (derived by the heading-normalization rule above) — the parser keys on them.
 
 ## `.k4k/` directory tree
 
@@ -134,7 +123,7 @@ The CLI flags `--backend '<cmd>'` / `--backend-timeout N` override the backend f
   characterization/
     desired/
       spec.json                 # canonical AST (D)
-      spec.md                   # human-readable mirror (owner=k4k)
+      spec.md                   # human-readable mirror, k4k-generated
     current/
       spec.json                 # canonical AST (S)
   gap/
@@ -181,7 +170,7 @@ Same pattern for `.k4k/characterization/{desired,current}/spec.json`.
 
 ## File locking
 
-`<file.k4k>` is `flock(2)`-locked (advisory, exclusive) for the duration of any write by k4k. Reads do not lock. The lock is released before any long-running agent or verifier call returns to the harness loop.
+Per ADR-010, k4k delegates interaction-file concurrency to `cotype`. cotype holds an exclusive `flock` on its sidecar (`.<basename>.cotype/lock`) for the duration of any mutating command — k4k itself does not call `flock`. The k4k wrapper (`lib/cotype.ml`) shells out to `cotype open` / `cotype save` and gets concurrency safety transparently. See `external/cotype.md`.
 
 ## JSONL log format (`.k4k/log.jsonl`)
 

@@ -170,11 +170,6 @@ val append_clarification_via :
   questions:string list ->
   unit
 
-(** [append_clarification ~cotype ~path ~questions] — production
-    binding of [append_clarification_via] to a live [Cotype.t]. *)
-val append_clarification :
-  cotype:Cotype.t -> path:string -> questions:string list -> unit
-
 (** [splice_clarification ~base_bytes ~timestamp ~questions] —
     pure helper: produce the proposed bytes by appending a fresh
     `## k4k:clarification:<timestamp>` section to [base_bytes]. *)

@@ -2,6 +2,7 @@ type check_inputs = {
   file_path : string;
   k4k_dir   : string;
   logger    : Logger.t;
+  cotype    : Cotype.t option;
 }
 
 type check_outcome =
@@ -24,12 +25,17 @@ module Make (B : Agent_backend.S) (V : Verifier.S) : S = struct
       raise (Error.K4k_error (Error.E_file_not_found path));
     Persist.read_file path
 
+  let read_via inputs =
+    match inputs.cotype with
+    | Some t -> Cotype.read_base t ~file:inputs.file_path
+    | None -> read_file_or_raise inputs.file_path
+
   (* Step-1 surface: structural-only [check] used by the
      pre-step-2 contract. *)
   let check inputs =
     Persist.ensure_dir inputs.k4k_dir;
     let _ = Manifest.read_or_init ~k4k_dir:inputs.k4k_dir in
-    let content = read_file_or_raise inputs.file_path in
+    let content = read_via inputs in
     Logger.info inputs.logger "stability.start"
       (`Assoc [ "file", `String inputs.file_path ]);
     let parsed = Parser.parse content in

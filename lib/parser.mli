@@ -11,18 +11,20 @@
     are required and are extracted by a tiny hand-written scanner.
 *)
 
-(** A parsed ownership-tagged section. [start_offset]/[end_offset] are
-    byte offsets into the original file content (exclusive of the
-    [<!-- ... -->] delimiters); [content] is the inclusive substring of
-    [content[start_offset .. end_offset)]. *)
+(** A parsed Markdown H2 section. Per ADR-010 the section ID is
+    derived from the heading text by normalization (lowercase; runs of
+    non-alphanumeric → '-'; trailing '-' trimmed). [owner = `K4k]
+    iff the section heading matches `## k4k:clarification:*`; all
+    other H2 sections are user-owned. The [hash] field is always
+    [None] (legacy from ADR-002; retained for API stability). *)
 type section = {
   owner        : [ `User | `K4k ];
   id           : string;
-  hash         : string option;       (* set when [owner = `K4k] *)
-  content      : string;              (* body bytes, no delimiters *)
+  hash         : string option;       (* legacy; always None post-ADR-010 *)
+  content      : string;              (* body bytes following the heading *)
   start_offset : int;
   end_offset   : int;
-  begin_line   : int;                 (* 1-based line of the begin marker *)
+  begin_line   : int;                 (* 1-based line of the heading *)
 }
 
 (** Parsed frontmatter — fields k4k consumes from the YAML head. *)

@@ -21,10 +21,11 @@ let persist_desired ~k4k_dir d =
                 (Characterization_json.to_yojson d) in
   Persist.write_desired ~k4k_dir ~bytes ~mirror_md:(mirror_md d)
 
-let manifest_json ~file_path ~file_content ~user_h
+let manifest_json ?cotype_version ~file_path ~file_content ~user_h
     ~agent_name ~agent_version ~verifier_name ~verifier_version
-    ~desired_hash =
+    ~desired_hash () =
   Manifest.build
+    ?cotype_version
     ~file_path ~file_sha256:(Persist.sha256_hex file_content)
     ~user_section_hashes:user_h
     ~agent_name ~agent_version
@@ -53,6 +54,11 @@ let read_or_raise path =
     raise (Error.K4k_error (Error.E_file_not_found path));
   Persist.read_file path
 
+let read_via_inputs (inputs : Harness.check_inputs) =
+  match inputs.cotype with
+  | Some t -> Cotype.read_base t ~file:inputs.file_path
+  | None -> read_or_raise inputs.file_path
+
 let do_structural ~logger parsed =
   match Stability.check_structural parsed with
   | Stability.Unstable issues ->
@@ -66,10 +72,15 @@ let persist_pass ~inputs ~content ~parsed ~agent_name ~agent_version
     ~verifier_name ~verifier_version (d : Characterization.t) =
   persist_desired ~k4k_dir:inputs.Harness.k4k_dir d;
   let user_h = Stability.user_section_hashes parsed in
+  let cotype_version = match inputs.cotype with
+    | Some t -> (try Some (Cotype.version t) with _ -> None)
+    | None -> None
+  in
   let mj = manifest_json
+    ?cotype_version
     ~file_path:inputs.file_path ~file_content:content ~user_h
     ~agent_name ~agent_version ~verifier_name ~verifier_version
-    ~desired_hash:d.hash in
+    ~desired_hash:d.hash () in
   Persist.atomic_write
     ~path:(Filename.concat inputs.k4k_dir "manifest.json")
     (Yojson.Safe.pretty_to_string ~std:true mj)
@@ -108,7 +119,7 @@ let run (type b) (type v)
     ~(backend : b) ~(inputs : Harness.check_inputs) () =
   Persist.ensure_dir inputs.k4k_dir;
   let manifest = Manifest.read_or_init ~k4k_dir:inputs.k4k_dir in
-  let content = read_or_raise inputs.file_path in
+  let content = read_via_inputs inputs in
   Logger.info inputs.logger "stability.start"
     (`Assoc [ "file", `String inputs.file_path ]);
   let parsed = Parser.parse content in

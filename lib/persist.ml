@@ -273,25 +273,3 @@ let append_clarification_via
       raise_state_corrupt_conflict ~conflict_path
   | Error msg -> raise_cotype_error msg
 
-(* Production helper bound to [Cotype]. Lives here so callers don't
-   need to import Cotype themselves. *)
-let append_clarification ~cotype ~path ~questions =
-  let adapt_open r : cotype_open_result =
-    let r : Cotype.open_result = r in
-    { base_sha = r.base_sha; base_path = r.base_path;
-      conflicted = r.conflicted }
-  in
-  let adapt_save_outcome = function
-    | Cotype.Direct s -> Direct s
-    | Cotype.Merged s -> Merged s
-    | Cotype.Noop -> Noop
-    | Cotype.Conflict { conflict_path } -> Conflict { conflict_path }
-  in
-  append_clarification_via
-    ~ensure_init:(fun ~file -> Cotype.ensure_init cotype ~file)
-    ~open_:(fun ~file ->
-      Result.map adapt_open (Cotype.open_ cotype ~file))
-    ~save:(fun ~file ~base_sha ~actor ~bytes ->
-      Result.map adapt_save_outcome
-        (Cotype.save cotype ~file ~base_sha ~actor ~bytes))
-    ~path ~questions

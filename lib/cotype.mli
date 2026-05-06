@@ -60,3 +60,19 @@ val save : t -> file:string -> base_sha:string -> actor:string ->
 (** [status t ~file] — `cotype status FILE --json`. *)
 val status : t -> file:string ->
              ([ `Unmanaged | `Clean | `Conflicted ], string) result
+
+(** [read_base t ~file] — convenience: ensure_init, open, then read
+    the bytes from [base_path]. Enforces the load-bearing rule: never
+    read FILE directly. Raises [Error.K4k_error] on failure. *)
+val read_base : t -> file:string -> string
+
+(** [append_clarification t ~path ~questions] — splice and save a
+    fresh `## k4k:clarification:<ts>` section to [path]. Reads the
+    existing bytes via [open_] (base_path), appends the new section,
+    and saves via [save]. On conflict, raises
+    [Error.K4k_error E_state_corrupt] with the conflict path.
+
+    @invariant P1 — only `## k4k:clarification:*` sections are added.
+    @invariant P12 — concurrency delegated to cotype's sidecar lock. *)
+val append_clarification :
+  t -> path:string -> questions:string list -> unit

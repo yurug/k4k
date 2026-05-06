@@ -11,6 +11,9 @@ type config = {
   between_steps : (unit -> unit) option;
     (* Test hook: invoked between gap-steps. Used by T4 to mutate
        [<file.k4k>] and verify the next iteration re-runs stability. *)
+  cotype : Cotype.t option;
+    (* Optional cotype handle for ADR-010. When [Some t], mid-run
+       file reads (P13) go through [Cotype.read_base]. *)
 }
 
 type result = {
@@ -20,7 +23,12 @@ type result = {
 }
 
 let default_config =
-  { max_steps = 50; budget = 1000; between_steps = None }
+  { max_steps = 50; budget = 1000; between_steps = None; cotype = None }
+
+let read_file_or_via_cotype ~cotype fp =
+  match cotype with
+  | Some t -> Cotype.read_base t ~file:fp
+  | None -> Persist.read_file fp
 
 let initial_summary _d =
   "(no current source summary; gap-step is the first iteration)"
@@ -85,12 +93,12 @@ let raise_budget ~used ~cap =
    reflects the re-stability. We do not re-run the full formalization
    pass here for v0; the next invocation of [k4k] will pick up the
    new content via the cached-by-hash protocol from step 2. *)
-let restability_check ~file_path ~prev_user_hashes_ref ~logger =
+let restability_check ~cotype ~file_path ~prev_user_hashes_ref ~logger =
   match file_path with
   | None -> ()
   | Some fp when Sys.file_exists fp ->
       (try
-         let content = Persist.read_file fp in
+         let content = read_file_or_via_cotype ~cotype fp in
          let parsed = Parser.parse content in
          let new_h = Stability.user_section_hashes parsed in
          if new_h <> !prev_user_hashes_ref then begin
@@ -107,8 +115,8 @@ let loop_iter ~deps ~d ~cfg ~k4k_dir ~logger ~step_no ~window
     ~prev_status (gap : Property.t list) =
   if !step_no >= cfg.max_steps then raise_max_steps cfg.max_steps;
   incr step_no;
-  restability_check ~file_path ~prev_user_hashes_ref:prev_user_hashes
-    ~logger;
+  restability_check ~cotype:cfg.cotype ~file_path
+    ~prev_user_hashes_ref:prev_user_hashes ~logger;
   Logger.info logger "loop.step"
     (`Assoc [ "n", `Int !step_no;
               "gap_count", `Int (List.length gap) ]);
@@ -144,13 +152,13 @@ let loop_iter ~deps ~d ~cfg ~k4k_dir ~logger ~step_no ~window
       let used = max 0 (cap - !(deps.Gap_step.budget_remaining)) in
       raise_budget ~used ~cap
 
-let initial_user_hashes file_path =
+let initial_user_hashes ?cotype file_path =
   match file_path with
   | None -> []
   | Some fp when not (Sys.file_exists fp) -> []
   | Some fp ->
       try
-        let content = Persist.read_file fp in
+        let content = read_file_or_via_cotype ~cotype fp in
         let parsed = Parser.parse content in
         Stability.user_section_hashes parsed
       with _ -> []
@@ -166,7 +174,7 @@ let run ?file_path ~deps ~d ~cfg ~k4k_dir ~logger
   let prev_d_ref = ref (Some d) in
   let gap = ref initial_gap in
   let prev = ref (prev_status_of_props initial_gap) in
-  let prev_user_hashes = ref (initial_user_hashes file_path) in
+  let prev_user_hashes = ref (initial_user_hashes ?cotype:cfg.cotype file_path) in
   let step_no = ref 0 in
   let window = ref (Tty_status.empty_window ()) in
   let go = ref true in

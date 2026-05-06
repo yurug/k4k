@@ -82,11 +82,15 @@ let interaction_file_json ~file_path ~file_sha256 ~user_section_hashes
     "last_user_section_hashes", hashes;
   ]
 
-let build ?verifier_command ?backend_command
+let build ?verifier_command ?backend_command ?cotype_version
     ~file_path ~file_sha256 ~user_section_hashes
     ~agent_name ~agent_version ~verifier_name ~verifier_version
     ~desired_hash () : Yojson.Safe.t =
-  `Assoc [
+  let cotype_block = match cotype_version with
+    | None -> []
+    | Some v -> [ "cotype", `Assoc [ "version", `String v ] ]
+  in
+  `Assoc ([
     "k4k_version", `String k4k_version_string;
     "agent_backend", json_with_command
                        ~name:agent_name ~version:agent_version
@@ -101,4 +105,4 @@ let build ?verifier_command ?backend_command
       "hash", `String desired_hash;
     ];
     "last_run", `String (Unix.gettimeofday () |> string_of_float);
-  ]
+  ] @ cotype_block)

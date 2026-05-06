@@ -15,6 +15,9 @@ type config = {
   budget    : int;
   between_steps : (unit -> unit) option;
     (** Test hook: invoked between gap-steps. Used by T4. *)
+  cotype : Cotype.t option;
+    (** Per ADR-010, when [Some t], P13 mid-run reads of the
+        interaction file route through [Cotype.read_base]. *)
 }
 
 type result = {
@@ -25,10 +28,11 @@ type result = {
 
 val default_config : config
 
-(** [initial_user_hashes path] — read [path] (if any) and return the
-    user-section hashes, or [[]] on missing-file / parse failure.
-    Exposed for unit-testing the T4 mid-run-edit hook. *)
-val initial_user_hashes : string option -> (string * string) list
+(** [initial_user_hashes ?cotype path] — read [path] (if any) and
+    return the user-section hashes, or [[]] on missing-file / parse
+    failure. Exposed for unit-testing the T4 mid-run-edit hook. *)
+val initial_user_hashes :
+  ?cotype:Cotype.t -> string option -> (string * string) list
 
 (** [run ?file_path ~deps ~d ~cfg ~k4k_dir ~logger ~initial_gap ()] —
     drive the loop until convergence / blocked / budget / max-steps.

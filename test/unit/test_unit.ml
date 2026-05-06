@@ -593,7 +593,7 @@ module HT = struct
       let kdir = Filename.concat dir ".k4k" in
       let logger = Logger.create ~verbosity:`Quiet
         ~jsonl_path:(Some (Filename.concat kdir "log.jsonl")) in
-      f { Harness.file_path = fp; k4k_dir = kdir; logger })
+      f { Harness.file_path = fp; k4k_dir = kdir; logger; cotype = None })
 
   let s5_check_stable_writes_manifest () =
     with_fixture stable_fixture (fun inputs ->
@@ -2428,7 +2428,7 @@ module RLT = struct
         agent_backend = ();
       } in
       let cfg = { Run_loop.max_steps = 2; budget = 1_000_000;
-                  between_steps = None } in
+                  between_steps = None; cotype = None } in
       try
         let _ = Run_loop.run ~deps ~d:Characterization.empty
           ~cfg ~k4k_dir:(Filename.concat dir ".k4k") ~logger
@@ -2717,7 +2717,7 @@ module T4T = struct
           pid_box := p2.id
         end in
       let cfg = { Run_loop.max_steps = 5; budget = 1_000_000;
-                  between_steps = Some between } in
+                  between_steps = Some between; cotype = None } in
       let r = Run_loop.run ~file_path:fp ~deps
                 ~d:Characterization.empty ~cfg
                 ~k4k_dir:(Filename.concat dir ".k4k")
@@ -2826,7 +2826,7 @@ module NF2T = struct
         agent_backend = ();
       } in
       let cfg = { Run_loop.max_steps = 60; budget = 100_000_000;
-                  between_steps = None } in
+                  between_steps = None; cotype = None } in
       let _ = Run_loop.run ~deps ~d:Characterization.empty
         ~cfg ~k4k_dir:(Filename.concat dir ".k4k")
         ~logger ~initial_gap:props () in
@@ -3249,7 +3249,7 @@ module NF4T = struct
       let logger = Logger.create ~verbosity:`Quiet
         ~jsonl_path:(Some (Filename.concat k4k_dir "log.jsonl")) in
       let inputs : Harness.check_inputs =
-        { file_path = interaction; k4k_dir; logger } in
+        { file_path = interaction; k4k_dir; logger; cotype = None } in
       let module H = Harness.Make (Backend_stub) (Verifier_stub) in
       let _ = H.check inputs in
       (* Also drive a few atomic writes via Persist directly to widen
@@ -3698,7 +3698,7 @@ module NF7T = struct
       } in
       let _ = mk_response in
       let cfg = { Run_loop.max_steps = 5; budget = 1000;
-                  between_steps = None } in
+                  between_steps = None; cotype = None } in
       let _ = Run_loop.run ~deps ~d:Characterization.empty
         ~cfg ~k4k_dir ~logger ~initial_gap () in
       (* Also persist a manifest so [stability.pass] events can fire. *)
@@ -3771,6 +3771,8 @@ module Lint = struct
     "lib/run_loop.ml"; "lib/convergence.ml";
     (* step-4 files *)
     "lib/kb_regen.ml"; "lib/kb_render.ml"; "lib/tty_status.ml";
+    (* ADR-010: cotype delegation *)
+    "lib/cotype.ml"; "lib/cotype_parse.ml"; "lib/cotype_stub.ml";
   ]
 
   let rec find_root dir =

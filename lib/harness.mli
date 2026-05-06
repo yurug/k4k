@@ -13,6 +13,11 @@ type check_inputs = {
   file_path : string;
   k4k_dir   : string;
   logger    : Logger.t;
+  cotype    : Cotype.t option;
+    (** Per ADR-010, when [Some t] every interaction-file read goes
+        via [Cotype.open_] → [base_path]. When [None], direct reads
+        are used (legacy path; retained for tests that don't shell
+        out to the cotype binary). *)
 }
 
 (** Outcome of [check] / [full_check]. *)

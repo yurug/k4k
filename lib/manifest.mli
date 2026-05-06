@@ -36,6 +36,7 @@ val desired_hash : t -> string option
 val build :
   ?verifier_command:string list ->
   ?backend_command:string list ->
+  ?cotype_version:string ->
   file_path:string ->
   file_sha256:string ->
   user_section_hashes:(string * string) list ->

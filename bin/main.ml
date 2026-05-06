@@ -215,7 +215,17 @@ let run_check verbosity file ~cli_backend ~cli_backend_timeout =
   let k4k_dir = ".k4k" in
   let jsonl_path = Some (Filename.concat k4k_dir "log.jsonl") in
   let logger = Logger.create ~verbosity ~jsonl_path in
-  let inputs = Harness.{ file_path = file; k4k_dir; logger } in
+  let cotype = Cotype.create Cotype.default_config in
+  (* Per ADR-010: ensure the file is cotype-managed on startup. *)
+  (match Cotype.ensure_init cotype ~file with
+   | Ok () -> ()
+   | Error msg ->
+       (* Do not fail early when the file does not exist yet; let
+          the standard read path raise EFILE_NOT_FOUND. *)
+       if Sys.file_exists file then
+         raise (Error.K4k_error (Error.E_state_corrupt msg)));
+  let inputs = Harness.{ file_path = file; k4k_dir; logger;
+                         cotype = Some cotype } in
   try
     let bcmd, btimeout =
       read_backend_config ~file
@@ -296,8 +306,19 @@ let run_with_external verbosity file ~max_steps ~budget
   let k4k_dir = ".k4k" in
   let jsonl_path = Some (Filename.concat k4k_dir "log.jsonl") in
   let logger = Logger.create ~verbosity ~jsonl_path in
-  let inputs = Harness.{ file_path = file; k4k_dir; logger } in
-  let cfg = { Run_loop.max_steps; budget; between_steps = None } in
+  let cotype = Cotype.create Cotype.default_config in
+  (* Per ADR-010: ensure the file is cotype-managed on startup. *)
+  (match Cotype.ensure_init cotype ~file with
+   | Ok () -> ()
+   | Error msg ->
+       (* Do not fail early when the file does not exist yet; let
+          the standard read path raise EFILE_NOT_FOUND. *)
+       if Sys.file_exists file then
+         raise (Error.K4k_error (Error.E_state_corrupt msg)));
+  let inputs = Harness.{ file_path = file; k4k_dir; logger;
+                         cotype = Some cotype } in
+  let cfg = { Run_loop.max_steps; budget; between_steps = None;
+              cotype = Some cotype } in
   let verifier = make_external_verifier ~k4k_dir ~logger
                    ~command ~timeout_s in
   let _outcome =

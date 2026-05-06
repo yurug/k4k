@@ -13,8 +13,9 @@ val current_branch : cwd:string -> string
 
 (** [is_clean ~cwd] — [(true, [])] when the working tree is clean;
     [(false, dirty_paths)] otherwise. Dirty paths come from
-    [git status --porcelain], with [.k4k/] (k4k's own operational state)
-    and [_build/] (dune's build output) filtered out: both are universally
+    [git status --porcelain], with [.k4k/] (k4k's own operational state),
+    [_build/] (dune's build output), and [.<file>.cotype/] (cotype
+    per-file sidecars, ADR-010) filtered out: all are universally
     regenerable, never part of the user's committed source, and always
     appear as untracked on first run regardless of the user's [.gitignore]. *)
 val is_clean : cwd:string -> bool * string list

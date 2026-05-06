@@ -127,7 +127,7 @@ kb/
 | v1 — ADR-008 verifier-protocol retrofit                   | ✓ done (`lib/Verifier_external` + `examples/verifiers/dune-ocaml/`) |
 | v1 — ADR-009 backend-protocol retrofit                    | ✓ done (`lib/Backend_external` + `examples/backends/claude-code/`) |
 | v1 — Reference Ollama backend                             | ✓ done (`examples/backends/ollama/`; live-verified against `qwen3.5:9b`) |
-| v1 — ADR-010 cotype delegation                            | KB design ✓ ; code refactor in progress (`lib/cotype.ml`)               |
+| v1 — ADR-010 cotype delegation                            | ✓ done (`lib/cotype.ml` + `lib/cotype_stub.ml` + `lib/clarification.ml`; `lib/persist_lock.ml` removed; live cotype 0.2.3 verified) |
 
 ## Agent notes
 

@@ -31,20 +31,40 @@ let current_branch ~cwd : string =
   trim r.stdout
 
 (* Paths that are universally regenerable and never part of the user's
-   committed source: [.k4k/] (k4k's own operational state) and [_build/]
-   (dune's build output, written by the verifier subprocess). Both
-   appear as untracked on first run regardless of the user's [.gitignore],
-   so we filter them from the clean-tree check. *)
+   committed source: [.k4k/] (k4k's own operational state), [_build/]
+   (dune's build output, written by the verifier subprocess), and
+   [.*.cotype/] (cotype's per-file sidecar created automatically on
+   first run, per ADR-010). All appear as untracked on first run
+   regardless of the user's [.gitignore], so we filter them from the
+   clean-tree check. *)
 let starts_with prefix s =
   let lp = String.length prefix and ls = String.length s in
   ls >= lp && String.sub s 0 lp = prefix
+
+let ends_with suffix s =
+  let lp = String.length suffix and ls = String.length s in
+  ls >= lp && String.sub s (ls - lp) lp = suffix
+
+(* True iff [p] is itself or sits under a cotype sidecar dir
+   (i.e. matches [.*.cotype] or [.*.cotype/...]). cotype sidecars are
+   per-file, so the basename is dynamic. *)
+let is_cotype_path p =
+  let head =
+    match String.index_opt p '/' with
+    | None -> p
+    | Some i -> String.sub p 0 i
+  in
+  String.length head >= 8
+  && head.[0] = '.'
+  && ends_with ".cotype" head
 
 let is_ignorable_path line =
   let len = String.length line in
   len >= 4 &&
     let p = String.trim (String.sub line 3 (len - 3)) in
     p = ".k4k" || p = ".k4k/" || p = "_build" || p = "_build/" ||
-    starts_with ".k4k/" p || starts_with "_build/" p
+    starts_with ".k4k/" p || starts_with "_build/" p ||
+    is_cotype_path p
 
 let is_clean ~cwd : bool * string list =
   let r = run_git ~cwd ["status"; "--porcelain"] in

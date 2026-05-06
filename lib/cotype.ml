@@ -91,21 +91,21 @@ let read_base t ~file =
   | Ok r -> Persist.read_file r.base_path
   | Error msg -> raise_state msg
 
-(* Production helper for ADR-010's append-clarification flow. Lives
-   here (not in Persist) to avoid a Persist↔Cotype cycle. *)
+(* Production helper for ADR-010's append-clarification flow.
+   Adapts our outcome types to [Clarification]'s mirror types. *)
 let append_clarification t ~path ~questions =
-  let adapt_open r : Persist.cotype_open_result =
+  let adapt_open r : Clarification.cotype_open_result =
     { base_sha = r.base_sha; base_path = r.base_path;
       conflicted = r.conflicted }
   in
   let adapt_save_outcome = function
-    | Direct s -> Persist.Direct s
-    | Merged s -> Persist.Merged s
-    | Noop -> Persist.Noop
+    | Direct s -> Clarification.Direct s
+    | Merged s -> Clarification.Merged s
+    | Noop -> Clarification.Noop
     | Conflict { conflict_path } ->
-        Persist.Conflict { conflict_path }
+        Clarification.Conflict { conflict_path }
   in
-  Persist.append_clarification_via
+  Clarification.append_via
     ~ensure_init:(fun ~file -> ensure_init t ~file)
     ~open_:(fun ~file -> Result.map adapt_open (open_ t ~file))
     ~save:(fun ~file ~base_sha ~actor ~bytes ->

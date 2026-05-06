@@ -2606,22 +2606,23 @@ module T8T = struct
       let open_ ~file =
         match Cotype_stub.open_ cotype_t ~file with
         | Ok (r : Cotype_stub.open_result) ->
-            Ok ({ Persist.base_sha = r.base_sha;
+            Ok ({ Clarification.base_sha = r.base_sha;
                   base_path = r.base_path;
-                  conflicted = r.conflicted } : Persist.cotype_open_result)
+                  conflicted = r.conflicted }
+                : Clarification.cotype_open_result)
         | Error m -> Error m
       in
       let save ~file ~base_sha ~actor ~bytes =
         match Cotype_stub.save cotype_t ~file ~base_sha ~actor ~bytes with
-        | Ok (Cotype_stub.Direct s) -> Ok (Persist.Direct s)
-        | Ok (Cotype_stub.Merged s) -> Ok (Persist.Merged s)
-        | Ok Cotype_stub.Noop -> Ok Persist.Noop
+        | Ok (Cotype_stub.Direct s) -> Ok (Clarification.Direct s)
+        | Ok (Cotype_stub.Merged s) -> Ok (Clarification.Merged s)
+        | Ok Cotype_stub.Noop -> Ok Clarification.Noop
         | Ok (Cotype_stub.Conflict { conflict_path }) ->
-            Ok (Persist.Conflict { conflict_path })
+            Ok (Clarification.Conflict { conflict_path })
         | Error m -> Error m
       in
       try
-        Persist.append_clarification_via
+        Clarification.append_via
           ~ensure_init:(fun ~file ->
             Cotype_stub.ensure_init cotype_t ~file)
           ~open_ ~save ~path ~questions:["clarify the goal"];
@@ -3773,6 +3774,7 @@ module Lint = struct
     "lib/kb_regen.ml"; "lib/kb_render.ml"; "lib/tty_status.ml";
     (* ADR-010: cotype delegation *)
     "lib/cotype.ml"; "lib/cotype_parse.ml"; "lib/cotype_stub.ml";
+    "lib/clarification.ml";
   ]
 
   let rec find_root dir =

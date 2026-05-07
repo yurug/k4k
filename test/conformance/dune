@@ -1,0 +1,6 @@
+(test
+ (name test_conformance)
+ (libraries alcotest astring unix yojson)
+ (deps
+  (file ../../examples/verifiers/dune-ocaml/main.exe)
+  (file ../../examples/backends/ollama/main.exe)))

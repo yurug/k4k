@@ -98,7 +98,8 @@ kb/
 │
 ├── runbooks/
 │   ├── audit-checklist.md           Phase-5 quality audit checklist (7 axes)
-│   └── test-environment.md          test-only K4K_* env knobs (closed set, default-OFF)
+│   ├── test-environment.md          test-only K4K_* env knobs (closed set, default-OFF)
+│   └── drift-watch.md               weekly maintenance: protocol-conformance + dep-version drift
 │
 ├── indexes/
 │   └── by-task.md                   primary navigation: "I need to do X → load A, B, C"
@@ -108,7 +109,7 @@ kb/
 
 ## File count and last updated
 
-- **Methodology files**: 36 (after ADR-010 retrofit: + ADR-010, + external/cotype.md)
+- **Methodology files**: 37 (+ runbooks/drift-watch.md)
 - **Reference files** (NOTES, claude-code-report, opencode, questions-round{1,2,3}, plan, plan-simulation report, audit reports): grew through Phases 1–5
 - **Last updated**: 2026-05-03
 
@@ -128,6 +129,7 @@ kb/
 | v1 — ADR-009 backend-protocol retrofit                    | ✓ done (`lib/Backend_external` + `examples/backends/claude-code/`) |
 | v1 — Reference Ollama backend                             | ✓ done (`examples/backends/ollama/`; live-verified against `qwen3.5:9b`) |
 | v1 — ADR-010 cotype delegation                            | ✓ done (`lib/cotype.ml` + `lib/cotype_stub.ml` + `lib/clarification.ml`; `lib/persist_lock.ml` removed; live cotype 0.2.3 verified) |
+| v1 — Protocol-conformance suite + drift-watch             | ✓ done (`test/conformance/` 6 tests; `kb/runbooks/drift-watch.md`; baseline at `kb/reports/dep-versions-baseline.txt`) |
 
 ## Agent notes
 

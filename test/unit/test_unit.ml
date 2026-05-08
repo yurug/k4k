@@ -289,7 +289,7 @@ module CotypeT = struct
   let mk () = Cotype.create Cotype.default_config
 
   let cotype_open_returns_base_sha_and_path () =
-    if not (cotype_available ()) then ()
+    if not (cotype_available ()) then print_endline "skipped: cotype not on PATH"
     else with_tmpdir (fun dir ->
       let path = mk_file dir "hello\n" in
       let t = mk () in
@@ -304,7 +304,7 @@ module CotypeT = struct
       | Error msg -> Alcotest.failf "cotype open failed: %s" msg)
 
   let cotype_init_is_idempotent () =
-    if not (cotype_available ()) then ()
+    if not (cotype_available ()) then print_endline "skipped: cotype not on PATH"
     else with_tmpdir (fun dir ->
       let path = mk_file dir "x\n" in
       let t = mk () in
@@ -318,7 +318,7 @@ module CotypeT = struct
     | Error m -> Alcotest.failf "%s: %s" label m
 
   let cotype_save_direct () =
-    if not (cotype_available ()) then ()
+    if not (cotype_available ()) then print_endline "skipped: cotype not on PATH"
     else with_tmpdir (fun dir ->
       let path = mk_file dir "a\n" in
       let t = mk () in
@@ -330,7 +330,7 @@ module CotypeT = struct
       | Ok _ | Error _ -> Alcotest.fail "expected Direct outcome")
 
   let cotype_save_merged_when_concurrent_non_overlapping () =
-    if not (cotype_available ()) then ()
+    if not (cotype_available ()) then print_endline "skipped: cotype not on PATH"
     else with_tmpdir (fun dir ->
       let path = mk_file dir "L1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\n" in
       let t = mk () in
@@ -358,7 +358,7 @@ module CotypeT = struct
       | Error m -> Alcotest.failf "save failed: %s" m)
 
   let cotype_save_conflict_when_overlapping () =
-    if not (cotype_available ()) then ()
+    if not (cotype_available ()) then print_endline "skipped: cotype not on PATH"
     else with_tmpdir (fun dir ->
       let path = mk_file dir "L1\n" in
       let t = mk () in
@@ -387,7 +387,7 @@ module CotypeT = struct
          || Astring.String.is_infix ~affix:"pip install" msg)
 
   let cotype_status_reports_clean_after_init () =
-    if not (cotype_available ()) then ()
+    if not (cotype_available ()) then print_endline "skipped: cotype not on PATH"
     else with_tmpdir (fun dir ->
       let path = mk_file dir "x\n" in
       let t = mk () in
@@ -4328,6 +4328,87 @@ module BRT = struct
   ]
 end
 
+(* ---------------- Pure-renderer focused tests (axis 1 L2) ---------- *)
+module RenderersT = struct
+  let status_splice_appends_when_missing () =
+    let raw = "## Goal\nfoo\n" in
+    let block = "## k4k:status\nx\n" in
+    let out = Status_splice.replace_or_append raw block in
+    Alcotest.(check bool) "user goal preserved" true
+      (Astring.String.is_infix ~affix:"## Goal\nfoo" out);
+    Alcotest.(check bool) "status block appended" true
+      (Astring.String.is_infix ~affix:"## k4k:status\nx\n" out)
+
+  let status_splice_replaces_existing () =
+    let raw = "## Goal\nfoo\n\n## k4k:status\nold\n\n## Inputs\nio\n" in
+    let block = "## k4k:status\nnew\n" in
+    let out = Status_splice.replace_or_append raw block in
+    Alcotest.(check bool) "old replaced by new" true
+      (Astring.String.is_infix ~affix:"## k4k:status\nnew\n" out);
+    Alcotest.(check bool) "old gone" false
+      (Astring.String.is_infix ~affix:"\nold\n" out);
+    Alcotest.(check bool) "tail section preserved" true
+      (Astring.String.is_infix ~affix:"## Inputs\nio\n" out)
+
+  let status_splice_idempotent () =
+    let raw = "## Goal\nfoo\n" in
+    let block = "## k4k:status\nx\n" in
+    let once = Status_splice.replace_or_append raw block in
+    let twice = Status_splice.replace_or_append once block in
+    Alcotest.(check string) "idempotent" once twice
+
+  let starter_template_has_required_sections () =
+    let body = Starter_template.render ~name:"myproj" in
+    Alcotest.(check bool) "has frontmatter" true
+      (Astring.String.is_infix ~affix:"version: 1" body);
+    Alcotest.(check bool) "has Goal" true
+      (Astring.String.is_infix ~affix:"## Goal" body);
+    Alcotest.(check bool) "has welcome" true
+      (Astring.String.is_infix ~affix:"## k4k:welcome" body)
+
+  let starter_template_is_parseable () =
+    let body = Starter_template.render ~name:"x" in
+    let parsed = Parser.parse body in
+    Alcotest.(check int) "frontmatter version" 1
+      parsed.frontmatter.version;
+    Alcotest.(check string) "frontmatter class" "cli"
+      parsed.frontmatter.cls;
+    Alcotest.(check bool) "≥1 user section" true
+      (parsed.sections <> [])
+
+  let auto_frontmatter_injects_when_missing () =
+    let raw = "# my project\n\n## Goal\nx\n" in
+    let fixed = Starter_template.auto_frontmatter raw in
+    Alcotest.(check bool) "frontmatter injected" true
+      (Astring.String.is_prefix ~affix:"---\n" fixed);
+    Alcotest.(check bool) "user content preserved" true
+      (Astring.String.is_infix ~affix:"## Goal\nx\n" fixed)
+
+  let auto_frontmatter_idempotent_when_present () =
+    let raw =
+      "---\nk4k:\n  version: 1\n  class: cli\n---\n## Goal\nx\n" in
+    let fixed = Starter_template.auto_frontmatter raw in
+    Alcotest.(check string) "no change when frontmatter present"
+      raw fixed
+
+  let tests = [
+    Alcotest.test_case "Status_splice_appends_when_missing" `Quick
+      status_splice_appends_when_missing;
+    Alcotest.test_case "Status_splice_replaces_existing" `Quick
+      status_splice_replaces_existing;
+    Alcotest.test_case "Status_splice_idempotent" `Quick
+      status_splice_idempotent;
+    Alcotest.test_case "Starter_template_has_required_sections" `Quick
+      starter_template_has_required_sections;
+    Alcotest.test_case "Starter_template_is_parseable" `Quick
+      starter_template_is_parseable;
+    Alcotest.test_case "Auto_frontmatter_injects_when_missing" `Quick
+      auto_frontmatter_injects_when_missing;
+    Alcotest.test_case "Auto_frontmatter_idempotent_when_present" `Quick
+      auto_frontmatter_idempotent_when_present;
+  ]
+end
+
 (* ---------------- NF2/NF4/NF6 v2 ports ----------------------------
    Coverage lost in batch 7's orphan-module deletion (Run_loop /
    Harness / Full_check). Restored on the v2 Version_loop /
@@ -5333,6 +5414,7 @@ let () =
       "Tradeoff_flow_runtime", TFRunT.tests;
       "Watcher_startup", WatcherT.tests;
       "NF_ports", NFPortsT.tests;
+      "Renderers", RenderersT.tests;
       "Version_finalize_unit", VFinT.tests;
       "Prefixed",   PrefixedT.tests;
     ]

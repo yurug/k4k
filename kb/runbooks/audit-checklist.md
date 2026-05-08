@@ -70,7 +70,7 @@ All six checks pass; numerical results in the findings file.
 1. **stdout/stderr discipline (`P11`)**: piped run separates streams cleanly.
 2. **Exit codes**: every error from `spec/error-taxonomy.md` is reachable in tests; observed exit code matches the table.
 3. **TTY status updates correctly**: `script -c "k4k ..."` produces a single in-place line; `tee` produces one log line per transition.
-4. **`--check` is silent on success**: `k4k --check stable.k4k` prints `stable\n` and nothing else.
+4. **stdout JSONL discipline (NF, P11) under `--exit-on-stable`**: every non-empty stdout line parses as JSON; stderr empty at `Quiet` (matches the `P11_stdout_jsonl` integration test). The pre-v2 `--check stable.k4k` flag does not exist in v2 (the watcher is autonomous; ADR-011); this check folds into check 1.
 5. **Error messages cite remediation**: every `k4k:` error line contains either a path, a section id, or a `recovery hint`.
 6. **`-v` / `-vv` are additive**: `-vv` includes everything `-v` shows, plus more.
 

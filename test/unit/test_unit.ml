@@ -4328,6 +4328,138 @@ module BRT = struct
   ]
 end
 
+(* ---------- Manifest accessors (audit-2026-05-08-axis1 M3) ---------- *)
+module ManifestT = struct
+  let read_or_init_returns_empty_when_absent () =
+    with_tmpdir (fun dir ->
+      let m = Manifest.read_or_init ~k4k_dir:dir in
+      Alcotest.(check (list (pair string string))) "no hashes" []
+        (Manifest.user_section_hashes m);
+      Alcotest.(check (option string)) "no desired hash" None
+        (Manifest.desired_hash m))
+
+  let read_or_init_round_trips_built_manifest () =
+    with_tmpdir (fun dir ->
+      let user_hashes = [ "goal", "abc"; "out-of-scope", "def" ] in
+      let j = Manifest.build
+        ~file_path:"in.k4k" ~file_sha256:"deadbeef"
+        ~user_section_hashes:user_hashes
+        ~agent_name:"test" ~agent_version:"0"
+        ~verifier_name:"test" ~verifier_version:"0"
+        ~desired_hash:"cafef00d" () in
+      Persist.atomic_write ~path:(Manifest.path dir)
+        (Yojson.Safe.pretty_to_string ~std:true j);
+      let m = Manifest.read_or_init ~k4k_dir:dir in
+      Alcotest.(check (option string)) "desired hash round-trips"
+        (Some "cafef00d") (Manifest.desired_hash m);
+      let hs = Manifest.user_section_hashes m in
+      Alcotest.(check string) "goal hash" "abc" (List.assoc "goal" hs);
+      Alcotest.(check string) "out-of-scope hash" "def"
+        (List.assoc "out-of-scope" hs))
+
+  let read_or_init_raises_on_version_mismatch () =
+    with_tmpdir (fun dir ->
+      let path = Manifest.path dir in
+      Persist.atomic_write ~path
+        {|{"k4k_version":"99.99.99-future"}|};
+      try
+        let _ = Manifest.read_or_init ~k4k_dir:dir in
+        Alcotest.fail "expected E_state_corrupt"
+      with Error.K4k_error (Error.E_state_corrupt msg) ->
+        Alcotest.(check bool) "msg names version" true
+          (Astring.String.is_infix ~affix:"k4k_version" msg))
+
+  let read_or_init_raises_on_unparseable_json () =
+    with_tmpdir (fun dir ->
+      let path = Manifest.path dir in
+      Persist.atomic_write ~path "{ not valid json";
+      try
+        let _ = Manifest.read_or_init ~k4k_dir:dir in
+        Alcotest.fail "expected E_state_corrupt"
+      with Error.K4k_error (Error.E_state_corrupt _) -> ())
+
+  let tests = [
+    Alcotest.test_case "Manifest_read_or_init_empty_when_absent" `Quick
+      read_or_init_returns_empty_when_absent;
+    Alcotest.test_case "Manifest_read_or_init_round_trip" `Quick
+      read_or_init_round_trips_built_manifest;
+    Alcotest.test_case "Manifest_read_or_init_version_mismatch" `Quick
+      read_or_init_raises_on_version_mismatch;
+    Alcotest.test_case "Manifest_read_or_init_unparseable" `Quick
+      read_or_init_raises_on_unparseable_json;
+  ]
+end
+
+(* ---------- Version_finalize (audit-2026-05-08-axis1 M2) ---------- *)
+module VFinT = struct
+  let init_repo_with_commit dir =
+    let _ = Git.init ~cwd:dir in
+    Git.configure_test_identity ~cwd:dir;
+    let oc = open_out (Filename.concat dir ".gitignore") in
+    output_string oc ".k4k/\n"; close_out oc;
+    let oc = open_out (Filename.concat dir "README") in
+    output_string oc "x"; close_out oc;
+    let _ = Git.commit_all ~cwd:dir ~message:"initial" in
+    match Git.head_sha ~cwd:dir with
+    | Ok s -> s | Error e -> Alcotest.failf "head_sha: %s" e
+
+  let finalize_with_all_established_yields_done () =
+    with_tmpdir (fun dir ->
+      let baseline = init_repo_with_commit dir in
+      let v = match Version.start_new ~cwd:dir ~number:1
+                ~baseline_sha:baseline ~d_hash:"d-hash" with
+        | Ok v -> v | Error e -> Alcotest.failf "start_new: %s" e in
+      let outcomes = [
+        { Version_finalize.id = "P1"; status = "established";
+          commit_sha = Some "abc" };
+      ] in
+      let r = Version_finalize.finalize
+                ~cwd:dir ~k4k_dir:(Filename.concat dir ".k4k")
+                ~default_branch:"main" ~delete_branch:true
+                ~emit:(fun _ _ -> ()) ~v ~outcomes
+                ~started_at:(Unix.gettimeofday ()) () in
+      match r with
+      | Version_finalize.Done { tag; _ } ->
+          Alcotest.(check string) "tag is v1" "v1" tag;
+          Alcotest.(check bool) "v1 git tag exists" true
+            (Git.tag_exists ~cwd:dir ~name:"v1")
+      | Rolled_back -> Alcotest.fail "expected Done")
+
+  let finalize_with_deferred_yields_rolled_back () =
+    with_tmpdir (fun dir ->
+      let baseline = init_repo_with_commit dir in
+      let v = match Version.start_new ~cwd:dir ~number:2
+                ~baseline_sha:baseline ~d_hash:"d-hash-2" with
+        | Ok v -> v | Error e -> Alcotest.failf "start_new: %s" e in
+      let outcomes = [
+        { Version_finalize.id = "P1"; status = "established";
+          commit_sha = Some "abc" };
+        { id = "P2"; status = "deferred"; commit_sha = None };
+      ] in
+      let r = Version_finalize.finalize
+                ~cwd:dir ~k4k_dir:(Filename.concat dir ".k4k")
+                ~default_branch:"main" ~delete_branch:true
+                ~emit:(fun _ _ -> ()) ~v ~outcomes
+                ~started_at:(Unix.gettimeofday ()) () in
+      match r with
+      | Rolled_back ->
+          Alcotest.(check bool) "no v2 tag" false
+            (Git.tag_exists ~cwd:dir ~name:"v2");
+          (* audit.md must still exist for the rolled-back version. *)
+          let audit = Filename.concat dir
+            (".k4k/version/2/audit.md") in
+          Alcotest.(check bool) "audit.md persisted" true
+            (Sys.file_exists audit)
+      | Done _ -> Alcotest.fail "expected Rolled_back")
+
+  let tests = [
+    Alcotest.test_case "Version_finalize_done_when_all_established"
+      `Quick finalize_with_all_established_yields_done;
+    Alcotest.test_case "Version_finalize_rolled_back_when_deferred"
+      `Quick finalize_with_deferred_yields_rolled_back;
+  ]
+end
+
 (* ---------- Property-prefixed tests (audit-2026-05-08-axis1 H1, H2) ---------- *)
 module PrefixedT = struct
   (* P12 — file ownership: cotype mediates concurrent writes; user
@@ -4562,5 +4694,7 @@ let () =
       "Version_user_edits", VUET.tests;
       "Watcher_pid", WPidT.tests;
       "Backend_resolve", BRT.tests;
+      "Manifest_acc", ManifestT.tests;
+      "Version_finalize_unit", VFinT.tests;
       "Prefixed",   PrefixedT.tests;
     ]

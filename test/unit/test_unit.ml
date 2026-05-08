@@ -4328,6 +4328,241 @@ module BRT = struct
   ]
 end
 
+(* ---------- Watcher.startup focused tests (axis 1 M2) ---------- *)
+module WatcherT = struct
+  (* Stub the toolchain probes so we don't depend on real cotype/git
+     installs. K4K_TOOLCHAIN_INSTALL_STUB makes Toolchain_install.ensure
+     consult [test_set_stub_outcome] instead of subprocesses. *)
+  let with_toolchain_stubs f =
+    let saved = try Some (Sys.getenv "K4K_TOOLCHAIN_INSTALL_STUB")
+                with Not_found -> None in
+    Unix.putenv "K4K_TOOLCHAIN_INSTALL_STUB" "1";
+    Toolchain_install.test_reset_stubs ();
+    Toolchain_install.test_set_stub_outcome ~binary:"cotype"
+      (Already_present { binary = "cotype"; version = "0.2.3" });
+    Toolchain_install.test_set_stub_outcome ~binary:"git"
+      (Already_present { binary = "git"; version = "2.45.0" });
+    let r = try Ok (f ()) with e -> Error e in
+    Toolchain_install.test_reset_stubs ();
+    (match saved with
+     | Some v -> Unix.putenv "K4K_TOOLCHAIN_INSTALL_STUB" v
+     | None -> Unix.putenv "K4K_TOOLCHAIN_INSTALL_STUB" "");
+    match r with Ok x -> x | Error e -> raise e
+
+  let startup_creates_starter_when_file_missing () =
+    with_toolchain_stubs (fun () ->
+      with_tmpdir (fun dir ->
+        let f = Filename.concat dir "newproject.k4k" in
+        let kdir = Filename.concat dir ".k4k" in
+        let cfg : Watcher.config = {
+          file_path = f; k4k_dir = kdir;
+          verbosity = `Quiet;
+          exit_on_stable = false; exit_on_done = false;
+          max_versions = None; poll_interval_ms = 500;
+        } in
+        match Watcher.startup ~config:cfg with
+        | Started ->
+            Alcotest.(check bool) "starter file created" true
+              (Sys.file_exists f);
+            let body = Persist.read_file f in
+            Alcotest.(check bool) "starter has goal heading" true
+              (Astring.String.is_infix ~affix:"## Goal" body);
+            Alcotest.(check bool) "watcher.pid was acquired" true
+              (Sys.file_exists (Filename.concat kdir "watcher.pid"));
+            Watcher_pid.release ~k4k_dir:kdir
+        | Already_running pid ->
+            Alcotest.failf "expected Started, got Already_running %d" pid
+        | Aborted msg -> Alcotest.failf "expected Started, got Aborted: %s" msg))
+
+  let startup_returns_already_running_when_pid_held () =
+    with_toolchain_stubs (fun () ->
+      with_tmpdir (fun dir ->
+        let f = Filename.concat dir "in.k4k" in
+        let oc = open_out f in
+        output_string oc
+          "---\nk4k:\n  version: 1\n  class: cli\n---\n## Goal\nx\n";
+        close_out oc;
+        let kdir = Filename.concat dir ".k4k" in
+        Persist.ensure_dir kdir;
+        (* Plant a foreign live PID. *)
+        let pid_file = Watcher_pid.pid_path kdir in
+        let oc = open_out pid_file in
+        output_string oc (string_of_int (Unix.getppid ())); close_out oc;
+        let cfg : Watcher.config = {
+          file_path = f; k4k_dir = kdir;
+          verbosity = `Quiet;
+          exit_on_stable = false; exit_on_done = false;
+          max_versions = None; poll_interval_ms = 500;
+        } in
+        match Watcher.startup ~config:cfg with
+        | Already_running pid ->
+            Alcotest.(check int) "reports the foreign PID"
+              (Unix.getppid ()) pid
+        | Started -> Alcotest.fail "expected Already_running"
+        | Aborted msg -> Alcotest.failf "expected Already_running, got Aborted: %s" msg))
+
+  let startup_aborted_when_cotype_missing () =
+    with_tmpdir (fun dir ->
+      let f = Filename.concat dir "in.k4k" in
+      let oc = open_out f in
+      output_string oc
+        "---\nk4k:\n  version: 1\n  class: cli\n---\n## Goal\nx\n";
+      close_out oc;
+      let kdir = Filename.concat dir ".k4k" in
+      let saved = try Some (Sys.getenv "K4K_TOOLCHAIN_INSTALL_STUB")
+                  with Not_found -> None in
+      Unix.putenv "K4K_TOOLCHAIN_INSTALL_STUB" "1";
+      Toolchain_install.test_reset_stubs ();
+      (* Don't seed any outcome — Toolchain_install.ensure returns
+         Failed for unmapped binaries when the stub table is active. *)
+      let cfg : Watcher.config = {
+        file_path = f; k4k_dir = kdir;
+        verbosity = `Quiet;
+        exit_on_stable = false; exit_on_done = false;
+        max_versions = None; poll_interval_ms = 500;
+      } in
+      let r = Watcher.startup ~config:cfg in
+      Toolchain_install.test_reset_stubs ();
+      (match saved with
+       | Some v -> Unix.putenv "K4K_TOOLCHAIN_INSTALL_STUB" v
+       | None -> Unix.putenv "K4K_TOOLCHAIN_INSTALL_STUB" "");
+      match r with
+      | Aborted msg ->
+          Alcotest.(check bool) "msg names cotype or unavailable" true
+            (Astring.String.is_infix ~affix:"cotype" msg
+             || Astring.String.is_infix ~affix:"unavailable" msg
+             || Astring.String.is_infix ~affix:"agent" msg)
+      | Started -> Alcotest.fail "expected Aborted"
+      | Already_running pid ->
+          Alcotest.failf "expected Aborted, got Already_running %d" pid)
+
+  let tests = [
+    Alcotest.test_case "Watcher_startup_creates_starter_when_missing"
+      `Quick startup_creates_starter_when_file_missing;
+    Alcotest.test_case "Watcher_startup_already_running_when_pid_held"
+      `Quick startup_returns_already_running_when_pid_held;
+    Alcotest.test_case "Watcher_startup_aborted_when_cotype_missing"
+      `Quick startup_aborted_when_cotype_missing;
+  ]
+end
+
+(* ------- Tradeoff_flow.propose_and_wait runtime (axis 1 M4) ------- *)
+module TFRunT = struct
+  let cotype_available () =
+    try
+      let r = Subprocess.run ~prog:"cotype" ~args:["--version"]
+                ~timeout_s:5 () in
+      r.exit_code = 0
+    with _ -> false
+
+  let mk_proposal ~tier =
+    { Tradeoff_flow.property_id = "P0"; why_a_failed = "x";
+      proposed_tier = tier; whats_lost = "y"; whats_gained = "z" }
+
+  let with_autoapprove value f =
+    let saved = try Some (Sys.getenv "K4K_TEST_TRADEOFF_AUTOAPPROVE")
+                with Not_found -> None in
+    Unix.putenv "K4K_TEST_TRADEOFF_AUTOAPPROVE" value;
+    let r =
+      try Ok (f ())
+      with e -> Error e in
+    (match saved with
+     | Some v -> Unix.putenv "K4K_TEST_TRADEOFF_AUTOAPPROVE" v
+     | None -> Unix.putenv "K4K_TEST_TRADEOFF_AUTOAPPROVE" "");
+    match r with Ok x -> x | Error e -> raise e
+
+  let with_fixture f =
+    if not (cotype_available ()) then
+      print_endline "skipped: cotype not on PATH"
+    else with_tmpdir (fun dir ->
+      let path = Filename.concat dir "in.k4k" in
+      let oc = open_out path in
+      output_string oc "## Goal\nfoo\n"; close_out oc;
+      let kdir = Filename.concat dir ".k4k" in
+      Persist.ensure_dir kdir;
+      let ct = Cotype.create Cotype.default_config in
+      f ~ct ~path ~kdir)
+
+  let approved_b () =
+    with_fixture (fun ~ct ~path ~kdir ->
+      let r = with_autoapprove "tier-b" (fun () ->
+        Tradeoff_flow.propose_and_wait
+          ~cotype:ct ~file_path:path ~k4k_dir:kdir
+          ~version_n:1
+          ~emit:(fun _ _ -> ())
+          ~proposal:(mk_proposal ~tier:`B)) in
+      match r with
+      | Approved `B -> ()
+      | _ -> Alcotest.fail "expected Approved B")
+
+  let approved_c () =
+    with_fixture (fun ~ct ~path ~kdir ->
+      let r = with_autoapprove "tier-c" (fun () ->
+        Tradeoff_flow.propose_and_wait
+          ~cotype:ct ~file_path:path ~k4k_dir:kdir
+          ~version_n:1
+          ~emit:(fun _ _ -> ())
+          ~proposal:(mk_proposal ~tier:`C)) in
+      match r with
+      | Approved `C -> ()
+      | _ -> Alcotest.fail "expected Approved C")
+
+  let rejected_with_guidance () =
+    with_fixture (fun ~ct ~path ~kdir ->
+      let r = with_autoapprove "reject:try smaller lemma" (fun () ->
+        Tradeoff_flow.propose_and_wait
+          ~cotype:ct ~file_path:path ~k4k_dir:kdir
+          ~version_n:1
+          ~emit:(fun _ _ -> ())
+          ~proposal:(mk_proposal ~tier:`B)) in
+      match r with
+      | Rejected guidance ->
+          Alcotest.(check bool) "guidance carries the reason" true
+            (Astring.String.is_infix ~affix:"smaller lemma" guidance)
+      | _ -> Alcotest.fail "expected Rejected")
+
+  let timed_out () =
+    with_fixture (fun ~ct ~path ~kdir ->
+      let r = with_autoapprove "timeout" (fun () ->
+        Tradeoff_flow.propose_and_wait
+          ~cotype:ct ~file_path:path ~k4k_dir:kdir
+          ~version_n:1
+          ~emit:(fun _ _ -> ())
+          ~proposal:(mk_proposal ~tier:`B)) in
+      match r with
+      | Timed_out -> ()
+      | _ -> Alcotest.fail "expected Timed_out")
+
+  let archives_proposal_on_resolution () =
+    with_fixture (fun ~ct ~path ~kdir ->
+      let _ = with_autoapprove "tier-b" (fun () ->
+        Tradeoff_flow.propose_and_wait
+          ~cotype:ct ~file_path:path ~k4k_dir:kdir
+          ~version_n:1
+          ~emit:(fun _ _ -> ())
+          ~proposal:(mk_proposal ~tier:`B)) in
+      let dir = Version_persist.tradeoffs_dir
+                  ~k4k_dir:kdir ~number:1 in
+      let entries =
+        try Array.to_list (Sys.readdir dir) with _ -> [] in
+      Alcotest.(check bool) "≥1 archived proposal exists" true
+        (List.exists (fun e ->
+          Filename.check_suffix e ".md") entries))
+
+  let tests = [
+    Alcotest.test_case "Tradeoff_flow_approved_b_via_autoapprove"
+      `Quick approved_b;
+    Alcotest.test_case "Tradeoff_flow_approved_c_via_autoapprove"
+      `Quick approved_c;
+    Alcotest.test_case "Tradeoff_flow_rejected_carries_guidance"
+      `Quick rejected_with_guidance;
+    Alcotest.test_case "Tradeoff_flow_timeout_via_autoapprove"
+      `Quick timed_out;
+    Alcotest.test_case "Tradeoff_flow_archives_proposal_on_resolution"
+      `Quick archives_proposal_on_resolution;
+  ]
+end
+
 (* ---------- Manifest accessors (audit-2026-05-08-axis1 M3) ---------- *)
 module ManifestT = struct
   let read_or_init_returns_empty_when_absent () =
@@ -4695,6 +4930,8 @@ let () =
       "Watcher_pid", WPidT.tests;
       "Backend_resolve", BRT.tests;
       "Manifest_acc", ManifestT.tests;
+      "Tradeoff_flow_runtime", TFRunT.tests;
+      "Watcher_startup", WatcherT.tests;
       "Version_finalize_unit", VFinT.tests;
       "Prefixed",   PrefixedT.tests;
     ]

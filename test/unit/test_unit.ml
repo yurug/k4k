@@ -4328,6 +4328,96 @@ module BRT = struct
   ]
 end
 
+(* ---------------- Inline_blocks parsers (axis 1 L2 extension) ----- *)
+module InlineBlocksParsersT = struct
+  let directives_parses_rollback () =
+    Alcotest.(check bool) "rollback in body" true
+      (List.mem `Rollback
+         (Inline_blocks.parse_directives
+            "- request: rollback\n"))
+
+  let directives_parses_pause () =
+    Alcotest.(check bool) "pause in body" true
+      (List.mem `Pause
+         (Inline_blocks.parse_directives
+            "request: pause\n"))
+
+  let directives_case_insensitive_keyword () =
+    let body = "- Request: ROLLBACK\nrequest: PAUSE\n" in
+    let ds = Inline_blocks.parse_directives body in
+    Alcotest.(check bool) "rollback found" true
+      (List.mem `Rollback ds);
+    Alcotest.(check bool) "pause found" true
+      (List.mem `Pause ds)
+
+  let directives_unknown_value_is_other () =
+    let body = "request: zonk\n" in
+    match Inline_blocks.parse_directives body with
+    | [`Other s] -> Alcotest.(check string) "other body" "zonk" s
+    | _ -> Alcotest.fail "expected single Other"
+
+  let directives_ignores_non_directive_lines () =
+    let body =
+      "- pending user edits: 0\n\
+       - request: rollback\n\
+       (some prose)\n\
+       - request: pause\n\
+       last activity: 2026-05-08\n" in
+    let ds = Inline_blocks.parse_directives body in
+    Alcotest.(check int) "exactly 2 directives" 2 (List.length ds);
+    Alcotest.(check bool) "rollback present" true (List.mem `Rollback ds);
+    Alcotest.(check bool) "pause present" true (List.mem `Pause ds)
+
+  let tradeoff_resolution_approved_b () =
+    (* The user replies by writing a new line "Approved: Tier B"
+       inside the proposal block (or replacing "Approval: Pending"
+       with it). The parser scans for the FIRST line starting with
+       "Approved:" or "Rejected:". *)
+    let body = "- Property: P0\n\nApproved: Tier B\n\
+                (something else)\n" in
+    Alcotest.(check bool) "approved B" true
+      (Inline_blocks.parse_tradeoff_resolution body = `Approved `B)
+
+  let tradeoff_resolution_approved_c () =
+    let body = "Approved: c\n" in
+    Alcotest.(check bool) "approved C (case-insensitive)" true
+      (Inline_blocks.parse_tradeoff_resolution body = `Approved `C)
+
+  let tradeoff_resolution_rejected_with_guidance () =
+    let body = "Rejected: try smaller lemma first\n" in
+    match Inline_blocks.parse_tradeoff_resolution body with
+    | `Rejected guidance ->
+        Alcotest.(check bool) "guidance preserved" true
+          (Astring.String.is_infix ~affix:"smaller lemma" guidance)
+    | _ -> Alcotest.fail "expected Rejected"
+
+  let tradeoff_resolution_pending_when_neither () =
+    let body = "Approval: Pending\n(or just nothing yet)\n" in
+    Alcotest.(check bool) "pending" true
+      (Inline_blocks.parse_tradeoff_resolution body = `Pending)
+
+  let tests = [
+    Alcotest.test_case "InlineBlocks_directives_rollback" `Quick
+      directives_parses_rollback;
+    Alcotest.test_case "InlineBlocks_directives_pause" `Quick
+      directives_parses_pause;
+    Alcotest.test_case "InlineBlocks_directives_case_insensitive" `Quick
+      directives_case_insensitive_keyword;
+    Alcotest.test_case "InlineBlocks_directives_other" `Quick
+      directives_unknown_value_is_other;
+    Alcotest.test_case "InlineBlocks_directives_ignores_non_directives" `Quick
+      directives_ignores_non_directive_lines;
+    Alcotest.test_case "InlineBlocks_tradeoff_approved_b" `Quick
+      tradeoff_resolution_approved_b;
+    Alcotest.test_case "InlineBlocks_tradeoff_approved_c" `Quick
+      tradeoff_resolution_approved_c;
+    Alcotest.test_case "InlineBlocks_tradeoff_rejected" `Quick
+      tradeoff_resolution_rejected_with_guidance;
+    Alcotest.test_case "InlineBlocks_tradeoff_pending" `Quick
+      tradeoff_resolution_pending_when_neither;
+  ]
+end
+
 (* ---------------- Pure-renderer focused tests (axis 1 L2) ---------- *)
 module RenderersT = struct
   let status_splice_appends_when_missing () =
@@ -5415,6 +5505,7 @@ let () =
       "Watcher_startup", WatcherT.tests;
       "NF_ports", NFPortsT.tests;
       "Renderers", RenderersT.tests;
+      "InlineBlocksParsers", InlineBlocksParsersT.tests;
       "Version_finalize_unit", VFinT.tests;
       "Prefixed",   PrefixedT.tests;
     ]

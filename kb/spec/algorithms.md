@@ -130,25 +130,39 @@ Tie-break by lexicographic order of `property.id` so the choice is stable.
 
 ## Gap-step {#gap-step}
 
+**v2 direct-commit workflow** (ADR-013 §2 step 3, post-v2-batch-4a):
+the caller is responsible for being on the correct version branch
+([`k4k/version/<n>`]); `Gap_step` applies the diff directly to the
+working tree, runs the verifier, and either commits-on-the-spot
+(Accepted) or `git reset --hard HEAD` (rewinds to the last accepted
+commit). The previous v0/v1 scratch-branch indirection
+(`k4k/gap/<pid>/<ts>`) is gone; branches are now managed one level up
+by `Version_loop`.
+
 ```
-step(G):
-  p = argmax(p.risk_score for p in G)             # tie: lex order
-  if p.failure_count >= 3:
-    mark_blocked(p); append_clarification(p); return
-  branch = git_create_scratch_branch(p.id)
-  prompt = compose_prompt(p, S)                    # uses prompts/gap-step.md template
+step(p, prev_status):
+  preflight: working tree must be clean and a git repo
+  if p.failure_count >= 3 or p.blocked: return Blocked p
+  prompt = compose_prompt(p, S, tier)              # uses prompts/gap-step.tier-{a,b,c}.md
   resp   = agent_backend.invoke(prompt)            # see api-contracts.md
-  if resp.outcome == "budget-exhausted": exit 4
+  if resp.outcome == "budget-exhausted": return Budget_exhausted
   diff = extract_diff(resp.text)
-  apply(diff, branch)
-  vresult = verifier.run(branch, focus=[p.id])     # see api-contracts.md
+  apply(diff, working_tree)                        # Git.apply_diff --index
+  vresult = verifier.run(working_tree, focus=[p.id])
   if vresult.by_property[p.id] == "established"
-     and not regressed(vresult, S):
-    git_merge(branch); update(S, vresult); persist_artefacts(); return
+     and not regressed(vresult, prev_status):
+    Version.commit_accept(message="[k4k] establish <pid>")
+    persist_artefacts(); return Accepted { property; commit_sha }
   else:
-    git_discard(branch); p.failure_count += 1
-    persist_artefacts(); return
+    Git.reset_hard(HEAD)            # rewind: drop diff + untracked
+    p.failure_count += 1
+    persist_artefacts()
+    return Tradeoff if failure_count >= 3 else Rejected
 ```
+
+The `Tradeoff` outcome is a placeholder for the batch-4b
+proposal-pause-resume flow; the v2-batch-4a `Version_loop` treats it
+as a deferred property and continues with the next one.
 
 ## KB regeneration {#kb-regen}
 

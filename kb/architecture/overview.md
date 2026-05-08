@@ -69,7 +69,7 @@ Two stages — structural validation against the parsed sections, then the forma
 Pure. Takes a raw `Characterization` AST, returns the canonical form + content hash. Single source of truth for the determinism boundary (`P4`, ADR-005).
 
 ### `lib/Gap_step`
-One iteration of the harness loop. Selects the next property by `risk_score`, composes a prompt, calls `Agent_backend.invoke`, applies the diff on a scratch git branch, calls `Verifier.run`, accepts or rejects.
+One iteration of the harness loop (ADR-013 §2 step 3, v2 direct-commit). Composes a tier-aware prompt, calls `Agent_backend.invoke`, applies the diff directly to the working tree (already on `k4k/version/<n>`), runs `Verifier.run` in focus mode, and either commits via `Version.commit_accept` (Accepted) or `git reset --hard HEAD` (Rejected/Tradeoff). Branch management is up to the caller (`Version_loop`); `Gap_step` no longer owns scratch branches.
 
 ### `lib/Kb_regen`
 Computes the diff between previous and current `(D, S)`; for each affected aspect, identifies the KB files (via `manifest.kb_source_map`) whose ownership is `k4k`, and regenerates them via one agent call per file.
@@ -178,11 +178,15 @@ k4k/
 | `stability`                  | structural + two-run formalization protocol + cache                      |
 | `full_check`                 | orchestrator: structural → cache → formalization → coverage              |
 | `subprocess`                 | `execvp`-based runner with timeout + signal-poll                         |
-| `git`                        | scratch branch via `Unix` (no `Sys.command`)                             |
-| `gap_branch`                 | `k4k/gap/<id>/<ts>` naming + `at_exit` cleanup (Q3.2)                    |
+| `git`                        | git wrapper via `Subprocess` (no `Sys.command`); incl. `reset_hard` for v2 rewind |
 | `gap_prompt`                 | gap-step prompt rendering                                                |
 | `diff_extract`               | unified-diff extraction + JSON-preface validation                        |
-| `gap_step`                   | one full iteration: select → prompt → diff → apply → verify → accept/reject |
+| `gap_step`                   | one direct-commit iteration: prompt → diff → apply-on-tree → verify → commit-or-reset (ADR-013 §2 step 3) |
+| `version`                    | per-version git lifecycle: branch / commit_accept / merge+tag / rollback (ADR-013 §2) |
+| `version_loop`               | top-level per-version driver: gap construction, retries, finalize        |
+| `version_finalize`           | audit-md + final manifest + version completion / rollback hand-off       |
+| `version_persist`            | `.k4k/version/<n>/` filesystem I/O                                       |
+| `backend_canned`             | test-only canned-response backend loaded from JSON via `K4K_STUB_RESPONSES` |
 | `sigint`                     | `Atomic.t` flag + safe-point check (NF1)                                 |
 | `convergence`                | terminator: gap empty → exit 0                                           |
 | `run_loop`                   | top-level loop with `--max-steps`/`--budget`, ETA window                 |

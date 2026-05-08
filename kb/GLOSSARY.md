@@ -61,7 +61,7 @@ An external executable that, given a target source tree and a focus list of prop
 The OCaml module inside `lib/` that satisfies `Verifier.S`. Per ADR-008, k4k ships exactly two: `Verifier_external` (the only production adapter — it spawns a configured executable per `external/verifier-protocol.md` and reads a JSON result) and `Verifier_stub` (test harness). Per-tool intelligence (alcotest output regexes, coqc exit-code interpretation, etc.) lives in the verifier executable itself, not in any k4k module.
 
 ### Gap-step
-One iteration of the harness loop: pick the highest-risk property in `G`, ask the agent for a patch, apply on a scratch branch, run the verifier, accept or reject. See `spec/algorithms.md#gap-step`.
+One iteration of the harness loop: pick the highest-risk property in `G`, ask the agent for a patch, apply directly to the working tree on the in-flight version branch, run the verifier, accept (commit `[k4k] establish <pid>`) or reject (`git reset --hard HEAD`). See `spec/algorithms.md#gap-step`. (Pre-v2 used a `k4k/gap/<id>/<ts>` scratch branch; that indirection is gone post v2-batch-4a.)
 
 ### Risk score
 A deterministic function mapping a property to `[0, 1]`. Used to pick the next gap-step's target. No agent input. See `spec/algorithms.md#risk-score`.

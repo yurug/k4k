@@ -88,7 +88,7 @@ If exit is 0 but the result file is missing, unparseable, or has an outcome inco
 - **Determinism is NOT required.** The backend is the stochastic component of k4k's stack. Determinism is preserved by the canonical-AST contract (ADR-005) and the two-run formalization protocol (`P18`).
 - **No interaction.** The backend MUST run non-interactively. No prompts on stdin. No TTY assumptions.
 - **No state retention.** The backend MUST treat each invocation as independent. Cross-call state lives in `.k4k/` (specifically `.k4k/agent-runs/<id>/`); the backend MAY consult `.k4k/` for context but MUST NOT mutate it.
-- **No side effects on the user's source tree.** Gap-step prompts authorize the agent to propose patches as text; *applying* the patch is the harness's job (via `Git.apply_diff` on a scratch branch). Backends that internally call edit-style tools (e.g. Claude Code's Edit tool) operate on a sandbox the backend itself manages, not on the user's tree.
+- **No side effects on the user's source tree.** Gap-step prompts authorize the agent to propose patches as text; *applying* the patch is the harness's job (via `Git.apply_diff` directly on the in-flight `k4k/version/<n>` branch per ADR-013 §2 step 3). Backends that internally call edit-style tools (e.g. Claude Code's Edit tool) operate on a sandbox the backend itself manages, not on the user's tree.
 
 ## Configuration in the interaction file
 

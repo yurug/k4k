@@ -40,7 +40,7 @@ All six checks pass; coverage report attached to the audit findings file.
 1. **Secrets quarantine (`NF5`)**: poison-canary `ANTHROPIC_API_KEY=POISON-CANARY` test triggers every error path; no occurrence of `POISON-CANARY` in any output stream or log file.
 2. **Subprocess invocation**: every external invocation uses `Unix.execvp` or higher-level wrapper; no `Sys.command`. Audit by `grep -r 'Sys.command' lib/` — must return empty.
 3. **State-confinement (`NF4`)**: full `strace` of an integration scenario; assert no writes to `/tmp`, `$HOME`, or any path outside `<file.k4k>`, `.k4k/`, and the source tree.
-4. **No untrusted code execution paths**: the agent is allowed to write into the *scratch git branch* tree, never into `.k4k/` or other repos.
+4. **No untrusted code execution paths**: the agent is allowed to write into the in-flight `k4k/version/<n>` branch tree (ADR-013 §2 step 3, v2 direct-commit), never into `.k4k/` or other repos.
 5. **Logs do not leak environment**: `grep -i "ANTHROPIC\|API_KEY\|TOKEN\|SECRET" .k4k/log.jsonl` returns empty after a clean run.
 6. **`.k4k/` permissions**: created with `0o755` for dirs, `0o644` for files; no `0o777`.
 

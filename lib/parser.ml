@@ -12,10 +12,6 @@ type frontmatter = {
   version : int;
   cls     : string;
   raw     : string;
-  verifier_command   : string list option;
-  verifier_timeout_s : int option;
-  backend_command    : string list option;
-  backend_timeout_s  : int option;
 }
 
 type interaction_file = {
@@ -43,19 +39,11 @@ let check_utf8 = Parser_utf8.check
    [Unstable] (not [E_format]). *)
 let empty_interaction_file =
   { raw         = "";
-    frontmatter = { version = 1; cls = "cli"; raw = "";
-                    verifier_command = None;
-                    verifier_timeout_s = None;
-                    backend_command = None;
-                    backend_timeout_s = None };
+    frontmatter = { version = 1; cls = "cli"; raw = "" };
     sections    = [] }
 
 let to_frontmatter (fm : Parser_frontmatter.fm) =
-  { version = fm.version; cls = fm.cls; raw = fm.raw;
-    verifier_command = fm.verifier_command;
-    verifier_timeout_s = fm.verifier_timeout_s;
-    backend_command = fm.backend_command;
-    backend_timeout_s = fm.backend_timeout_s }
+  { version = fm.version; cls = fm.cls; raw = fm.raw }
 
 let parse content =
   let content = Parser_utf8.strip_bom content in

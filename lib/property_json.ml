@@ -71,7 +71,6 @@ let to_yojson (p : Property.t) : Yojson.Safe.t =
     "evidence",      `List (List.map ref_to_yojson p.evidence);
     "risk_score",    `Float p.risk_score;
     "failure_count", `Int p.failure_count;
-    "blocked",       `Bool p.blocked;
     "source",        aspect_to_yojson p.source;
   ]
 
@@ -79,7 +78,6 @@ let of_yojson : Yojson.Safe.t -> Property.t = function
   | `Assoc fs ->
       let s = function `String s -> s | _ -> "" in
       let i = function `Int i -> i | _ -> 0 in
-      let b = function `Bool b -> b | _ -> false in
       let f = function `Float f -> f | `Int i -> float_of_int i | _ -> 0.0 in
       let assoc k = List.assoc_opt k fs in
       let id = match assoc "id" with Some v -> s v | None -> "" in
@@ -92,12 +90,11 @@ let of_yojson : Yojson.Safe.t -> Property.t = function
       let risk_score = match assoc "risk_score" with Some v -> f v | None -> 0.0 in
       let failure_count = match assoc "failure_count" with
         | Some v -> i v | None -> 0 in
-      let blocked = match assoc "blocked" with Some v -> b v | None -> false in
       let source = match assoc "source" with
         | Some v -> aspect_of_yojson v
         | None -> { aspect = ""; path = [] } in
       { Property.id; statement; status; evidence; risk_score;
-        failure_count; blocked; source }
+        failure_count; source }
   | _ -> raise (Error.K4k_error
                   (Error.E_state_corrupt "property: not an object"))
 

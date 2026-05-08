@@ -9,28 +9,12 @@
 
 type emit_fn = string -> Yojson.Safe.t -> unit
 
-(** Resolve the agent-invoke closure. Called ONCE at watcher startup;
-    the resulting closure is reused across every [try_run_version]
-    iteration so the canned backend's per-purpose queues persist
-    across the watcher's main loop (a fresh load on every iteration
-    would reset them, causing formalize to always return the first
-    canned payload regardless of how many versions have already
-    consumed responses). Production swaps in [Backend_external]. *)
+(** Resolve the agent-invoke closure ONCE at watcher startup;
+    delegated to [Backend_resolve.resolve] (audit-2026-05-08-axis6
+    H-3). The resulting closure is reused across every
+    [try_run_version] iteration. *)
 let resolve_invoke ~emit : Version_loop.agent_invoke =
-  match Sys.getenv_opt "K4K_STUB_RESPONSES" with
-  | None | Some "" ->
-      fun ~purpose:_ ~prompt:_ ~budget:_ ->
-        emit "agent.no_canned" (`Assoc []);
-        `Tool_error "no K4K_STUB_RESPONSES configured"
-  | Some path ->
-      (match Backend_canned.load_from_path path with
-       | Error msg ->
-           emit "agent.canned_load_error"
-             (`Assoc [ "error", `String msg ]);
-           fun ~purpose:_ ~prompt:_ ~budget:_ ->
-             `Tool_error ("canned load: " ^ msg)
-       | Ok t ->
-           Backend_canned.invoke t)
+  Backend_resolve.resolve ~emit
 
 let verifier_invoke ~k4k_dir ~d : Version_loop.verifier_run =
   let cfg = { Verifier_external.default_config with

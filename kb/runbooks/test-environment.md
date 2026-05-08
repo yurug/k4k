@@ -21,6 +21,30 @@ Test instrumentation only. None of these are part of the public CLI contract (`s
 
 ## Knobs
 
+### `K4K_BACKEND_COMMAND=<shell-style argv>`
+**Purpose:** in production, this is how the operator points the
+watcher at an agent backend conforming to
+`kb/external/backend-protocol.md`. The string is parsed by
+`Backend_resolve.split_command` (whitespace-separated; double-quoted
+segments group; `\"` escapes a quote inside a quoted segment; no
+`$VAR` / `~` expansion). The resulting argv is the leading prefix
+of every `Backend_external.invoke` call (k4k appends `--purpose`
+/ `--prompt-file` / `--budget` / `--output`).
+
+`K4K_BACKEND_COMMAND` is the OPERATOR-level seam. The user UX
+remains "edit the .k4k file"; the operator launches the watcher
+once with this env var set in their shell or systemd unit.
+**Default:** unset → `Backend_resolve` falls back to
+`K4K_STUB_RESPONSES`, then to the unconfigured-fallback closure
+that yields `Tool_error` on every call (the watcher logs
+`agent.unconfigured` once and continues polling).
+**When the binary itself reads this:** at watcher startup
+(`Backend_resolve.resolve`, called once per run from
+`Watcher_loop.run`).
+**Production effect:** this IS the production effect — the watcher
+cannot reach an external backend without it (or
+`K4K_STUB_RESPONSES` for tests).
+
 ### `K4K_LIVE=1`
 **Purpose:** opt into real `claude` and real `dune` invocations during a test run.
 **Default:** unset → `Backend_stub` and (when configured) `Verifier_stub` are used; `Backend_external` (against the `examples/backends/claude-code/` reference binary) and `Verifier_external` (against the `examples/verifiers/dune-ocaml/` reference binary, which runs real `dune`) are still used for any test that explicitly requests them (e.g. `S1_echo_first_run_e2e` always uses the reference verifier).

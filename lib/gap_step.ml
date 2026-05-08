@@ -179,7 +179,15 @@ let dispatch_response ~deps ~p ~prev_status ~prompt = function
 let step ~deps ~d ~current_summary ~prev_status ~property:p : outcome =
   Sigint.raise_if_needed ();
   preflight ~workdir:deps.workdir;
-  if p.Property.blocked || p.Property.failure_count >= 3 then begin
+  (* P6 — three-strikes guard. A property arriving here with
+     failure_count >= 3 has already been the subject of a
+     [Tradeoff] outcome upstream; the watcher's [reset_for_tier]
+     resets failure_count to 0 before any retry, so reaching this
+     branch indicates the version_loop is replaying a property
+     without the reset (a bug). [Blocked] preserves the safety
+     post-condition: never call the agent on a known-stuck
+     property. *)
+  if p.Property.failure_count >= 3 then begin
     log_outcome deps.logger "gap-step.blocked" p [];
     Blocked p
   end else

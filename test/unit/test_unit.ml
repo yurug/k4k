@@ -1824,8 +1824,8 @@ module PropT = struct
     let p2 = Property.bump_failure p1 in
     let p3 = Property.bump_failure p2 in
     Alcotest.(check int) "fc=3" 3 p3.failure_count;
-    Alcotest.(check bool) "blocked" true p3.blocked;
-    Alcotest.(check bool) "p1 not blocked" false p1.blocked
+    Alcotest.(check int) "fc=1 after one bump" 1 p1.failure_count;
+    Alcotest.(check int) "fc=2 after two bumps" 2 p2.failure_count
 
   let from_characterization_yields_ids () =
     let mk_arg n = {
@@ -2888,8 +2888,7 @@ module GST = struct
        | Tradeoff { property = q } ->
            bumped := q;
            Alcotest.(check int) "fc=3 after third strike" 3
-             q.failure_count;
-           Alcotest.(check bool) "blocked" true q.blocked
+             q.failure_count
        | _ -> Alcotest.fail "expected Tradeoff at third strike");
       (* Subsequent invocation short-circuits to Blocked. *)
       match Gap_step.step ~deps:(deps !bumped)
@@ -4045,7 +4044,7 @@ module VTT = struct
       } in
       let p = { Property.id = "P0"; statement = "x";
                 status = `Required; evidence = []; risk_score = 1.0;
-                failure_count = 0; blocked = false;
+                failure_count = 0;
                 source = { aspect = "goal"; path = ["goal"] }} in
       let prev_status = ref [] in
       let r = Version_tradeoff.drive_at_tier ~deps
@@ -4071,7 +4070,7 @@ module VTT = struct
       } in
       let p = { Property.id = "P0"; statement = "x";
                 status = `Required; evidence = []; risk_score = 1.0;
-                failure_count = 3; blocked = true;
+                failure_count = 3;
                 source = { aspect = "goal"; path = ["goal"] }} in
       let prev_status = ref [] in
       match Version_tradeoff.handle ~cfg ~v_number:1
@@ -4083,7 +4082,7 @@ module VTT = struct
   let reset_tier_clears_failure () =
     let p = { Property.id = "P0"; statement = "x";
               status = `Required; evidence = []; risk_score = 0.0;
-              failure_count = 3; blocked = true;
+              failure_count = 3;
               source = { aspect = "goal"; path = ["goal"] }} in
     let _ = p in
     (* The reset is internal; we exercise via [handle] above. This
@@ -4248,6 +4247,68 @@ module WPidT = struct
   ]
 end
 
+(* ---------------- Backend_resolve (audit axis 6 H-3) ---------------- *)
+module BRT = struct
+  let split_simple () =
+    Alcotest.(check (list string)) "simple"
+      ["a"; "b"; "c"] (Backend_resolve.split_command "a b c")
+
+  let split_quoted () =
+    Alcotest.(check (list string)) "quoted with spaces"
+      ["claude_code_backend"; "/path with spaces/x"]
+      (Backend_resolve.split_command
+         {|claude_code_backend "/path with spaces/x"|})
+
+  let split_quoted_escape () =
+    Alcotest.(check (list string)) "backslash inside quotes"
+      ["a"; "b\"c"]
+      (Backend_resolve.split_command {|a "b\"c"|})
+
+  let split_empty_inputs () =
+    Alcotest.(check (list string)) "empty" [] (Backend_resolve.split_command "");
+    Alcotest.(check (list string)) "ws-only" []
+      (Backend_resolve.split_command "   \t  ")
+
+  let split_collapses_whitespace () =
+    Alcotest.(check (list string)) "multi-space"
+      ["a"; "b"; "c"]
+      (Backend_resolve.split_command "  a   b\tc  ")
+
+  let resolve_unconfigured_returns_tool_error () =
+    let saved_stub = Sys.getenv_opt "K4K_STUB_RESPONSES" in
+    let saved_cmd  = Sys.getenv_opt "K4K_BACKEND_COMMAND" in
+    Unix.putenv "K4K_STUB_RESPONSES" "";
+    Unix.putenv "K4K_BACKEND_COMMAND" "";
+    let emitted = ref [] in
+    let emit ev _ = emitted := ev :: !emitted in
+    let invoke = Backend_resolve.resolve ~emit in
+    let r = invoke ~purpose:`Formalization ~prompt:"x" ~budget:100 in
+    (match r with
+     | `Tool_error msg ->
+         Alcotest.(check bool) "msg names the gap" true
+           (Astring.String.is_infix ~affix:"no agent backend" msg)
+     | _ -> Alcotest.fail "expected Tool_error");
+    Alcotest.(check bool) "agent.unconfigured emitted" true
+      (List.mem "agent.unconfigured" !emitted);
+    (match saved_stub with
+     | Some v -> Unix.putenv "K4K_STUB_RESPONSES" v
+     | None -> Unix.putenv "K4K_STUB_RESPONSES" "");
+    (match saved_cmd with
+     | Some v -> Unix.putenv "K4K_BACKEND_COMMAND" v
+     | None -> Unix.putenv "K4K_BACKEND_COMMAND" "")
+
+  let tests = [
+    Alcotest.test_case "split_command_simple" `Quick split_simple;
+    Alcotest.test_case "split_command_quoted" `Quick split_quoted;
+    Alcotest.test_case "split_command_quoted_escape" `Quick split_quoted_escape;
+    Alcotest.test_case "split_command_empty_inputs" `Quick split_empty_inputs;
+    Alcotest.test_case "split_command_collapses_whitespace" `Quick
+      split_collapses_whitespace;
+    Alcotest.test_case "resolve_unconfigured_returns_tool_error" `Quick
+      resolve_unconfigured_returns_tool_error;
+  ]
+end
+
 (* ---------- Property-prefixed tests (audit-2026-05-08-axis1 H1, H2) ---------- *)
 module PrefixedT = struct
   (* P12 — file ownership: cotype mediates concurrent writes; user
@@ -4328,7 +4389,7 @@ module PrefixedT = struct
       } in
       let p = { Property.id = "P0"; statement = "x";
                 status = `Required; evidence = []; risk_score = 1.0;
-                failure_count = 0; blocked = false;
+                failure_count = 0;
                 source = { aspect = "goal"; path = ["goal"] }} in
       let prev_status = ref [] in
       (* Budget=0 exits before the first agent call → cannot
@@ -4481,5 +4542,6 @@ let () =
       "Version_tradeoff", VTT.tests;
       "Version_user_edits", VUET.tests;
       "Watcher_pid", WPidT.tests;
+      "Backend_resolve", BRT.tests;
       "Prefixed",   PrefixedT.tests;
     ]

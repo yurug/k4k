@@ -36,9 +36,13 @@ type t = {
   evidence      : artefact_ref list;
   risk_score    : float;
   failure_count : int;
-  blocked       : bool;
   source        : aspect_ref;
 }
+(** v2 batch 11 (audit-axis5 M1): the prior [blocked : bool] field
+    was a redundant mirror of [failure_count >= 3]. Dropped — the
+    only meaningful 3-strike state is "tradeoff awaited", and that
+    is signalled at the [Gap_step.outcome] / [Tradeoff_flow] level,
+    not by stuffing a flag into the property record. *)
 
 (** [risk_score p] = severity * uncertainty * blast_radius per
     [algorithms.md#risk-score]. Pure; no agent input.
@@ -56,10 +60,11 @@ val regen_risk : t -> t
     @invariant P17 — selection is deterministic over inputs. *)
 val argmax_lex : t list -> t option
 
-(** [bump_failure p] increments [failure_count]; marks [blocked]
-    once the count reaches 3.
+(** [bump_failure p] increments [failure_count]. Reaching 3 is the
+    "three-strikes" signal that [Gap_step] turns into a [Tradeoff]
+    outcome.
 
-    @invariant P6 — three-strikes-then-blocked. *)
+    @invariant P6 — three-strikes-then-tradeoff. *)
 val bump_failure : t -> t
 
 (** [with_status p st] sets [p.status] to [st] and zeroes the cached
@@ -82,7 +87,6 @@ val make :
   ?status:status ->
   ?evidence:artefact_ref list ->
   ?failure_count:int ->
-  ?blocked:bool ->
   unit -> t
 
 (** [statement_of_aspect d a] derives a one-sentence claim from an

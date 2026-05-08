@@ -27,15 +27,15 @@ type section = {
   begin_line   : int;                 (* 1-based line of the heading *)
 }
 
-(** Parsed frontmatter — fields k4k consumes from the YAML head. *)
+(** Parsed frontmatter — only the two fields v2 honors per ADR-011 /
+    [kb/spec/config-and-formats.md]. The verifier command lives on
+    [Characterization.verifier_command] (the agent emits it,
+    ADR-012); the backend is configured at the operator level via
+    [K4K_BACKEND_COMMAND]. *)
 type frontmatter = {
   version     : int;
   cls         : string;               (* the [class] value, e.g. "cli" *)
   raw         : string;               (* the bytes between the [---] fences *)
-  verifier_command   : string list option;  (* k4k.verifier.command *)
-  verifier_timeout_s : int option;          (* k4k.verifier.timeout_s *)
-  backend_command    : string list option;  (* k4k.backend.command *)
-  backend_timeout_s  : int option;          (* k4k.backend.timeout_s *)
 }
 
 (** A parsed interaction file. *)

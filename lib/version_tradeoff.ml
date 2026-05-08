@@ -50,7 +50,7 @@ let propose ~cfg ~v_number ?cotype p reason =
   | _ -> None
 
 let reset_for_tier (p : Property.t) =
-  { p with failure_count = 0; blocked = false; status = `Required }
+  { p with failure_count = 0; status = `Required }
 
 let summarize_s prev =
   let n = List.length prev in

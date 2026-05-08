@@ -1,10 +1,13 @@
 (** Internal hand-written YAML frontmatter scanner used by [Parser].
 
-    Extracts the fields k4k actually consumes:
-    - [k4k.version], [class] — required
-    - [k4k.verifier.command] — list of strings, required for run flow
-    - [k4k.verifier.timeout_s] — positive int, optional
-    Other YAML constructs are tolerated and ignored.
+    Per ADR-011 / kb/spec/config-and-formats.md §107-111, the v2
+    frontmatter exposes only [k4k.version] and [class]. Pre-v2 keys
+    like [k4k.verifier.command] / [k4k.backend.command] are no longer
+    extracted (audit-2026-05-08-axis5 H2): the verifier command is
+    carried on [Characterization.verifier_command] (ADR-012 §1, the
+    agent emits it), and the backend is configured at the operator
+    level via [K4K_BACKEND_COMMAND]. Files that still carry the old
+    keys parse cleanly — the keys are ignored, no error.
 *)
 
 type fm = {
@@ -12,10 +15,6 @@ type fm = {
   cls : string;
   raw : string;
   after : int;
-  verifier_command   : string list option;
-  verifier_timeout_s : int option;
-  backend_command    : string list option;
-  backend_timeout_s  : int option;
 }
 
 let raise_format ~line ~col reason =
@@ -121,21 +120,6 @@ let find_subblock body parent_key =
   in
   find_parent [] 0 lines
 
-let extract_subblock_cmd_and_timeout body key =
-  match find_subblock body key with
-  | None -> None, None
-  | Some sub ->
-      let cmd = match find_field sub "command" with
-        | Some raw -> parse_inline_list raw
-        | None -> None
-      in
-      let to_s = int_field sub "timeout_s" in
-      cmd, to_s
-
-let extract_verifier body = extract_subblock_cmd_and_timeout body "verifier"
-
-let extract_backend body = extract_subblock_cmd_and_timeout body "backend"
-
 let parse raw =
   if not (String.length raw >= 4 && String.sub raw 0 4 = "---\n") then
     raise_format ~line:1 ~col:1 "missing leading '---' frontmatter fence";
@@ -156,8 +140,4 @@ let parse raw =
       (Error.E_version { found = version; supported = supported_versions }));
   if cls <> "cli" then
     raise (Error.K4k_error (Error.E_class_unsupported cls));
-  let verifier_command, verifier_timeout_s = extract_verifier body in
-  let backend_command, backend_timeout_s = extract_backend body in
-  { version; cls; raw = body; after = close_at + 5;
-    verifier_command; verifier_timeout_s;
-    backend_command; backend_timeout_s }
+  { version; cls; raw = body; after = close_at + 5 }

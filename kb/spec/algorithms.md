@@ -36,7 +36,10 @@ main(file.k4k):
     ensure_git_repo(dirname file)       # git init if not a work tree
     ensure_toolchain("cotype", "git")   # ADR-012 §4
     Watcher_pid.acquire(.k4k/)          # ADR-011 §2: single instance per file
-  agent_invoke = Watcher_dev.resolve_invoke()
+  agent_invoke = Backend_resolve.resolve()
+                                         # 1. K4K_STUB_RESPONSES   (test)
+                                         # 2. K4K_BACKEND_COMMAND  (production)
+                                         # 3. unconfigured fallback
                                          # ALLOCATED ONCE; queues persist
   loop until SIGINT or test-flag exit:
     if user_directives_in_file include `request: rollback`:

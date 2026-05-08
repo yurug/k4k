@@ -865,6 +865,62 @@ let p22b_v1_to_v2_picks_up_user_edits () =
       Alcotest.(check bool) "version.start fires twice" true
         (count_substr so "\"event\":\"version.start\"" = 2)))
 
+(* ---------------- Backend_resolve production wiring (axis 6 H-3) ----- *)
+
+let backend_resolve_uses_external_when_command_set () =
+  with_cotype (fun () ->
+    with_workdir_and_git (fun dir ->
+      let f = Filename.concat dir "in.k4k" in
+      copy_file (fixture_path "echo-upper.k4k") f;
+      let _ = K4k.Git.commit_all ~cwd:dir ~message:"add in.k4k" in
+      (* Plant a no-op fake-claude-backend wrapper so resolve_invoke
+         actually wires Backend_external without hitting the API.
+         This proves the resolve path completes cleanly; no version
+         is attempted under --exit-on-stable. *)
+      let here = Sys.getcwd () in
+      let rec find_bin d =
+        let cand = Filename.concat d
+          "_build/install/default/bin/claude_code_backend" in
+        if Sys.file_exists cand then cand
+        else
+          let p = Filename.dirname d in
+          if p = d then failwith "claude_code_backend not found"
+          else find_bin p
+      in
+      let backend_bin = find_bin here in
+      let mock = Filename.concat dir "mock.json" in
+      write_file mock
+        {|{"result":{"text":""},"usage":{"input_tokens":0,"output_tokens":0}}|};
+      let env = [
+        ("K4K_BACKEND_COMMAND",
+         Printf.sprintf "%s --mock-response %s" backend_bin mock);
+      ] in
+      let (_code, so, _se) = run_capture_with_env
+        ~k4k_args:["--exit-on-stable"; "in.k4k"]
+        ~cwd:dir ~env () in
+      Alcotest.(check bool) "agent.external_configured emitted" true
+        (Astring.String.is_infix ~affix:"agent.external_configured" so);
+      Alcotest.(check bool) "agent.unconfigured NOT emitted" false
+        (Astring.String.is_infix ~affix:"agent.unconfigured" so)))
+
+let backend_resolve_falls_back_to_unconfigured () =
+  with_cotype (fun () ->
+    with_workdir_and_git (fun dir ->
+      let f = Filename.concat dir "in.k4k" in
+      copy_file (fixture_path "echo-upper.k4k") f;
+      let _ = K4k.Git.commit_all ~cwd:dir ~message:"add in.k4k" in
+      (* Neither K4K_STUB_RESPONSES nor K4K_BACKEND_COMMAND set.
+         Watcher should emit agent.unconfigured at startup, then
+         exit cleanly under --exit-on-stable. *)
+      let env = [] in
+      let (_code, so, _se) = run_capture_with_env
+        ~k4k_args:["--exit-on-stable"; "in.k4k"]
+        ~cwd:dir ~env () in
+      Alcotest.(check bool) "agent.unconfigured emitted" true
+        (Astring.String.is_infix ~affix:"agent.unconfigured" so);
+      Alcotest.(check bool) "agent.external_configured NOT emitted" false
+        (Astring.String.is_infix ~affix:"agent.external_configured" so)))
+
 (* ---------------- claude-code backend example ---------------- *)
 
 let claude_code_bin () =
@@ -1010,6 +1066,14 @@ let () =
         Alcotest.test_case
           "P1_user_section_byte_equality_under_save" `Quick
           p1_user_section_byte_equality_under_save;
+      ];
+      "Backend_resolve", [
+        Alcotest.test_case
+          "Backend_resolve_uses_external_when_command_set" `Slow
+          backend_resolve_uses_external_when_command_set;
+        Alcotest.test_case
+          "Backend_resolve_falls_back_to_unconfigured" `Slow
+          backend_resolve_falls_back_to_unconfigured;
       ];
       "claude_code_backend", [
         Alcotest.test_case "claude_code_emits_ok_for_well_formed_response"

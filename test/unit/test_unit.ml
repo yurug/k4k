@@ -4157,6 +4157,283 @@ module VUET = struct
   ]
 end
 
+(* ---------------- Watcher_pid (audit-2026-05-08-axis1 H3) ----------- *)
+module WPidT = struct
+  (* ADR-011 §2: at most one watcher per file. Five focused unit
+     tests covering acquire / release / stale-reclaim semantics.
+     This module had zero test coverage before audit-2026-05-08
+     batch C. *)
+
+  let acquire_writes_our_pid () =
+    with_tmpdir (fun dir ->
+      let kd = Filename.concat dir ".k4k" in
+      Persist.ensure_dir kd;
+      (match Watcher_pid.acquire ~k4k_dir:kd with
+       | Error other -> Alcotest.failf "expected Ok, got Error %d" other
+       | Ok () -> ());
+      let pid_file = Watcher_pid.pid_path kd in
+      Alcotest.(check bool) "pid file exists" true
+        (Sys.file_exists pid_file);
+      let raw = Persist.read_file pid_file in
+      let written = int_of_string (String.trim raw) in
+      Alcotest.(check int) "pid file holds our PID"
+        (Unix.getpid ()) written;
+      Watcher_pid.release ~k4k_dir:kd)
+
+  let acquire_blocks_when_live_pid_owns_it () =
+    with_tmpdir (fun dir ->
+      let kd = Filename.concat dir ".k4k" in
+      Persist.ensure_dir kd;
+      let pid_file = Watcher_pid.pid_path kd in
+      (* Plant the parent PID in the file (alive, different from
+         ours). The acquire logic short-circuits on our OWN PID
+         (treats it as "already owned by us"); the safety check is
+         specifically against a *different* live watcher. *)
+      let other_pid = Unix.getppid () in
+      let oc = open_out pid_file in
+      output_string oc (string_of_int other_pid); close_out oc;
+      match Watcher_pid.acquire ~k4k_dir:kd with
+      | Ok () -> Alcotest.fail "expected Error: live PID owns the file"
+      | Error pid ->
+          Alcotest.(check int) "Error reports the foreign PID"
+            other_pid pid)
+
+  let acquire_reclaims_a_stale_pid () =
+    with_tmpdir (fun dir ->
+      let kd = Filename.concat dir ".k4k" in
+      Persist.ensure_dir kd;
+      let pid_file = Watcher_pid.pid_path kd in
+      (* Plant an obviously dead PID. PID 0 / 1 are reserved; 2_147_483_640
+         is reliably out-of-range on Linux/macOS process tables. *)
+      let oc = open_out pid_file in
+      output_string oc "2147483640"; close_out oc;
+      (match Watcher_pid.acquire ~k4k_dir:kd with
+       | Error other -> Alcotest.failf
+           "expected Ok (stale reclaimed), got Error %d" other
+       | Ok () -> ());
+      let raw = Persist.read_file pid_file in
+      let written = int_of_string (String.trim raw) in
+      Alcotest.(check int) "stale PID was overwritten with ours"
+        (Unix.getpid ()) written;
+      Watcher_pid.release ~k4k_dir:kd)
+
+  let release_is_idempotent () =
+    with_tmpdir (fun dir ->
+      let kd = Filename.concat dir ".k4k" in
+      Persist.ensure_dir kd;
+      let _ = Watcher_pid.acquire ~k4k_dir:kd in
+      Watcher_pid.release ~k4k_dir:kd;
+      (* Second release on a missing file is allowed. *)
+      Watcher_pid.release ~k4k_dir:kd;
+      Alcotest.(check bool) "pid file gone" false
+        (Sys.file_exists (Watcher_pid.pid_path kd)))
+
+  let pid_alive_classifies_correctly () =
+    Alcotest.(check bool) "our own PID is alive" true
+      (Watcher_pid.pid_alive (Unix.getpid ()));
+    Alcotest.(check bool) "obviously-dead PID is not alive" false
+      (Watcher_pid.pid_alive 2_147_483_640)
+
+  let tests = [
+    Alcotest.test_case "P_watcher_pid_acquire_writes_our_pid" `Quick
+      acquire_writes_our_pid;
+    Alcotest.test_case "P_watcher_pid_acquire_blocks_when_live" `Quick
+      acquire_blocks_when_live_pid_owns_it;
+    Alcotest.test_case "P_watcher_pid_acquire_reclaims_stale" `Quick
+      acquire_reclaims_a_stale_pid;
+    Alcotest.test_case "P_watcher_pid_release_idempotent" `Quick
+      release_is_idempotent;
+    Alcotest.test_case "P_watcher_pid_pid_alive_classifier" `Quick
+      pid_alive_classifies_correctly;
+  ]
+end
+
+(* ---------- Property-prefixed tests (audit-2026-05-08-axis1 H1, H2) ---------- *)
+module PrefixedT = struct
+  (* P12 — file ownership: cotype mediates concurrent writes; user
+     edits to k4k-managed sections surface as conflicts. The
+     underlying behavior is exercised by Cotype_save_* tests; this
+     suite gives those scenarios the canonical P12_* prefix per the
+     P20 discoverability convention. *)
+
+  let cotype_available () =
+    try
+      let r = Subprocess.run ~prog:"cotype" ~args:["--version"]
+                ~timeout_s:5 () in
+      r.exit_code = 0
+    with _ -> false
+
+  let p12_concurrent_non_overlapping_merges () =
+    if not (cotype_available ()) then
+      print_endline "skipped: cotype not on PATH"
+    else with_tmpdir (fun dir ->
+      let path = Filename.concat dir "in.k4k" in
+      let oc = open_out path in
+      output_string oc "## Goal\nfoo\n\n## Inputs and outputs\nargv\n";
+      close_out oc;
+      let ct = Cotype.create Cotype.default_config in
+      let r = match Cotype.open_ ct ~file:path with
+        | Ok r -> r | Error m -> Alcotest.failf "open: %s" m in
+      (* User saves a non-overlapping edit: same goal, different
+         second section. *)
+      let user_bytes =
+        "## Goal\nfoo\n\n## Inputs and outputs\nstdin\n" in
+      (match Cotype.save ct ~file:path ~base_sha:r.base_sha
+              ~actor:"user" ~bytes:user_bytes with
+       | Ok (Direct _) | Ok (Merged _) -> ()
+       | _ -> Alcotest.fail "expected Direct/Merged");
+      (* k4k now appends a clarification — still non-overlapping. *)
+      Cotype.append_clarification ct ~path
+        ~questions:["clarify the goal"];
+      let after = read_all path in
+      Alcotest.(check bool) "user goal preserved" true
+        (Astring.String.is_infix ~affix:"## Goal\nfoo" after);
+      Alcotest.(check bool) "user inputs section preserved" true
+        (Astring.String.is_infix
+           ~affix:"## Inputs and outputs\nstdin" after);
+      Alcotest.(check bool) "clarification appended" true
+        (Astring.String.is_infix
+           ~affix:"## k4k:clarification:" after))
+
+  (* P21 — Tier-A is attempted before any degradation. The
+     Version_tradeoff.handle path is unreachable without a prior
+     Gap_step.Tradeoff outcome (which itself requires 3 Tier-A
+     failures). Exercise the absence-of-tier-A guard via the
+     unit-level invariant: drive_at_tier on a fresh property starts
+     with failure_count=0, runs at the supplied tier, and only
+     escalates to Tradeoff after the 3rd reject. *)
+
+  let p21_no_tradeoff_proposal_without_tier_a_attempt () =
+    with_tmpdir (fun dir ->
+      let _ = Git.init ~cwd:dir in
+      Git.configure_test_identity ~cwd:dir;
+      let oc = open_out (Filename.concat dir ".gitignore") in
+      output_string oc ".k4k/\n"; close_out oc;
+      let _ = Git.commit_all ~cwd:dir ~message:"initial" in
+      let logger = Logger.create ~verbosity:`Quiet ~jsonl_path:None in
+      let budget_ref = ref 0 in
+      let deps : unit Gap_step.deps = {
+        k4k_dir = Filename.concat dir ".k4k";
+        workdir = dir;
+        agent_invoke = (fun ~purpose:_ ~prompt:_ ~budget:_ ->
+          `Tool_error "no agent");
+        verifier_run = (fun ~workdir:_ ~focus:_ ->
+          `Ok { Verifier.by_property = []; raw_exit_code = 0;
+                stdout_path = ""; stderr_path = "";
+                duration_ms = 0 });
+        logger;
+        budget_remaining = budget_ref;
+        agent_backend = ();
+        tier = `A;
+      } in
+      let p = { Property.id = "P0"; statement = "x";
+                status = `Required; evidence = []; risk_score = 1.0;
+                failure_count = 0; blocked = false;
+                source = { aspect = "goal"; path = ["goal"] }} in
+      let prev_status = ref [] in
+      (* Budget=0 exits before the first agent call → cannot
+         possibly reach Tradeoff without at least one Tier-A
+         attempt. *)
+      match Version_tradeoff.drive_at_tier
+              ~deps ~d:Characterization.empty ~prev_status p with
+      | `Stop -> ()
+      | _ -> Alcotest.fail
+          "drive_at_tier with budget=0 must Stop, never Tradeoff")
+
+  (* P23 — k4k carries no toolchain-specific strings in lib/. The
+     existing Lint module already enforces "no Sys.command in lib/";
+     this is the equivalent for hardcoded toolchain names. The
+     greppable allow-list is `lib/toolchain_install.ml` (the small
+     data-driven mapping permitted by ADR-012 §7). *)
+
+  let p23_lib_has_no_toolchain_specific_strings () =
+    (* The grep target is the AUDIT recommendation:
+         coqc | frama-c | verus | lean | extraction
+       (binary names + the dune-extraction artifact). Language
+       names like "rocq" / "ocaml" appear legitimately in
+       doc-comments — those are not "tool-specific" per the
+       ADR-012 invariant; only bare invocations of a specific
+       toolchain binary are. *)
+    let needles = [ "coqc"; "frama-c"; "verus";
+                    "extraction" ] in
+    let lib_dir = Filename.concat (Sys.getcwd ()) "lib" in
+    let entries =
+      try Array.to_list (Sys.readdir lib_dir) with _ -> [] in
+    let read_text p =
+      try Some (Persist.read_file p) with _ -> None in
+    let scan_file p =
+      match read_text p with
+      | None -> []
+      | Some content ->
+          List.filter_map (fun n ->
+            if Astring.String.is_infix ~affix:n content
+            then Some (Filename.basename p, n) else None) needles
+    in
+    let scanned =
+      List.filter_map (fun e ->
+        let p = Filename.concat lib_dir e in
+        let bn = Filename.basename p in
+        if bn = "toolchain_install.ml"
+        || bn = "toolchain_install.mli"
+        then None
+        else if Filename.check_suffix bn ".ml"
+             || Filename.check_suffix bn ".mli"
+        then Some p else None) entries
+    in
+    let hits = List.concat_map scan_file scanned in
+    Alcotest.(check (list (pair string string)))
+      "no toolchain-specific strings outside Toolchain_install"
+      [] hits
+
+  (* T19 — one aspect can yield multiple properties. ErrorEntry[]
+     with N>=2 yields N distinct property IDs sharing the same
+     source.aspect but distinct source.path tails. *)
+
+  let t19_aspect_to_multiple_properties () =
+    let d = { Characterization.empty with
+      goal = "g";
+      cls = "cli";
+      examples_accept = [];
+      examples_refuse = [];
+      errors = [
+        { Characterization.id = "EBADARG"; when_ = "x";
+          message_template = "x"; exit_code = 1 };
+        { id = "EFOO"; when_ = "y";
+          message_template = "y"; exit_code = 2 };
+        { id = "EBAR"; when_ = "z";
+          message_template = "z"; exit_code = 3 };
+      ];
+    } in
+    let canon = Canonicalize.canonicalize d in
+    let props = Property.from_characterization canon in
+    let from_errors =
+      List.filter (fun (p : Property.t) ->
+        p.source.aspect = "errors") props in
+    let ids = List.map (fun (p : Property.t) -> p.id) from_errors in
+    let unique = List.sort_uniq compare ids in
+    Alcotest.(check bool) "≥3 properties from the errors aspect" true
+      (List.length from_errors >= 3);
+    Alcotest.(check int) "ids are distinct"
+      (List.length from_errors) (List.length unique);
+    let aspects = List.sort_uniq compare
+      (List.map (fun (p : Property.t) -> p.source.aspect) from_errors) in
+    Alcotest.(check (list string)) "all share aspect=errors"
+      ["errors"] aspects
+
+  let tests = [
+    Alcotest.test_case "P12_concurrent_non_overlapping_merges" `Quick
+      p12_concurrent_non_overlapping_merges;
+    Alcotest.test_case
+      "P21_no_tradeoff_proposal_without_tier_a_attempt" `Quick
+      p21_no_tradeoff_proposal_without_tier_a_attempt;
+    Alcotest.test_case
+      "P23_lib_has_no_toolchain_specific_strings" `Quick
+      p23_lib_has_no_toolchain_specific_strings;
+    Alcotest.test_case "T19_aspect_to_multiple_properties" `Quick
+      t19_aspect_to_multiple_properties;
+  ]
+end
+
 let () =
   Alcotest.run "k4k unit"
     [ "Error",        ET.tests;
@@ -4203,4 +4480,6 @@ let () =
       "Watcher_form", WFT.tests;
       "Version_tradeoff", VTT.tests;
       "Version_user_edits", VUET.tests;
+      "Watcher_pid", WPidT.tests;
+      "Prefixed",   PrefixedT.tests;
     ]

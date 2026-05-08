@@ -128,6 +128,23 @@ completed versions.
 - **No knob bypasses a security or correctness property.** `K4K_FAULT_INJECT_ENOSPC` triggers a real rollback path that already exists for genuine ENOSPC; `K4K_TEST_TRACE_WRITES` only observes writes; the others modify only stub-or-test behavior.
 - **The set is closed.** Adding a new `K4K_*` knob requires updating this file *first*. No silently-honored env vars.
 
+## Code-coverage recipe
+
+`lib/dune` declares `(instrumentation (backend bisect_ppx))`; the
+opam manifest carries `bisect_ppx` as a `with-test` dependency.
+Coverage is opt-in (does not affect normal `dune test` runs):
+
+```bash
+opam install bisect_ppx
+dune runtest --instrument-with bisect_ppx --force
+bisect-ppx-report html             # → _coverage/index.html
+bisect-ppx-report summary          # one-line per-module digest
+```
+
+The Phase-5 audit-checklist target is **≥ 80% line coverage on
+`lib/`**. Re-run after every batch that adds significant
+production code.
+
 ## Why these are documented in the meta KB (`kb/`) rather than per-target (`.k4k/`)
 
 These are knobs of **k4k itself**. The interaction file's user does not see or care about them. They are the responsibility of contributors maintaining k4k.

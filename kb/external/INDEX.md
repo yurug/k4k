@@ -24,7 +24,7 @@ After ADR-008 (verifier-protocol retrofit) and ADR-009 (backend-protocol retrofi
 | The wire protocol any agent backend must implement                     | `backend-protocol.md`       | What command-line shape? What JSON result schema? Exit codes? Budgets?  |
 | The wire protocol any verifier must implement                          | `verifier-protocol.md`      | What command-line shape? What JSON result schema? Exit codes?           |
 | The runtime contract for cotype (interaction-file concurrency dep)     | `cotype.md`                 | What CLI commands does k4k call? What exit codes? When does it conflict? |
-| The toolchain-install registry (ADR-012)                                | `toolchain-install.md` (TBD)| Which binary names map to which user-scoped package managers? When does k4k auto-install vs prompt? |
+| The toolchain-install registry (ADR-012)                                | `toolchain-install.md`      | Which binary names map to which user-scoped package managers? When does k4k auto-install vs prompt? |
 | Architectural guidance for backends targeting weak local models        | `ollama.md`                 | What capability budget do prompts target? Why does this matter?         |
 
 ## Files
@@ -32,6 +32,7 @@ After ADR-008 (verifier-protocol retrofit) and ADR-009 (backend-protocol retrofi
 - `backend-protocol.md` — the agent-backend wire protocol (ADR-009)
 - `verifier-protocol.md` — the verifier wire protocol (ADR-008)
 - `cotype.md` — runtime contract for the cotype CLI (interaction-file concurrency dep, ADR-010)
+- `toolchain-install.md` — registry of binary→user-scoped-package-manager mappings (ADR-012)
 - `ollama.md` — architectural guidance for prompt design under the weakness profile
 
 ## Reading order

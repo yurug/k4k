@@ -259,24 +259,31 @@ let s5_rollback_aborts_in_flight_version () =
     Alcotest.(check bool) "branch deleted on rollback" false
       (K4k.Git.branch_exists ~cwd:dir ~name:v.branch_name))
 
-(* --- S1 v2 batch 3: drive the watcher to v1 completion --- *)
+(* --- S1 v2 batch 4a: drive the watcher to v1 completion against a
+   real backend (canned-responses) + real verifier (synthetic stub).
+   K4K_TEST_D_PATH stays as test scaffolding for batch 4b to replace
+   with full formalization. *)
 
-(* Synthesize a minimal [Characterization.t] JSON for K4K_TEST_D_PATH.
-   We use [Characterization_json.to_yojson] so the canonical hash and
-   structure match what the runtime canonicalizer would produce. *)
-let write_d_path dir =
-  let d = { K4k.Characterization.empty with
-            goal = "echo argv with optional uppercasing";
-            cls = "cli";
-            language = "ocaml";
-            verifier_command = ["./_verifier.sh"];
-          } in
+(* Build a [Characterization.t] for the test, write it as canonical
+   JSON for K4K_TEST_D_PATH, and return the path AND the property IDs
+   the gap loop will iterate over. *)
+let build_d ~verifier_cmd =
+  { K4k.Characterization.empty with
+    goal = "echo argv with optional uppercasing";
+    cls = "cli";
+    language = "ocaml";
+    verifier_command = verifier_cmd; }
+
+let write_d_path dir verifier_cmd =
+  let d = build_d ~verifier_cmd in
   let canon = K4k.Canonicalize.canonicalize d in
   let bytes = K4k.Canonical_json.to_string
                 (K4k.Characterization_json.to_yojson canon) in
   let p = Filename.concat dir "d-spec.json" in
   let oc = open_out p in output_string oc bytes; close_out oc;
-  p
+  let ids = List.map (fun (p : K4k.Property.t) -> p.id)
+    (K4k.Property.from_characterization canon) in
+  p, ids
 
 let read_file p =
   let ic = open_in p in
@@ -284,9 +291,44 @@ let read_file p =
   let b = Bytes.create n in really_input ic b 0 n; close_in ic;
   Bytes.unsafe_to_string b
 
-let run_capture_with_d ~k4k_args ~cwd ~d_path () =
-  run_capture ~env:[("K4K_TEST_D_PATH", d_path)]
-    ~k4k_args ~cwd ()
+(* Compose a unified-diff response that creates a unique source file
+   per call. The synthetic verifier doesn't inspect content, so the
+   diff just needs to apply cleanly and survive the commit. *)
+let canned_diff_for n =
+  Printf.sprintf
+    "```json\n{\"files\":[\"src/p%02d.ml\"]}\n```\n\
+     ```diff\n\
+     diff --git a/src/p%02d.ml b/src/p%02d.ml\n\
+     new file mode 100644\n\
+     --- /dev/null\n\
+     +++ b/src/p%02d.ml\n\
+     @@ -0,0 +1 @@\n\
+     +let () = ignore %d\n\
+     ```\n" n n n n n
+
+let write_canned_responses ~path ~n_props =
+  let entries = List.init n_props (fun i ->
+    `Assoc [
+      "purpose", `String "Gap_step";
+      "text", `String (canned_diff_for (i + 1));
+    ]) in
+  (* Add a few extra entries to absorb any rejection-retry — the
+     loop runs each property up to 3 times. *)
+  let extras = List.init (n_props * 2) (fun i ->
+    `Assoc [
+      "purpose", `String "Gap_step";
+      "text", `String (canned_diff_for (n_props + i + 1));
+    ]) in
+  let bytes = Yojson.Safe.to_string (`List (entries @ extras)) in
+  let oc = open_out path in
+  output_string oc bytes; close_out oc
+
+let copy_synthetic_verifier ~src ~dst =
+  copy_file src dst;
+  Unix.chmod dst 0o755
+
+let run_capture_with_env ~k4k_args ~cwd ~env () =
+  run_capture ~env ~k4k_args ~cwd ()
 
 let s1_watcher_drives_v1_to_completion () =
   with_cotype (fun () ->
@@ -294,15 +336,41 @@ let s1_watcher_drives_v1_to_completion () =
       let f = Filename.concat dir "in.k4k" in
       copy_file (fixture_path "echo-upper.k4k") f;
       let _ = K4k.Git.commit_all ~cwd:dir ~message:"add in.k4k" in
-      let d_path = write_d_path dir in
-      let (_code, so, se) = run_capture_with_d
+      (* Drop the synthetic verifier into the workdir. *)
+      let verifier_dst = Filename.concat dir "_verifier.sh" in
+      let here = Sys.getcwd () in
+      let rec find_synth d =
+        let cand = Filename.concat d
+          "test/conformance/fixtures/synthetic-verifier.sh" in
+        if Sys.file_exists cand then cand
+        else
+          let p = Filename.dirname d in
+          if p = d then failwith "synthetic-verifier.sh not found"
+          else find_synth p
+      in
+      copy_synthetic_verifier ~src:(find_synth here) ~dst:verifier_dst;
+      let d_path, pids = write_d_path dir ["./_verifier.sh"] in
+      let canned_path = Filename.concat dir "canned.json" in
+      write_canned_responses ~path:canned_path
+        ~n_props:(List.length pids);
+      let _ = K4k.Git.commit_all ~cwd:dir
+        ~message:"test: add verifier + canned" in
+      let est = String.concat " " pids in
+      let env = [
+        ("K4K_TEST_D_PATH", d_path);
+        ("K4K_STUB_RESPONSES", canned_path);
+        ("K4K_SYNTH_ESTABLISHED", est);
+      ] in
+      let (_code, so, se) = run_capture_with_env
         ~k4k_args:["--exit-on-done"; "in.k4k"]
-        ~cwd:dir ~d_path () in
+        ~cwd:dir ~env () in
       let _ = se in
       Alcotest.(check bool) "version.start emitted" true
         (Astring.String.is_infix ~affix:"version.start" so);
       Alcotest.(check bool) "version.complete emitted" true
         (Astring.String.is_infix ~affix:"version.complete" so);
+      Alcotest.(check bool) "version.commit emitted" true
+        (Astring.String.is_infix ~affix:"version.commit" so);
       Alcotest.(check bool) "v1 tag exists" true
         (K4k.Git.tag_exists ~cwd:dir ~name:"v1");
       Alcotest.(check bool) "version branch deleted" false
@@ -319,7 +387,21 @@ let s1_watcher_drives_v1_to_completion () =
            (Filename.concat dir ".k4k/version/1/D-spec.json"));
       Alcotest.(check bool) "audit.md exists" true
         (Sys.file_exists
-           (Filename.concat dir ".k4k/version/1/audit.md"))))
+           (Filename.concat dir ".k4k/version/1/audit.md"));
+      (* The accepted source files must have landed on the default
+         branch via the merge. *)
+      let src_dir = Filename.concat dir "src" in
+      Alcotest.(check bool) "src/ created on main" true
+        (Sys.file_exists src_dir);
+      Alcotest.(check bool) "src/p01.ml landed on main" true
+        (Sys.file_exists (Filename.concat src_dir "p01.ml"));
+      (* Audit lists each property as established. *)
+      let audit = read_file
+        (Filename.concat dir ".k4k/version/1/audit.md") in
+      List.iter (fun pid ->
+        Alcotest.(check bool)
+          (Printf.sprintf "audit lists %s as established" pid) true
+          (Astring.String.is_infix ~affix:pid audit)) pids))
 
 (* --- S5 v2 batch 3: drive the watcher to a rollback via directive --- *)
 let s5_rollback_via_directive_in_status_block () =

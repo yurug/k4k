@@ -1978,11 +1978,6 @@ module GT = struct
       Alcotest.(check bool) "is_clean" true
         (let c, _ = Git.is_clean ~cwd:dir in c))
 
-  let scratch_name_format () =
-    let n = Git.scratch_branch_name ~property_id:"P1234567" in
-    Alcotest.(check bool) "starts with k4k/gap/P1234567/" true
-      (Astring.String.is_prefix ~affix:"k4k/gap/P1234567/" n)
-
   let dirty_when_modified () =
     with_tmpdir (fun dir ->
       init_and_commit dir;
@@ -2028,14 +2023,34 @@ module GT = struct
         "still clean despite .k4k/, _build/, .*.cotype/" true c;
       Alcotest.(check (list string)) "no dirty paths" [] dirty)
 
+  let reset_hard_rewinds_uncommitted () =
+    with_tmpdir (fun dir ->
+      init_and_commit dir;
+      (* Make a dirty change. *)
+      let f = Filename.concat dir "READme_unstaged.txt" in
+      let oc = open_out f in output_string oc "junk"; close_out oc;
+      let oc = open_out (Filename.concat dir "README") in
+      output_string oc "DIRTY"; close_out oc;
+      (match Git.reset_hard ~cwd:dir ~ref:"HEAD" with
+       | Ok () -> () | Error e -> Alcotest.fail e);
+      Alcotest.(check bool) "untracked file removed" false
+        (Sys.file_exists f);
+      let ic = open_in (Filename.concat dir "README") in
+      let n = in_channel_length ic in
+      let b = Bytes.create n in
+      really_input ic b 0 n; close_in ic;
+      Alcotest.(check string) "README restored" "hi"
+        (Bytes.unsafe_to_string b))
+
   let tests = [
     Alcotest.test_case "Git_is_repo_after_init" `Quick is_repo_after_init;
-    Alcotest.test_case "Git_scratch_name_format" `Quick scratch_name_format;
     Alcotest.test_case "Git_is_clean_detects_dirty" `Quick dirty_when_modified;
     Alcotest.test_case "Git_create_and_delete_branch" `Quick
       create_and_delete_branch;
     Alcotest.test_case "Git_k4k_state_filtered_from_clean_check" `Quick
       k4k_state_filtered;
+    Alcotest.test_case "Git_reset_hard_rewinds_uncommitted" `Quick
+      reset_hard_rewinds_uncommitted;
   ]
 end
 
@@ -2275,22 +2290,65 @@ module VPT = struct
   ]
 end
 
-(* ---------------- Version_loop (v2 batch 3) ---------------- *)
+(* ---------------- Version_loop (v2 batch 4a) ---------------- *)
 module VLT = struct
   let init_repo dir =
     let _ = Git.init ~cwd:dir in
     Git.configure_test_identity ~cwd:dir;
     let oc = open_out (Filename.concat dir "README") in
     output_string oc "hi"; close_out oc;
+    let oc = open_out (Filename.concat dir ".gitignore") in
+    output_string oc ".k4k/\n_build/\n"; close_out oc;
     let _ = Git.commit_all ~cwd:dir ~message:"initial" in
     ()
 
-  let make_config dir k4k_dir events =
+  (* Default test agent: a unified-diff that creates a fresh file
+     named after the property id. Always-applies (path is unique per
+     property), keeps the working tree dirty exactly long enough to
+     commit. *)
+  let default_diff pid =
+    Printf.sprintf
+      "```diff\n\
+       diff --git a/src_%s.txt b/src_%s.txt\n\
+       new file mode 100644\n\
+       --- /dev/null\n\
+       +++ b/src_%s.txt\n\
+       @@ -0,0 +1 @@\n\
+       +ok\n\
+       ```\n" pid pid pid
+
+  (* Default test verifier: returns Established for every focused
+     property. The Version_loop test suite doesn't exercise rejection;
+     [Gap_step] tests cover that. *)
+  let default_verifier ~workdir:_ ~focus : Verifier.run_result =
+    `Ok { Verifier.by_property =
+            List.map (fun pid -> (pid, `Established)) focus;
+          raw_exit_code = 0; stdout_path = ""; stderr_path = "";
+          duration_ms = 0; }
+
+  (* Default test agent_invoke: emits a unique diff for each call.
+     The version-loop tests use [Characterization.empty] which has no
+     properties, so this is never actually invoked; safe to keep
+     simple. *)
+  let agent_counter = ref 0
+  let default_agent ~purpose:_ ~prompt:_ ~budget:_ : Agent_backend.result =
+    incr agent_counter;
+    let pid = Printf.sprintf "test%d" !agent_counter in
+    `Ok Agent_backend.{ text = default_diff pid;
+                        budget_used = 0; duration_ms = 0; }
+
+  let make_config ?(agent_invoke = default_agent)
+      ?(verifier_run = default_verifier)
+      dir k4k_dir events =
     { Version_loop.cwd = dir;
       k4k_dir;
       default_branch = Git.default_branch ~cwd:dir;
       emit = (fun e d -> events := (e, d) :: !events);
       delete_branch_on_done = true;
+      agent_invoke;
+      verifier_run;
+      budget = 1000;
+      tier = `A;
     }
 
   let smoke_run_version_done () =
@@ -2621,6 +2679,7 @@ module GST = struct
       logger;
       budget_remaining = ref 1000;
       agent_backend = ();
+      tier = `A;
     }
 
   let init_repo dir =
@@ -2646,7 +2705,7 @@ module GST = struct
         ~verifier_run:(canned_verifier ~verdict:[]) in
       try
         let _ = Gap_step.step ~deps ~d:Characterization.empty
-          ~current_summary:"" ~prev_status:[] [p] in
+          ~current_summary:"" ~prev_status:[] ~property:p in
         Alcotest.fail "expected ESTATE_CORRUPT for dirty tree"
       with Error.K4k_error (Error.E_state_corrupt _) -> ())
 
@@ -2676,11 +2735,13 @@ module GST = struct
         ~verifier_run:(canned_verifier
                          ~verdict:[(p.id, `Established)]) in
       match Gap_step.step ~deps ~d:Characterization.empty
-              ~current_summary:"" ~prev_status:[] [p] with
-      | Accepted q ->
+              ~current_summary:"" ~prev_status:[] ~property:p with
+      | Accepted { property = q; commit_sha } ->
           Alcotest.(check string) "established"
-            "established" (Property_json.status_to_string q.status)
-      | Rejected (_, msg) -> Alcotest.fail ("rejected: " ^ msg)
+            "established" (Property_json.status_to_string q.status);
+          Alcotest.(check bool) "commit_sha non-empty" true
+            (String.length commit_sha > 0)
+      | Rejected { reason; _ } -> Alcotest.fail ("rejected: " ^ reason)
       | _ -> Alcotest.fail "unexpected outcome")
 
   let p5_reject_on_regression () =
@@ -2700,11 +2761,15 @@ module GST = struct
           ~verdict:[(p.id, `Established); (other, `Contradicted)]) in
       match Gap_step.step ~deps ~d:Characterization.empty
               ~current_summary:"" ~prev_status:[(other, `Established)]
-              [p] with
-      | Rejected (q, reason) ->
+              ~property:p with
+      | Rejected { property = q; reason } ->
           Alcotest.(check int) "fc bumped" 1 q.failure_count;
           Alcotest.(check bool) "reason mentions regression" true
-            (Astring.String.is_infix ~affix:"regress" reason)
+            (Astring.String.is_infix ~affix:"regress" reason);
+          (* P5 v2: tree was rewound to HEAD; the rejected patch's
+             new file must not survive on the version branch. *)
+          Alcotest.(check bool) "rewound: new.txt absent" false
+            (Sys.file_exists (Filename.concat dir "new.txt"))
       | _ -> Alcotest.fail "expected Rejected (regression)")
 
   let p6_three_strikes_blocks () =
@@ -2721,19 +2786,33 @@ module GST = struct
                            ~verdict:[(p.Property.id, `Contradicted)])
       in
       let bumped = ref p0 in
-      for _ = 1 to 3 do
+      (* First two rejections come back as Rejected; the third is
+         Tradeoff (placeholder for batch-4b's full proposal flow). *)
+      for _ = 1 to 2 do
         match Gap_step.step ~deps:(deps !bumped)
                 ~d:Characterization.empty
-                ~current_summary:"" ~prev_status:[] [!bumped] with
-        | Rejected (q, _) -> bumped := q
-        | _ -> ()
+                ~current_summary:"" ~prev_status:[]
+                ~property:!bumped with
+        | Rejected { property = q; _ } -> bumped := q
+        | _ -> Alcotest.fail "expected Rejected mid-strike"
       done;
-      Alcotest.(check int) "fc=3" 3 !bumped.failure_count;
-      Alcotest.(check bool) "blocked" true !bumped.blocked;
-      (* Next call must short-circuit Blocked. *)
+      Alcotest.(check int) "fc=2 after two strikes"
+        2 !bumped.failure_count;
+      (match Gap_step.step ~deps:(deps !bumped)
+               ~d:Characterization.empty
+               ~current_summary:"" ~prev_status:[]
+               ~property:!bumped with
+       | Tradeoff { property = q } ->
+           bumped := q;
+           Alcotest.(check int) "fc=3 after third strike" 3
+             q.failure_count;
+           Alcotest.(check bool) "blocked" true q.blocked
+       | _ -> Alcotest.fail "expected Tradeoff at third strike");
+      (* Subsequent invocation short-circuits to Blocked. *)
       match Gap_step.step ~deps:(deps !bumped)
               ~d:Characterization.empty
-              ~current_summary:"" ~prev_status:[] [!bumped] with
+              ~current_summary:"" ~prev_status:[]
+              ~property:!bumped with
       | Blocked q -> Alcotest.(check string) "id" p0.id q.id
       | _ -> Alcotest.fail "expected Blocked")
 
@@ -2746,7 +2825,7 @@ module GST = struct
         ~agent_resp:(fun () -> `Budget_exhausted)
         ~verifier_run:(canned_verifier ~verdict:[]) in
       match Gap_step.step ~deps ~d:Characterization.empty
-              ~current_summary:"" ~prev_status:[] [p] with
+              ~current_summary:"" ~prev_status:[] ~property:p with
       | Budget_exhausted -> ()
       | _ -> Alcotest.fail "expected Budget_exhausted")
 
@@ -2759,7 +2838,7 @@ module GST = struct
         ~agent_resp:(fun () -> `Budget_exhausted)
         ~verifier_run:(canned_verifier ~verdict:[]) in
       match Gap_step.step ~deps ~d:Characterization.empty
-              ~current_summary:"" ~prev_status:[] [p] with
+              ~current_summary:"" ~prev_status:[] ~property:p with
       | Budget_exhausted -> ()
       | _ -> Alcotest.fail "expected Budget_exhausted")
 
@@ -2774,8 +2853,8 @@ module GST = struct
                               budget_used = 0; duration_ms = 0 })
         ~verifier_run:(canned_verifier ~verdict:[]) in
       match Gap_step.step ~deps ~d:Characterization.empty
-              ~current_summary:"" ~prev_status:[] [p] with
-      | Rejected (q, reason) ->
+              ~current_summary:"" ~prev_status:[] ~property:p with
+      | Rejected { property = q; reason } ->
           Alcotest.(check int) "fc bumped" 1 q.failure_count;
           Alcotest.(check bool) "no diff reason" true
             (Astring.String.is_infix ~affix:"no diff" reason)
@@ -2799,8 +2878,8 @@ module GST = struct
                          ~verdict:[(p.id, `Established)]) in
       match Gap_step.step ~deps ~d:Characterization.empty
               ~current_summary:"" ~prev_status:[(other, `Established)]
-              [p] with
-      | Accepted q ->
+              ~property:p with
+      | Accepted { property = q; _ } ->
           Alcotest.(check string) "established"
             "established" (Property_json.status_to_string q.status)
       | _ -> Alcotest.fail "expected Accepted")
@@ -2823,8 +2902,8 @@ module GST = struct
             duration_ms = 0;
           }) in
       match Gap_step.step ~deps ~d:Characterization.empty
-              ~current_summary:"" ~prev_status:[] [p] with
-      | Rejected (_, _) -> ()
+              ~current_summary:"" ~prev_status:[] ~property:p with
+      | Rejected _ -> ()
       | _ -> Alcotest.fail "expected Rejected when verifier unknown")
 
   let tests = [
@@ -2904,7 +2983,7 @@ module RLT = struct
         verifier_run = canned_verifier ~verdict:[];
         logger;
         budget_remaining = ref 100;
-        agent_backend = ();
+        agent_backend = (); tier = `A;
       } in
       try
         let _ = Run_loop.run ~deps ~d:Characterization.empty
@@ -2931,7 +3010,7 @@ module RLT = struct
         verifier_run = canned_verifier ~verdict:[];
         logger;
         budget_remaining = ref 1_000_000;
-        agent_backend = ();
+        agent_backend = (); tier = `A;
       } in
       let cfg = { Run_loop.max_steps = 2; budget = 1_000_000;
                   between_steps = None; cotype = None } in
@@ -2960,7 +3039,7 @@ module RLT = struct
           ~verdict:[(p.id, `Established)];
         logger;
         budget_remaining = ref 1000;
-        agent_backend = ();
+        agent_backend = (); tier = `A;
       } in
       let r = Run_loop.run ~deps ~d:Characterization.empty
         ~cfg:Run_loop.default_config
@@ -2989,7 +3068,7 @@ module RLT = struct
           ~verdict:[(p.id, `Contradicted)];
         logger;
         budget_remaining = ref 1_000_000;
-        agent_backend = ();
+        agent_backend = (); tier = `A;
       } in
       let r = Run_loop.run ~deps ~d:Characterization.empty
         ~cfg:Run_loop.default_config
@@ -3038,7 +3117,7 @@ module RLT = struct
             duration_ms = 0 });
         logger;
         budget_remaining = ref 1_000_000;
-        agent_backend = ();
+        agent_backend = (); tier = `A;
       } in
       let _ = Run_loop.run ~deps ~d:Characterization.empty
         ~cfg:Run_loop.default_config
@@ -3211,7 +3290,7 @@ module T4T = struct
             ~workdir:"" ~focus:[]);
         logger;
         budget_remaining = ref 1_000_000;
-        agent_backend = ();
+        agent_backend = (); tier = `A;
       } in
       let edit_done = ref false in
       let between () =
@@ -3330,7 +3409,7 @@ module NF2T = struct
         verifier_run = canned_verifier;
         logger;
         budget_remaining = ref 100_000_000;
-        agent_backend = ();
+        agent_backend = (); tier = `A;
       } in
       let cfg = { Run_loop.max_steps = 60; budget = 100_000_000;
                   between_steps = None; cotype = None } in
@@ -4201,7 +4280,7 @@ module NF7T = struct
         verifier_run = canned_verifier;
         logger;
         budget_remaining = ref 1000;
-        agent_backend = ();
+        agent_backend = (); tier = `A;
       } in
       let _ = mk_response in
       let cfg = { Run_loop.max_steps = 5; budget = 1000;
@@ -4272,7 +4351,7 @@ module Lint = struct
     (* step-3 files *)
     "lib/property.ml"; "lib/property_json.ml";
     "lib/verifier_external.ml"; "lib/verifier_external_parse.ml";
-    "lib/subprocess.ml"; "lib/gap_step.ml"; "lib/gap_branch.ml";
+    "lib/subprocess.ml"; "lib/gap_step.ml";
     "lib/gap_prompt.ml"; "lib/diff_extract.ml";
     "lib/sigint.ml"; "lib/git.ml";
     "lib/run_loop.ml"; "lib/convergence.ml";
@@ -4281,6 +4360,8 @@ module Lint = struct
     (* ADR-010: cotype delegation *)
     "lib/cotype.ml"; "lib/cotype_parse.ml"; "lib/cotype_stub.ml";
     "lib/clarification.ml";
+    (* v2 batch 4a: direct-commit gap-step + canned backend *)
+    "lib/version_finalize.ml"; "lib/backend_canned.ml";
   ]
 
   let rec find_root dir =
@@ -4458,6 +4539,82 @@ module Lint = struct
   ]
 end
 
+(* ---------------- Backend_canned (v2 batch 4a, ≥3) ---------------- *)
+module BCT = struct
+  let write_json path content =
+    let oc = open_out path in output_string oc content; close_out oc
+
+  let load_pops_in_order () =
+    with_tmpdir (fun dir ->
+      let p = Filename.concat dir "canned.json" in
+      write_json p
+        {|[
+          {"purpose":"Gap_step","text":"diff-1"},
+          {"purpose":"Gap_step","text":"diff-2"}
+        ]|};
+      match Backend_canned.load_from_path p with
+      | Error e -> Alcotest.fail e
+      | Ok t ->
+          (match Backend_canned.invoke t ~purpose:`Gap_step
+                   ~prompt:"" ~budget:0 with
+           | `Ok r ->
+               Alcotest.(check string) "first" "diff-1" r.text
+           | _ -> Alcotest.fail "expected Ok");
+          (match Backend_canned.invoke t ~purpose:`Gap_step
+                   ~prompt:"" ~budget:0 with
+           | `Ok r ->
+               Alcotest.(check string) "second" "diff-2" r.text
+           | _ -> Alcotest.fail "expected Ok"))
+
+  let empty_queue_returns_tool_error () =
+    with_tmpdir (fun dir ->
+      let p = Filename.concat dir "canned.json" in
+      write_json p {|[]|};
+      match Backend_canned.load_from_path p with
+      | Error e -> Alcotest.fail e
+      | Ok t ->
+          (match Backend_canned.invoke t ~purpose:`Gap_step
+                   ~prompt:"" ~budget:0 with
+           | `Tool_error _ -> ()
+           | _ -> Alcotest.fail "expected Tool_error"))
+
+  let queues_are_per_purpose () =
+    with_tmpdir (fun dir ->
+      let p = Filename.concat dir "canned.json" in
+      write_json p
+        {|[
+          {"purpose":"Formalization","text":"f1"},
+          {"purpose":"Gap_step","text":"g1"}
+        ]|};
+      match Backend_canned.load_from_path p with
+      | Error e -> Alcotest.fail e
+      | Ok t ->
+          (* Pop a Gap_step entry; the Formalization queue should be
+             untouched. *)
+          let _ = Backend_canned.invoke t ~purpose:`Gap_step
+                    ~prompt:"" ~budget:0 in
+          match Backend_canned.invoke t ~purpose:`Formalization
+                  ~prompt:"" ~budget:0 with
+          | `Ok r -> Alcotest.(check string) "form" "f1" r.text
+          | _ -> Alcotest.fail "expected Ok")
+
+  let load_error_on_bad_path () =
+    match Backend_canned.load_from_path "/no/such/file" with
+    | Error _ -> ()
+    | Ok _ -> Alcotest.fail "expected Error"
+
+  let tests = [
+    Alcotest.test_case "Backend_canned_pops_in_order" `Quick
+      load_pops_in_order;
+    Alcotest.test_case "Backend_canned_empty_queue_tool_error" `Quick
+      empty_queue_returns_tool_error;
+    Alcotest.test_case "Backend_canned_per_purpose_queues" `Quick
+      queues_are_per_purpose;
+    Alcotest.test_case "Backend_canned_load_error_bad_path" `Quick
+      load_error_on_bad_path;
+  ]
+end
+
 let () =
   Alcotest.run "k4k unit"
     [ "Error",        ET.tests;
@@ -4504,4 +4661,5 @@ let () =
       "NF6",          NF6T.tests;
       "NF7",          NF7T.tests;
       "Lint",         Lint.tests;
+      "Backend_canned", BCT.tests;
     ]

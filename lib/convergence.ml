@@ -1,4 +1,5 @@
-(** [Convergence] — entry point for [k4k <file.k4k>] (no [--check]).
+(** [Convergence] — engine entry point invoked by the v2 watcher
+    (ADR-011). Pre-v2 it was the [k4k <file.k4k>] direct entry.
 
     Wires [Full_check.run] (semantic stability + D persistence) to the
     [Run_loop.run] convergence driver. Closes over the chosen

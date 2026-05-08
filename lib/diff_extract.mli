@@ -1,5 +1,5 @@
 (** [Diff_extract] — pure helpers for the [Gap_step] prompt's output
-    shape (per [prompts/gap-step.md]).
+    shape (per [prompts/gap-step.tier-{a,b,c}.md]).
 
     Two pieces are extracted:
     - the JSON preface listing files touched (sanity check before

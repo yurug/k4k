@@ -1,9 +1,9 @@
 (** [Verifier] — pluggable verifier signature.
 
-    See [kb/spec/api-contracts.md#verifier]. v0 ships [Verifier_external]
-    (the generic wire-protocol adapter, ADR-008; reference verifier at
-    [examples/verifiers/dune-ocaml/]) and [Verifier_stub] for tests.
-*)
+    See [kb/spec/api-contracts.md#verifier]. k4k ships [Verifier_external]
+    (the generic wire-protocol adapter, ADR-008) and [Verifier_stub] for
+    tests. Per ADR-012, the agent emits the wrapper script + tooling
+    choice per project; k4k carries no reference verifier example. *)
 
 type status = [ `Established | `Contradicted | `Unknown ]
 

@@ -26,10 +26,12 @@ let template_path name =
       if Sys.file_exists p then Some p else None
 
 let embedded = function
-  | "formalize.md" -> Some Embedded_prompts.formalize
-  | "gap-step.md"  -> Some Embedded_prompts.gap_step
-  | "kb-regen.md"  -> Some Embedded_prompts.kb_regen
-  | _              -> None
+  | "formalize.md"        -> Some Embedded_prompts.formalize
+  | "gap-step.tier-a.md"  -> Some Embedded_prompts.gap_step_tier_a
+  | "gap-step.tier-b.md"  -> Some Embedded_prompts.gap_step_tier_b
+  | "gap-step.tier-c.md"  -> Some Embedded_prompts.gap_step_tier_c
+  | "kb-regen.md"         -> Some Embedded_prompts.kb_regen
+  | _                     -> None
 
 let load name =
   match template_path name with

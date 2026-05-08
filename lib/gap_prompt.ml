@@ -1,5 +1,12 @@
-(** [Gap_prompt] — pure: compose a [prompts/gap-step.md] body for a
-    property + characterization. *)
+(** [Gap_prompt] — pure: compose the tier-aware gap-step prompt body
+    for a property + characterization (ADR-012). The default tier is
+    A; B and C are entered only after a user-signed tradeoff proposal
+    (ADR-011 §5). *)
+
+let template_for = function
+  | `A -> "gap-step.tier-a.md"
+  | `B -> "gap-step.tier-b.md"
+  | `C -> "gap-step.tier-c.md"
 
 let render_examples xs =
   match xs with
@@ -21,15 +28,19 @@ let refusing_lines (d : Characterization.t) =
       (String.concat "," r.argv) r.expect_error)
     d.examples_refuse
 
-let compose (p : Property.t) (d : Characterization.t)
+let compose ?(tier = `A) (p : Property.t) (d : Characterization.t)
     ~current_summary : string =
-  Prompts.render "gap-step.md"
+  let language = if d.language = "" then "(unspecified)" else d.language in
+  let verifier_command =
+    if d.verifier_command = [] then "(unspecified)"
+    else String.concat " " d.verifier_command
+  in
+  let _ = render_examples (acceptance_lines d) in
+  let _ = render_examples (refusing_lines d) in
+  Prompts.render (template_for tier)
     [ "property_id", p.id;
       "property_statement", p.statement;
       "aspect_path", String.concat "/" p.source.path;
-      "current_source_summary", current_summary;
-      "acceptance_examples", render_examples (acceptance_lines d);
-      "refusing_examples", render_examples (refusing_lines d);
-      "test_name_convention",
-        "tests must be named P<id>_<slug>; <id> = "
-        ^ p.id ^ " (the P + 7-hex-char prefix)" ]
+      "language", language;
+      "verifier_command", verifier_command;
+      "current_source_summary", current_summary; ]

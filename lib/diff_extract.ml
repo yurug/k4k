@@ -1,5 +1,5 @@
 (** [Diff_extract] — pure: pull the unified-diff payload out of an
-    agent response per [prompts/gap-step.md]'s output shape.
+    agent response per [prompts/gap-step.tier-{a,b,c}.md]'s output shape.
 
     The expected format is:
       ```json

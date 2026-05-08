@@ -93,10 +93,13 @@ let process_unstable cfg ct issues =
    this. *)
 let test_exit_now cfg = cfg.exit_on_stable
 
-let process_stable cfg ct =
-  let s = mk_status ~version_n:1 ~state:"stable" ~last_act:(now_iso ()) in
-  render_and_save_status cfg ct
-    ~status_block:(Inline_blocks.render_status s);
+(* v2 batch 4b: do NOT mutate the working tree before [Version.start_new]
+   runs. The status block is written from inside [Version_loop] after
+   the version branch is created (so [Gap_step.preflight]'s clean-tree
+   check passes without an intervening [k4k] snapshot commit). We still
+   emit the JSONL event here for operator visibility. *)
+let _process_stable_legacy_unused = ()
+let process_stable cfg _ct =
   cfg.emit "stability.pass" (`Assoc [])
 
 (* On a stable spec, try to drive the development half. When the test

@@ -2,9 +2,9 @@
     ADR-013 §2). Invoked from [Watcher_loop] when stability passes;
     drives [Version_loop] which owns the gap-step loop and git lifecycle.
 
-    Test path: when [K4K_TEST_D_PATH] is set, the file pointed to is
-    parsed as a [Characterization.t] and used directly. Production v2
-    batch-3 emits [version.skip] (real formalization arrives in batch 4). *)
+    v2 batch 4b: real formalization replaces the [K4K_TEST_D_PATH] knob.
+    The agent backend (canned in tests, [Backend_external] in production)
+    is reused for both the formalization pass and the gap-step loop. *)
 
 type emit_fn = string -> Yojson.Safe.t -> unit
 

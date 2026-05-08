@@ -259,31 +259,53 @@ let s5_rollback_aborts_in_flight_version () =
     Alcotest.(check bool) "branch deleted on rollback" false
       (K4k.Git.branch_exists ~cwd:dir ~name:v.branch_name))
 
-(* --- S1 v2 batch 4a: drive the watcher to v1 completion against a
+(* --- S1 v2 batch 4b: drive the watcher to v1 completion against a
    real backend (canned-responses) + real verifier (synthetic stub).
-   K4K_TEST_D_PATH stays as test scaffolding for batch 4b to replace
-   with full formalization. *)
+   Real formalization is wired (no [K4K_TEST_D_PATH]); the canned
+   responses include a Formalization payload that the watcher reuses
+   across both formalization runs. *)
 
-(* Build a [Characterization.t] for the test, write it as canonical
-   JSON for K4K_TEST_D_PATH, and return the path AND the property IDs
-   the gap loop will iterate over. *)
+(* Build a [Characterization.t] rich enough to pass coverage
+   ([Coverage.check_cli]: goal, exit_codes, ≥3 acceptance examples,
+   ≥1 refusing example, stdout.doc set). *)
 let build_d ~verifier_cmd =
+  let stream_doc s = { K4k.Characterization.kind = `Text;
+                       encoding = Some "utf-8"; doc = s } in
+  let acc i = { K4k.Characterization.name = Printf.sprintf "ex%d" i;
+                argv = [Printf.sprintf "a%d" i];
+                stdin = None;
+                expect = { stdout = "out"; stderr = "";
+                           exit_code = 0; fs_after = None }} in
   { K4k.Characterization.empty with
     goal = "echo argv with optional uppercasing";
     cls = "cli";
     language = "ocaml";
-    verifier_command = verifier_cmd; }
+    verifier_command = verifier_cmd;
+    inputs_outputs = {
+      argv = [];
+      stdin = { kind = `None; encoding = None; doc = "" };
+      stdout = stream_doc "argv joined";
+      stderr = { kind = `None; encoding = None; doc = "" };
+      exit_codes = [{ code = 0; condition = "success" }];
+    };
+    examples_accept = [acc 1; acc 2; acc 3];
+    examples_refuse = [{ name = "ref1"; argv = ["--unknown"];
+                         stdin = None;
+                         expect_error = "EBADARG" }];
+  }
 
-let write_d_path dir verifier_cmd =
-  let d = build_d ~verifier_cmd in
+(* Canonical JSON form of D — used as the formalization response so
+   that both runs canonicalize-equal. *)
+let formalize_payload d =
   let canon = K4k.Canonicalize.canonicalize d in
   let bytes = K4k.Canonical_json.to_string
                 (K4k.Characterization_json.to_yojson canon) in
-  let p = Filename.concat dir "d-spec.json" in
-  let oc = open_out p in output_string oc bytes; close_out oc;
-  let ids = List.map (fun (p : K4k.Property.t) -> p.id)
-    (K4k.Property.from_characterization canon) in
-  p, ids
+  Printf.sprintf "```json\n%s\n```\n" bytes
+
+let property_ids_of d =
+  let canon = K4k.Canonicalize.canonicalize d in
+  List.map (fun (p : K4k.Property.t) -> p.id)
+    (K4k.Property.from_characterization canon)
 
 let read_file p =
   let ic = open_in p in
@@ -306,7 +328,15 @@ let canned_diff_for n =
      +let () = ignore %d\n\
      ```\n" n n n n n
 
-let write_canned_responses ~path ~n_props =
+let write_canned_responses ~path ~n_props ~formalize_text =
+  (* Two formalization runs (P18) produce identical canonical payloads
+     so the cache doesn't already have D and stability passes. *)
+  let formalize_entries = [
+    `Assoc [ "purpose", `String "Formalization";
+             "text", `String formalize_text ];
+    `Assoc [ "purpose", `String "Formalization";
+             "text", `String formalize_text ];
+  ] in
   let entries = List.init n_props (fun i ->
     `Assoc [
       "purpose", `String "Gap_step";
@@ -319,7 +349,8 @@ let write_canned_responses ~path ~n_props =
       "purpose", `String "Gap_step";
       "text", `String (canned_diff_for (n_props + i + 1));
     ]) in
-  let bytes = Yojson.Safe.to_string (`List (entries @ extras)) in
+  let bytes = Yojson.Safe.to_string
+    (`List (formalize_entries @ entries @ extras)) in
   let oc = open_out path in
   output_string oc bytes; close_out oc
 
@@ -349,15 +380,16 @@ let s1_watcher_drives_v1_to_completion () =
           else find_synth p
       in
       copy_synthetic_verifier ~src:(find_synth here) ~dst:verifier_dst;
-      let d_path, pids = write_d_path dir ["./_verifier.sh"] in
+      let d = build_d ~verifier_cmd:["./_verifier.sh"] in
+      let pids = property_ids_of d in
       let canned_path = Filename.concat dir "canned.json" in
       write_canned_responses ~path:canned_path
-        ~n_props:(List.length pids);
+        ~n_props:(List.length pids)
+        ~formalize_text:(formalize_payload d);
       let _ = K4k.Git.commit_all ~cwd:dir
         ~message:"test: add verifier + canned" in
       let est = String.concat " " pids in
       let env = [
-        ("K4K_TEST_D_PATH", d_path);
         ("K4K_STUB_RESPONSES", canned_path);
         ("K4K_SYNTH_ESTABLISHED", est);
       ] in

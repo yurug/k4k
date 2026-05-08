@@ -2349,6 +2349,7 @@ module VLT = struct
       verifier_run;
       budget = 1000;
       tier = `A;
+      file_path = None;
     }
 
   let smoke_run_version_done () =
@@ -4354,7 +4355,7 @@ module Lint = struct
     "lib/subprocess.ml"; "lib/gap_step.ml";
     "lib/gap_prompt.ml"; "lib/diff_extract.ml";
     "lib/sigint.ml"; "lib/git.ml";
-    "lib/run_loop.ml"; "lib/convergence.ml";
+    "lib/run_loop.ml";
     (* step-4 files *)
     "lib/kb_regen.ml"; "lib/kb_render.ml"; "lib/tty_status.ml";
     (* ADR-010: cotype delegation *)

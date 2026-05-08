@@ -1,28 +1,18 @@
 (** [Watcher_dev] — development-half helpers, factored out of
     [Watcher_loop] to keep both files under the 200-line cap.
 
-    Loads a [Characterization.t] from a test-only env knob
-    (production v2-batch-4a: real formalization is wired in batch 4b),
-    composes a real [Version_loop.config] (with agent + verifier
-    closures, ADR-013 §2 step 3 direct-commit workflow), then drives
+    v2 batch 4b: real formalization replaces the [K4K_TEST_D_PATH] knob.
+    On a stable spec, [try_run_version] runs the two-run formalization
+    protocol via the same [Backend_canned] (test) / [Backend_external]
+    (production) backend used for gap-step calls, then drives
     [Version_loop]. *)
 
 type emit_fn = string -> Yojson.Safe.t -> unit
 
-let load_d_from_env () : Characterization.t option =
-  match Sys.getenv_opt "K4K_TEST_D_PATH" with
-  | None | Some "" -> None
-  | Some path ->
-      if not (Sys.file_exists path) then None
-      else
-        try
-          let raw = Persist.read_file path in
-          let j = Yojson.Safe.from_string raw in
-          let d = Characterization_decoder.of_yojson j in
-          Some (Canonicalize.canonicalize d)
-        with _ -> None
-
-let canned_invoke ~emit : Version_loop.agent_invoke =
+(** Lazily-resolved agent-invoke closure: shared across formalization
+    and gap-step. Per-purpose queues in [Backend_canned] mean a single
+    handle suffices. Production swaps in [Backend_external]. *)
+let resolve_invoke ~emit : Version_loop.agent_invoke =
   match Sys.getenv_opt "K4K_STUB_RESPONSES" with
   | None | Some "" ->
       fun ~purpose:_ ~prompt:_ ~budget:_ ->
@@ -45,22 +35,8 @@ let verifier_invoke ~k4k_dir ~d : Version_loop.verifier_run =
   let v = Verifier_external.create cfg in
   fun ~workdir ~focus -> Verifier_external.run v ~workdir ~focus
 
-(* The watcher's status-block writes (process_stable + on_rollback in
-   Watcher_loop) mutate <file.k4k> in place via cotype. Before cutting
-   a version branch we commit any such pending change as a [k4k]-
-   authored snapshot on the default branch so [Gap_step.preflight]'s
-   clean-tree check passes inside the version. *)
-let commit_pending_status ~cwd ~emit =
-  let clean, _ = Git.is_clean ~cwd in
-  if not clean then
-    match Git.commit_all ~cwd ~message:"[k4k] snapshot pre-version" with
-    | Ok () -> emit "version.pre_snapshot" (`Assoc [])
-    | Error e -> emit "version.pre_snapshot_error"
-                   (`Assoc [ "error", `String e ])
-
-let dispatch_one ~file_path ~k4k_dir ~emit ~ct ~d =
+let dispatch_one ~file_path ~k4k_dir ~emit ~ct ~d ~agent_invoke =
   let cwd = Filename.dirname file_path in
-  commit_pending_status ~cwd ~emit;
   let baseline = match Git.head_sha ~cwd with
     | Ok s -> s | Error _ -> ""
   in
@@ -71,26 +47,43 @@ let dispatch_one ~file_path ~k4k_dir ~emit ~ct ~d =
     default_branch;
     emit;
     delete_branch_on_done = true;
-    agent_invoke = canned_invoke ~emit;
+    agent_invoke;
     verifier_run = verifier_invoke ~k4k_dir ~d;
     budget = 1000;
     tier = `A;
+    file_path = Some file_path;
   } in
   Version_loop.run ~cfg:v_cfg ~baseline_sha:baseline ~d ?cotype:(Some ct) ()
 
+let read_via_cotype ct ~file_path =
+  try Some (Cotype.read_base ct ~file:file_path)
+  with Error.K4k_error _ -> None
+
+(* Real formalization: derive D from the user's prose using the same
+   agent backend used for gap-steps. Returns [Ok d] on success;
+   [Error reason] when D cannot be derived (the watcher will skip the
+   version this tick and retry on the next stability snapshot). *)
+let formalize ~k4k_dir ~ct ~file_path ~emit ~agent_invoke
+    : (Characterization.t, string) result =
+  match read_via_cotype ct ~file_path with
+  | None -> Error "could not read interaction file via cotype"
+  | Some content ->
+      Watcher_form.run ~k4k_dir ~content ~agent_invoke ~emit
+
 (** Try to drive the development half of the watcher loop. Returns
     [`Done] iff a version completed; [`Pending] otherwise (rollback,
-    or no [K4K_TEST_D_PATH]). *)
+    formalization failure, or version-start error). *)
 let try_run_version ~file_path ~k4k_dir ~emit ct : [ `Done | `Pending ] =
-  match load_d_from_env () with
-  | None ->
+  let agent_invoke = resolve_invoke ~emit in
+  match formalize ~k4k_dir ~ct ~file_path ~emit ~agent_invoke with
+  | Error reason ->
       emit "version.skip"
-        (`Assoc [ "reason",
-                  `String "no K4K_TEST_D_PATH; awaiting batch-4b formalization" ]);
+        (`Assoc [ "reason", `String ("formalize: " ^ reason) ]);
       `Pending
-  | Some d ->
+  | Ok d ->
       try
-        (match dispatch_one ~file_path ~k4k_dir ~emit ~ct ~d with
+        (match dispatch_one ~file_path ~k4k_dir ~emit ~ct ~d
+                 ~agent_invoke with
          | Done _ -> `Done
          | Rolled_back -> `Pending)
       with

@@ -24,6 +24,7 @@ type config = {
   verifier_run : verifier_run;
   budget       : int;
   tier         : [ `A | `B | `C ];
+  file_path    : string option;
 }
 
 type result =
@@ -123,12 +124,53 @@ let persist_initial ~cfg ~v ~d =
     ~number:v.Version.number ~d;
   Version_persist.write_manifest ~k4k_dir:cfg.k4k_dir ~v ()
 
+(* v2 batch 4b: write a "developing" status block on the version branch
+   via cotype, then commit so the gap-step preflight clean-tree check
+   passes. Best-effort: failures are swallowed (the gap loop will still
+   surface its own preflight errors). *)
+let mk_developing_status n =
+  { Inline_blocks.version_n = n;
+    state = "developing";
+    tier_dist = { tier_a = 0; tier_b = 0; tier_c = 0 };
+    pending_user_edits = 0;
+    last_activity = Inline_blocks.timestamp_now ();
+    open_tradeoffs = 0; }
+
+let save_status ~cotype ~file_path ~status_block =
+  try
+    let opened = Cotype.open_ cotype ~file:file_path in
+    match opened with
+    | Error _ -> ()
+    | Ok r ->
+        let base = Persist.read_file r.base_path in
+        let merged = Status_splice.replace_or_append base status_block in
+        let _ = Cotype.save cotype ~file:file_path
+                  ~base_sha:r.base_sha ~actor:"agent:k4k"
+                  ~bytes:merged in ()
+  with _ -> ()
+
+let commit_status_on_branch ~cwd =
+  let clean, _ = Git.is_clean ~cwd in
+  if not clean then
+    let _ = Git.commit_all ~cwd
+              ~message:"[k4k] status: developing" in ()
+
+let write_developing_status ~cfg ~v ?cotype () =
+  match cfg.file_path, cotype with
+  | Some fp, Some ct ->
+      let block = Inline_blocks.render_status
+        (mk_developing_status v.Version.number) in
+      save_status ~cotype:ct ~file_path:fp ~status_block:block;
+      commit_status_on_branch ~cwd:cfg.cwd
+  | _ -> ()
+
 let to_local_result : Version_finalize.result -> result = function
   | Version_finalize.Done { tag; tier_dist } -> Done { tag; tier_dist }
   | Version_finalize.Rolled_back -> Rolled_back
 
 let drive_version ~cfg ~d v ~started_at ?cotype () : result =
   persist_initial ~cfg ~v ~d;
+  write_developing_status ~cfg ~v ?cotype ();
   let logger = logger_for cfg in
   let budget_ref = ref cfg.budget in
   let deps = mk_deps cfg ~budget_ref ~logger in

@@ -36,6 +36,10 @@ type config = {
   budget         : int;
     (** Initial budget for the entire version. *)
   tier           : [ `A | `B | `C ];
+  file_path      : string option;
+    (** v2 batch 4b: when [Some f], status-block writes happen on the
+        version branch (after [Version.start_new]) so the working tree
+        is clean at gap-step preflight. *)
 }
 
 type result =

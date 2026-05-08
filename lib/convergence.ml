@@ -24,6 +24,7 @@ let make_deps (type b) (type v)
     logger = inputs.Harness.logger;
     budget_remaining = budget_ref;
     agent_backend = backend;
+    tier = `A;
   }
 
 let run (type b) (type v)

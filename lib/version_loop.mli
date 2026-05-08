@@ -1,28 +1,41 @@
 (** [Version_loop] — orchestrates the per-version development cycle
     on top of [Version] (git lifecycle), [Version_persist] (disk),
-    and [Audit_md] (rendering).
+    [Gap_step] (per-property convergence), and [Audit_md] (rendering).
 
-    Used by [Watcher_loop] when stability succeeds. The implementation
-    is deliberately small for v2 batch 3: it cuts a branch, persists
-    [D-spec.json] + [manifest.json], drives an accept-only gap loop
-    (each property gets one commit with [\[k4k\] establish <pid>]),
-    completes via merge + tag + branch delete, and renders [audit.md].
+    Used by [Watcher_loop] when stability succeeds. v2 batch 4a
+    direct-commit workflow (ADR-013 §2 step 3): each accepted gap-step
+    commits with [\[k4k\] establish <pid>] on the version branch; on
+    rejection the working tree is rewound via [git reset --hard HEAD]
+    inside [Gap_step]. *)
 
-    The agent / verifier surface is kept stub-compatible so integration
-    tests can drive it without a real LLM. v2 batch 4 will widen this
-    out to invoke [Convergence] proper for real Tier-A proofs. *)
+(** Per-property gap-step driver. Closures hide the
+    [Agent_backend] / [Verifier] modules so this file is independent of
+    the concrete backends. *)
+type agent_invoke =
+  purpose:Agent_backend.purpose ->
+  prompt:string ->
+  budget:int ->
+  Agent_backend.result
+
+type verifier_run =
+  workdir:string ->
+  focus:string list ->
+  Verifier.run_result
 
 type config = {
   cwd            : string;
-    (** The user's project working directory (where [git] runs). *)
+    (** The user's project working directory (where [git] runs and
+        where the version branch is checked out). *)
   k4k_dir        : string;
   default_branch : string;
   emit           : string -> Yojson.Safe.t -> unit;
     (** JSONL emitter — same signature as [Watcher_loop.config.emit]. *)
   delete_branch_on_done : bool;
-    (** ADR-013 §2 step 5: default behaviour deletes the version branch
-        after merge. Set [false] to honour
-        [k4k.keep_version_branches: true] frontmatter. *)
+  agent_invoke   : agent_invoke;
+  verifier_run   : verifier_run;
+  budget         : int;
+    (** Initial budget for the entire version. *)
+  tier           : [ `A | `B | `C ];
 }
 
 type result =
@@ -33,9 +46,9 @@ type result =
   | Rolled_back
 
 (** [run ~cfg ~baseline_sha ~d ?cotype ()] drives one version end to
-    end. Emits [version.start], [version.commit] (one per property),
-    [version.complete] / [version.complete_error] events through
-    [cfg.emit]. *)
+    end. Emits [version.start], [version.commit] (one per accepted
+    property), [version.complete] / [version.complete_error] events
+    through [cfg.emit]. *)
 val run :
   cfg:config ->
   baseline_sha:string ->

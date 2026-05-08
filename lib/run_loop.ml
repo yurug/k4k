@@ -75,11 +75,16 @@ let update_gap ~accepted ~rejected (ps : Property.t list)
     p.status <> `Established) updated
 
 let drive_one ~deps ~d ~current_summary ~prev_status ~gap =
-  match Gap_step.step ~deps ~d ~current_summary ~prev_status gap with
-  | Accepted q -> `Accepted q
-  | Rejected (q, _) -> `Rejected q
-  | Blocked _ -> `Blocked
-  | Budget_exhausted -> `Budget
+  match Property.argmax_lex gap with
+  | None -> `Blocked
+  | Some property ->
+      match Gap_step.step ~deps ~d ~current_summary ~prev_status
+              ~property with
+      | Accepted { property = q; _ } -> `Accepted q
+      | Rejected { property = q; _ } -> `Rejected q
+      | Tradeoff { property = q } -> `Rejected q   (* fc=3 propagates via gap *)
+      | Blocked _ -> `Blocked
+      | Budget_exhausted -> `Budget
 
 let raise_max_steps n =
   raise (Error.K4k_error (Error.E_max_steps n))

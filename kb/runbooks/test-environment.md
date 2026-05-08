@@ -45,11 +45,46 @@ Test instrumentation only. None of these are part of the public CLI contract (`s
 **When read:** every `Persist.atomic_write` checks the env var; if set and the path matches, the tmp file is created, then deleted (rollback), and `E_disk_full` is raised. Production code path is fully exercised; only the rename is short-circuited.
 **Production effect:** none unless explicitly set. If a curious user *did* set it, they'd see disk-full errors on writes matching their pattern — not destructive, just noisy.
 
+### `K4K_SYNTH_ESTABLISHED=<space-separated-ids>`
+**Purpose:** drive the synthetic verifier stub
+(`test/conformance/fixtures/synthetic-verifier.sh`) used by the v2
+conformance suite. Property IDs in the list emit
+`status: established`; everything else emits `status: unknown`.
+**Default:** unset → no IDs are established (every focus id is `unknown`).
+**When the binary itself reads this:** never. This env is read only by
+the synthetic stub script; production k4k does not consult it.
+**Production effect:** none — production never invokes the stub.
+
+### `K4K_TOOLCHAIN_INSTALL_STUB=1`
+**Purpose:** activate the in-memory stub table inside
+`lib/Toolchain_install` (per ADR-012 §7). When set, `ensure ~binary`
+returns the outcome seeded by `Toolchain_install.test_set_stub_outcome`
+instead of probing `$PATH` or running a package manager. Used by
+watcher startup tests so they don't actually install opam/etc.
+**Default:** unset → real probe + real installs (production behavior).
+**When the binary itself reads this:** every `Toolchain_install.ensure`
+call.
+**Production effect:** none unless explicitly set; the stub table is
+empty by default so any `ensure` call returns `Failed` and the watcher
+aborts at startup — undesirable in production, perfectly safe.
+
 ### `K4K_TEST_TRACE_WRITES=<path-to-trace-file>`
 **Purpose:** record every filesystem write k4k performs through `Persist`, one path per line. Used by `NF4_state_confinement_envelope` to assert all writes fall under allowed paths.
 **Default:** unset → no tracing.
 **When read:** `Persist.atomic_write` and `Persist.append_jsonl_line` append the destination path to `<path-to-trace-file>` if the env is set.
 **Production effect:** none unless explicitly set; if set, it just creates a trace file the user can inspect.
+
+## Test-only CLI flags
+
+### `--exit-on-stable`
+**Purpose:** make `bin/main.ml`'s watcher loop return after the first
+state transition (stable snapshot OR clarification appended), so
+integration tests don't have to send SIGTERM to inspect post-stability
+state. Per ADR-011 §2 the production loop runs until signal.
+**Default:** unset (operator-only flag).
+**When read:** at every iteration of `Watcher_loop.one_tick`.
+**Production effect:** none — production users never pass it. Visible
+in `--help` output but documented as test-only.
 
 ## Properties enforced
 

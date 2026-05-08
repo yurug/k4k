@@ -136,7 +136,7 @@ kb/
 | v1 — Reference Ollama backend                             | ✓ done (`examples/backends/ollama/`; live-verified against `qwen3.5:9b`) |
 | v1 — ADR-010 cotype delegation                            | ✓ done (`lib/cotype.ml` + `lib/cotype_stub.ml` + `lib/clarification.ml`; `lib/persist_lock.ml` removed; live cotype 0.2.3 verified) |
 | v1 — Protocol-conformance suite + drift-watch             | ✓ done (`test/conformance/` 6 tests; `kb/runbooks/drift-watch.md`; baseline at `kb/reports/dep-versions-baseline.txt`) |
-| **v2 reorientation** — UX is autonomous agent, not developer CLI; default tier is Tier-A formal verification | KB cleanup ✓; round-4 + round-5 questions ✓; ADR-011 (autonomous-agent UX + tier hierarchy) ✓; ADR-012 (agent-driven toolchain + auto-install) ✓; ADR-013 (versions as git branches) ✓; **code rewrite pending** (`bin/main.ml` watcher; tier-aware prompts; remove `examples/verifiers/dune-ocaml/`; conformance suite refit; new `lib/{Toolchain_install, Version}` modules) |
+| **v2 reorientation** — UX is autonomous agent, not developer CLI; default tier is Tier-A formal verification | KB cleanup ✓; round-4 + round-5 questions ✓; ADR-011 / ADR-012 / ADR-013 ✓; engine extensions (`lib/Toolchain_install`, `lib/Version`, `Characterization` extended) ✓; **code rewrite ✓** (`bin/main.ml` is the watcher daemon; `lib/Watcher`/`Watcher_loop`/`Watcher_pid` orchestrate; `lib/Inline_blocks`/`Status_splice`/`Starter_template` handle the in-file surface; tier-aware prompts at `prompts/gap-step.tier-{a,b,c}.md`; `examples/verifiers/dune-ocaml/` removed; conformance suite uses `test/conformance/fixtures/synthetic-verifier.sh`) |
 
 ## Agent notes
 

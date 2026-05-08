@@ -13,23 +13,28 @@ related: [conventions.error-handling, properties.functional]
 
 ## One-liner
 
-The exhaustive list of errors k4k may emit. Adding a new error type is a KB-first change: extend this file, then update `conventions/error-handling.md` and the relevant code.
+The exhaustive list of error conditions k4k may surface. In v2 the user does not see exit codes — the watcher reports state changes through the `.k4k` file (status/clarification/tradeoff blocks per `config-and-formats.md`). The codes below apply to the *startup phase only* (the brief moment between `k4k <file>` invocation and the watcher entering its main loop) and to operator-level diagnostics. Adding a new error type is a KB-first change: extend this file, then update `conventions/error-handling.md` and the relevant code.
 
 ## Scope
 
-User-visible errors (exit codes, stderr messages) plus internal panics. Not for: log lines, audit-report findings.
+Conditions that prevent the watcher from starting cleanly OR that surface as in-file events once the watcher is running. Not for: log lines, audit-report findings.
 
-## Exit-code map
+## Exit-code map (startup-phase only)
 
 | Code | Class                    | Meaning                                                                  |
 |------|--------------------------|--------------------------------------------------------------------------|
-| 0    | success                  | Gap empty (run), file stable (`--check`), printed status (`--status`).   |
-| 1    | user error               | Interaction file missing, unparseable, unstable, or class unsupported.   |
-| 2    | verifier error           | Verifier could not be invoked, or returned an unrecoverable `Tool_error`.|
-| 3    | agent backend error      | Backend unavailable, credentials missing, all retries exhausted.         |
-| 4    | resource exhaustion      | `--max-steps` reached, hard budget cap reached, disk full.               |
-| 5    | environment error        | `.k4k/` corrupt, on-disk schema mismatch, missing dependency.            |
+| 0    | success                  | Watcher started cleanly and shut down gracefully (signal received).     |
+| 1    | user error               | Interaction file missing, unparseable beyond YAML frontmatter, or `class` declared but unsupported. (Stability-of-the-spec errors are NOT exit-code errors — they surface in-file as `## k4k:clarification:*` blocks once the watcher is running.) |
+| 5    | environment error        | `.k4k/` corrupt, on-disk schema mismatch, missing dependency (cotype, git). |
 | 64+  | reserved                 | Internal panic codes (see `EINVARIANT`).                                 |
+
+**Conditions that no longer produce exit codes in v2** (they are reported in the file once the watcher is running, per the autonomous-agent UX):
+
+- Spec instability (semantic ambiguity, missing required sections, coverage gaps) → `## k4k:clarification:<ts>` block in the file.
+- Per-property verifier rejection / 3-strikes-blocked → recorded in the `## k4k:status` block; if k4k cannot proceed, a `## k4k:tradeoff:proposal:<ts>` block.
+- Tier-A failure on a property → trade-off proposal block in the file.
+- Budget bookkeeping → tracked internally; surfaces as a status update or trade-off proposal, not an exit code.
+- Verifier or backend tool errors → retried per protocol (`external/verifier-protocol.md`, `external/backend-protocol.md`); persistent failures surface as in-file diagnostics, not exit codes.
 
 ## Error catalog
 
@@ -70,22 +75,10 @@ User-visible errors (exit codes, stderr messages) plus internal panics. Not for:
 - **Recovery:** Set `class: cli` or wait for v1.
 
 ### EUNSTABLE
-- **Exit:** 1
-- **When:** Stability check fails (structural, semantic, or coverage). A clarification block is appended to the interaction file before exit.
-- **stderr:** `k4k: unstable: <one-line summary>; see clarifications appended to <file.k4k>`
-- **Recovery:** Open the file, answer the appended questions by editing the `## k4k:clarification:*` section directly (cotype handles the concurrency), re-run.
+- **Exit:** *no longer an exit code in v2.* Spec instability is reported in-file as a `## k4k:clarification:<ts>` block. The watcher does NOT exit on instability; it pauses development (if any was in-flight) and waits for the user to edit the file. *(Pre-v2: this used to surface as exit 1.)*
 
-### EBUDGET
-- **Exit:** 4
-- **When:** Hard budget cap reached during a run (formalization or gap-step).
-- **stderr:** `k4k: budget exhausted: <used>/<cap> units; .k4k/ left consistent`
-- **Recovery:** Increase `k4k.budget.hard_per_invocation` in frontmatter, or split the work across runs.
-
-### EMAXSTEPS
-- **Exit:** 4
-- **When:** `--max-steps N` reached before `G` is empty.
-- **stderr:** `k4k: max steps reached (<N>); <gap_size> properties remain`
-- **Recovery:** Re-run; or raise `--max-steps`.
+### (removed in v2) EBUDGET / EMAXSTEPS
+Budget and step bookkeeping are no longer user-visible exit codes. Budget exhaustion during development surfaces as a `## k4k:status` update and (if it blocks progress) a `## k4k:tradeoff:proposal:<ts>` block proposing how to proceed (e.g. "running out of budget on Tier A; propose decomposing the property into smaller lemmas, or dropping to Tier B"). The user replies inline.
 
 ### EAGENT_UNAVAILABLE
 - **Exit:** 3

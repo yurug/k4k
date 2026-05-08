@@ -1,150 +1,74 @@
 # k4k — KISS for KISS
 
-A deterministic harness that drives a coding agent to build POSIX-like CLI programs from a user-edited spec, accepting only patches a verifier validates.
+An autonomous coding agent that builds **formally verified** POSIX-like programs from a single user-edited file.
+
+## What it does
+
+You write free-form prose describing the program you want into a `.k4k` file. k4k watches the file, asks clarifying questions in-line until your demand denotes a clear theorem, then develops + verifies the implementation in **full autonomy** — with full formal verification by default (Rocq + extraction to OCaml; Frama-C/ACSL on C; Lean; Verus; F*). Trade-offs to lower verification tiers happen only with your explicit sign-off, in the same file.
+
+You never run flags. You never configure tooling. You never see the verifier or the agent backend. The file is the protocol.
 
 ## Status
 
-**v0 + ADR-008 + ADR-009 retrofits + post-audit gap closure** — runs end-to-end on a toy program. **199 tests green** (179 unit + 16 integration + 4 edge); Phase-5 audit passes 0 criticals across all 7 axes after the skeptical second pass closed 2 criticals + 7 highs the dry-pass missed.
+**v2 — reorientation in progress.**
 
-The ADR-008 (verifier) and ADR-009 (backend) retrofits stripped tool-specific code out of `lib/` entirely. k4k now ships:
+The v0/v1 build (54 commits, 213 tests, ADR-008/009/010 retrofits, conformance suite, drift-watch) shipped a developer-CLI tool — the wrong product. The v2 reorientation drops the CLI surface, makes k4k a watcher daemon, and switches the default verification tier from testing (`dune-ocaml` Tier C) to formal verification (Rocq-extraction-shaped Tier A). The architectural commitments (cotype delegation, wire-protocol verifier/backend, canonical-AST determinism, two-layer KB, deterministic kb-regen) all survive both UX corrections. The historical record is in [`kb/archive/v0-drifted/`](kb/archive/v0-drifted/).
 
-- `lib/Verifier_external` — generic verifier adapter (delegates to any executable conforming to `kb/external/verifier-protocol.md`)
-- `lib/Backend_external` — generic agent-backend adapter (delegates to any executable conforming to `kb/external/backend-protocol.md`)
+Phase tracker at [`kb/INDEX.md`](kb/INDEX.md). The current PRD at [`kb/domain/prd.md`](kb/domain/prd.md) is the post-reorientation source of truth.
 
-…and three reference examples that are NOT linked into k4k:
-
-- `examples/verifiers/dune-ocaml/` — OCaml + dune verifier (runs `dune build @runtest`)
-- `examples/backends/claude-code/` — Anthropic Claude Code backend (subprocess `claude -p`)
-- `examples/backends/ollama/` — local Ollama backend (curl to `/api/generate`); live-verified against `qwen3.5:9b`
-
-Adding Rocq, Frama-C, Verus, AFL, OpenAI, OpenRouter, etc. requires **zero k4k changes** — write an executable matching the relevant protocol, declare it in `<file.k4k>` frontmatter. Still on the v1+ list: additional program classes beyond `cli`.
-
-## What it does, in one paragraph
-
-You write a Markdown spec (`myproject.k4k`) describing the CLI you want — goal, inputs/outputs, error taxonomy, acceptance examples, refusing examples. You run `k4k myproject.k4k` in an empty git repo. k4k:
-
-1. **Checks the spec is stable** — has every required section *and* the formal characterization (extracted by an agent, two independent runs) is unambiguous.
-2. **Computes the gap** between what the spec demands and what the source code (currently empty) provides.
-3. **Drives the agent**, gap-step by gap-step, picking the highest-risk property each time. Each proposed patch lands on a scratch git branch; the verifier (a user-configured executable — the bundled reference runs `dune build @runtest` for OCaml projects) decides whether it satisfies the property — *not* the agent. The agent itself is also a user-configured executable (Claude Code, local Ollama, or anything else satisfying the backend protocol).
-4. **Converges** to a working program. Along the way it writes a target KB inside `.k4k/` (your program's documentation, kept in sync with reality).
-
-The harness is **deterministic on the canonical AST** even though the agent is stochastic. It never trusts agent self-assessment for validity — only the verifier and you decide.
-
-## Quick start
+## Quick start (post-v2; not yet implemented)
 
 ```bash
-# 1. Install the OCaml toolchain (if needed)
-opam install . --deps-only --with-test
-
-# 2. Build
-dune build
-
-# 3. Run the test suite (offline, no API calls)
-dune runtest
-
-# 4. Try it on the bundled echo --upper example
-cd /tmp && rm -rf demo && mkdir demo && cd demo && git init -q
-cp ~/path/to/k4k/tests/fixtures/echo-upper.k4k .
-cp ~/path/to/k4k/tests/fixtures/echo-upper-canned.json .
-git add -A && git commit -q -m initial
-K4K_STUB_RESPONSES=$PWD/echo-upper-canned.json k4k echo-upper.k4k
-# → done. .k4k/ contains the target KB; the working tree contains a buildable echo CLI.
+pipx install cotype k4k    # cotype is the file-concurrency primitive (ADR-010)
+k4k myproject.k4k          # one-shot launch; thereafter the agent is autonomous
 ```
 
-## Command surface
+After that command, you only edit `myproject.k4k`. k4k:
+- Appends `## k4k:clarification:<ts>` blocks until your spec denotes a clear theorem.
+- Snapshots a `## k4k:version:<n>` and starts developing in Rocq + extraction to OCaml.
+- Updates a `## k4k:status` block live.
+- Surfaces `## k4k:tradeoff:proposal:<ts>` if Tier A fails on a property and degradation is warranted; waits for your sign-off in the file.
+
+## Verification tiers
+
+| Tier | What it means | Sign-off |
+|---|---|---|
+| **A — Full formal verification** | Implementation extracted from / machine-checked against a formal artifact (Rocq+Extraction, Frama-C/ACSL+WP, Lean, Verus, F*…). | Implicit — the goal. |
+| **B — Formal model + intensive testing** | A formal model exists; the implementation is hand-written and tested against the model via property-based testing + fuzzing. | Required, in-file, with k4k's written rationale. |
+| **C — Testing-only** | No formal artifact. Tests + alcotest. (`examples/verifiers/dune-ocaml/` is a Tier-C example.) | Required, in-file, with explicit acknowledgment that the formal-correctness goal is forfeited for the relevant property. |
+
+Tiers are **per-property**. A program may end up with 10 properties at Tier A and 2 at Tier B; the file's status block reflects the distribution.
+
+## Architecture in one paragraph
+
+`lib/` is the harness — verifier-agnostic, backend-agnostic, concurrency-delegated. Tools enter via wire protocols (`Verifier_external`, `Backend_external` per ADR-008/009) or via a hardcoded runtime dependency (`cotype` per ADR-010, like `git`). The user-facing protocol is the `.k4k` file. The engine inside `lib/` is what was built across v0/v1; the wrapper around it (`bin/main.ml`) is being rebuilt for v2 against the autonomous-watcher UX.
+
+## Repository layout
 
 ```
-k4k <file.k4k>             full convergence loop (default --max-steps 50, --budget 1000)
-k4k --check <file.k4k>     stability-only path; no gap-step calls
-
-k4k --status <file.k4k>        print the current gap (one property per line)
-k4k --reset <file.k4k> --yes   wipe .k4k/ for this project (--yes required)
-
-flags:  -v / -vv                  verbosity (stderr text + JSONL events; -vv adds subprocess argv)
-        --no-color                disable ANSI escapes globally
-        --max-steps N
-        --budget M
-        --verifier "<cmd>"        override the verifier command for this run
-        --verifier-timeout N      override the verifier wall-clock cap (seconds)
-        --backend "<cmd>"         override the backend command for this run
-        --backend-timeout N       override the backend wall-clock cap (seconds)
+bin/main.ml                  CLI entry — currently the v0 developer-CLI shape; v2 rewrite pending
+lib/                         the harness (engine; verifier/backend/concurrency-agnostic)
+examples/
+  backends/                  reference agent-backend executables (claude-code, ollama)
+  verifiers/                 reference verifier executables (dune-ocaml is Tier C)
+prompts/                     formalize.md, gap-step.md, kb-regen.md
+test/{unit,integration,edge,conformance}/   test suites
+kb/                          the meta knowledge base — describes k4k itself
+kb/archive/v0-drifted/       historical record of the v0 build under the drifted UX framing
 ```
-
-The interaction file is the primary configuration source — `k4k.backend.command` and `k4k.verifier.command` (lists of strings) are required fields under the YAML frontmatter; `*_timeout_s` fields are optional. CLI flags above are short-lived overrides.
-
-Exit codes: `0` done · `1` unstable spec / user error · `2` verifier error · `3` agent backend error · `4` budget / max-steps / disk full · `5` corrupt state.
-
-## Plugging in your own verifier
-
-Per ADR-008, k4k carries no verifier-specific code. To verify with anything other than the bundled OCaml/dune reference, write an executable that:
-
-- Accepts `--workdir <path> --focus <id>... --output <path>`.
-- Reads source under `<workdir>`.
-- Writes a JSON result file to `<output>` matching the schema in `kb/external/verifier-protocol.md` (per-property status: `established | contradicted | unknown`, plus exit code, duration, optional warnings).
-- Exits 0 on result-written, 1 (or any non-zero) on tool failure.
-
-Then set `k4k.verifier.command: ["./your-verifier"]` in your `<file.k4k>` frontmatter. No code in `lib/` changes; no need to recompile k4k. See `examples/verifiers/dune-ocaml/main.ml` (215 lines) as a worked example.
-
-## Plugging in your own backend
-
-Per ADR-009, k4k carries no backend-specific code (symmetric to ADR-008 for verifiers). To drive k4k with anything other than the bundled examples, write an executable that:
-
-- Accepts `--purpose <formalization|gap-step|kb-regen> --prompt-file <path> --budget <int> --output <path>`.
-- Reads the prompt from the file.
-- Calls whatever LLM (Anthropic, OpenAI, OpenRouter, local Ollama, …).
-- Writes a JSON result to `<output>` matching `kb/external/backend-protocol.md` (`outcome ∈ {ok, budget_exhausted, tool_error}`, `text`, `budget_used`, `duration_ms`).
-- Exits 0 on result-written, 1 (or any non-zero) on tool failure.
-
-Set `k4k.backend.command: ["./your-backend"]` in your `<file.k4k>` frontmatter. See `examples/backends/claude-code/main.ml` (~190 lines) and `examples/backends/ollama/main.ml` (~210 lines) as worked examples.
-
-## Running with a real agent
-
-```bash
-# Option A: Claude Code (Anthropic)
-claude  # one-time auth setup
-# In your <file.k4k> frontmatter:
-#   k4k.backend.command: ["/path/to/k4k/_build/default/examples/backends/claude-code/main.exe"]
-
-# Option B: local Ollama
-ollama pull qwen3.5:9b   # 9B-class, ~6 GB
-# In your <file.k4k> frontmatter:
-#   k4k.backend.command: ["/path/to/k4k/_build/default/examples/backends/ollama/main.exe", "--model", "qwen3.5:9b"]
-```
-
-## What lives where
-
-```
-bin/main.ml            CLI entry, argv parsing (cmdliner), DI wiring
-lib/                   the harness — agnostic to any specific backend or verifier;
-                       each file ≤ 200 lines, each function ≤ 30 lines
-examples/backends/     reference backend executables (claude-code, ollama)
-examples/verifiers/    reference verifier executables (dune-ocaml)
-prompts/               formalize.md, gap-step.md, kb-regen.md
-test/{unit,integration,edge}/   199 tests; weakness profile is the default
-tests/fixtures/        echo-upper.k4k + canned-responses.json
-kb/                    the meta knowledge base — describes k4k itself
-```
-
-The **target KB** k4k generates for the program it builds lives in `.k4k/` of that target project (per ADR-006). It documents that program, not k4k.
 
 ## The methodology
 
-This project was built using **spec-driven agentic development**: ambiguity resolution → knowledge base → plan → Ralph-Loop implementation → multi-axis audit → KB sync → docs. The methodology lives in [`agentic-dev-kit/`](agentic-dev-kit/) (sibling submodule). The KB at [`kb/`](kb/) is the source of truth — every code change starts from a KB file.
+This project is built using **spec-driven agentic development** ([`agentic-dev-kit/`](agentic-dev-kit/)). The KB at [`kb/`](kb/) is the source of truth. Two UX corrections from the user (ADR-008/009/010 + the v2 reorientation) reshaped the framing while leaving the architectural primitives intact. Phase tracker at [`kb/INDEX.md`](kb/INDEX.md). Round-1-redux questions for v2 are forthcoming.
 
-Phase tracker (and what each phase produced) lives at [`kb/INDEX.md`](kb/INDEX.md).
+## Why "KISS for KISS"
 
-## Why "KISS for KISS"?
+The harness is itself kept stupidly simple so it can build computer programs that are kept stupidly simple. We exclude complex GUIs, large webapps, big software stacks, ML training, GPU/numerics, distributed systems. We target POSIX-like CLIs and libraries with well-specified I/O whose behavior is fully determined by argv + filesystem contents. See [`kb/NOTES.md`](kb/NOTES.md) for the founding vision.
 
-The harness is itself kept stupidly simple so it can build computer programs that are kept stupidly simple. We exclude complex GUIs, large webapps, and big software stacks. We target POSIX-like CLIs and libraries with well-specified I/O whose behavior is fully determined by argv + filesystem contents. See [`kb/NOTES.md`](kb/NOTES.md) for the founding vision.
+## Not v0 anymore
 
-## Limitations (explicit, not lurking)
-
-- Two **reference** examples shipped (`claude-code`, `ollama` for backends; `dune-ocaml` for verifiers). Adding more is a documentation/scripting task; *zero* k4k code changes required.
-- One program class (`cli`). `library`, `filter`, others are v1+.
-- No GUI, no TUI dashboards beyond the in-place TTY status line.
-- No sandboxing of agent-written code — runs in your working tree with your privileges. Run in a container or VM if that matters to you.
-- The target-KB regenerator is deterministic in-process; it produces structured-but-formulaic prose. Switch to agent-driven (one config flag, see ADR-007) if you want narrative prose in `.k4k/<files>`.
+Anything in this README that looks like a developer-CLI command (flags, status output, etc.) is being rewritten under v2. If you're reading the active KB and find content that contradicts the autonomous-agent + Tier-A framing, file it as drift; the v2 PRD is the resolution authority.
 
 ## License
 
-MIT (project itself). Note the sibling `agentic-dev-kit/` and `others/` directories carry their own provenance — read them before redistributing.
+MIT (project itself). Note `agentic-dev-kit/` is a sibling submodule with its own provenance; `kb/archive/v0-drifted/` is the historical record kept verbatim.

@@ -29,19 +29,7 @@ UTF-8 (no BOM; if a BOM is present, k4k strips it on read). Line endings: LF. Ma
 ---
 k4k:
   version: 1
-  class: cli
-  backend:
-    command: ["./scripts/agent.sh"]    # required; per external/backend-protocol.md
-    timeout_s: 300                     # optional; default 300
-  verifier:
-    command: ["./scripts/verify.sh"]   # required; per external/verifier-protocol.md
-    timeout_s: 60                      # optional; default 60
-  budget:
-    soft_per_step: 100
-    hard_per_invocation: 1000
-  retention:
-    agent_runs_keep: 50
-    verifier_runs_keep: 50
+  class: cli         # what kind of program; v2 supports cli (more in v3+)
 ---
 # Project name (free-form heading, ignored by k4k)
 
@@ -79,31 +67,49 @@ N/A
 ## Out of scope
 - ...
 
-## k4k:clarification:2026-05-03-093000
+## k4k:status
+
+(machine-managed. Records the current version, per-property statuses,
+ETA, and the most-recent activity. The user reads this; the user does
+NOT edit it directly except for the documented control directives.)
+
+## k4k:version:1
+
+(snapshotted by k4k when the spec stabilizes; immutable thereafter.
+Records the formal characterization hash and the verification tier
+chosen for each property.)
+
+## k4k:clarification:2026-05-08-093000
 
 (appended by k4k when stability fails; the user answers in place
 by editing this section freely. cotype's 3-way merge handles the
 concurrency. See `external/cotype.md` and ADR-010.)
+
+## k4k:tradeoff:proposal:2026-05-08-104500
+
+(appended by k4k when Tier-A formal verification fails for a property
+and a degradation to Tier B or C is proposed. The user reads, then
+either edits the section to add `Approved: Tier B` (or rejects), and
+re-saves. k4k waits for sign-off before proceeding at the degraded
+tier. See `domain/prd.md` for the full tier hierarchy.)
 ```
 
-### Frontmatter rules
+### Frontmatter rules (v2)
 
 - `k4k.version` is required. Unknown versions ⇒ `EVERSION` (`error-taxonomy.md`).
-- `class` is required. v0 accepts only `cli`.
-- `backend.command` is required (a non-empty list of strings). Missing or empty ⇒ `EUNSTABLE` with a clarification block naming the missing field.
-- `backend.timeout_s` is optional; default 300. Must be a positive integer if present.
-- `verifier.command` is required (a non-empty list of strings). Missing or empty ⇒ `EUNSTABLE` with a clarification block naming the missing field.
-- `verifier.timeout_s` is optional; default 60. Must be a positive integer if present.
-- `budget` and `retention` are optional; defaults from this file apply.
-
-The CLI flags `--backend '<cmd>'` / `--backend-timeout N` override the backend frontmatter for one run; `--verifier '<cmd>'` / `--verifier-timeout N` override the verifier frontmatter. Overrides do not persist to the manifest.
+- `class` is required. v2 accepts only `cli`.
+- **No tooling configuration is exposed to the user.** The frontmatter has only `k4k.version` and `class`; k4k self-selects the verifier, backend, and timeouts based on the formalized characterization and the host environment. (See `domain/prd.md` for the autonomous-agent UX and ADR-011 — when authored — for tier-aware tool selection.)
 
 ### Section identification
 
 - The interaction file is parsed by Markdown headings (`##`).
 - Each H2 heading delimits one section; section identity is derived by *normalizing* the heading text (lowercase, replace runs of non-alphanumeric chars with `-`, trim trailing `-`). E.g. `## Inputs and outputs` → `inputs-and-outputs`; `## File-system contract` → `file-system-contract`.
-- A section heading matching the pattern `## k4k:clarification:<timestamp>` (where `<timestamp>` matches `\d{4}-\d{2}-\d{2}-\d{6}` or similar) is **k4k-managed**. All other H2 sections are user-owned.
-- HTML ownership tags from ADR-002 (`<!-- k4k:owner=... -->`) are now ignored by the parser (treated as plain HTML comments) — see ADR-010. Old fixtures with the tags still parse; the tags are inert.
+- A section heading matching one of the patterns below is **k4k-managed**. All other H2 sections are user-owned.
+  - `## k4k:status` — the live status block (one per file, replaced by k4k each update).
+  - `## k4k:version:<n>` — version snapshot (one per completed-or-in-flight version, accumulating over time).
+  - `## k4k:clarification:<timestamp>` — clarification questions during instability.
+  - `## k4k:tradeoff:proposal:<timestamp>` — Tier-A→B/C trade-off proposals; the user replies inline.
+- HTML ownership tags from ADR-002 (`<!-- k4k:owner=... -->`) are ignored by the parser (treated as plain HTML comments) — see ADR-010. Old fixtures with the tags still parse; the tags are inert.
 
 ### Concurrency
 

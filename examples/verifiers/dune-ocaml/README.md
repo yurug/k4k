@@ -1,7 +1,29 @@
-# Reference verifier — OCaml + dune projects
+# Reference verifier — OCaml + dune projects (Tier C)
 
 Standalone executable conforming to k4k's verifier wire protocol
 (see `kb/external/verifier-protocol.md`).
+
+## ⚠️ Tier-C example, not the canonical default
+
+Per `kb/domain/prd.md` (v2) and the verification-tier hierarchy: this
+verifier is a **Tier-C** example — it establishes property statuses
+solely from a passing test suite. It is **not** what k4k aims for by
+default. The canonical default is Tier A (full formal verification —
+Rocq with extraction to OCaml; Frama-C/ACSL on C; Lean; Verus; F*),
+where the verifier runs `coqc` / `frama-c -wp` / etc. against
+machine-checked artifacts.
+
+This example exists for two reasons:
+1. To demonstrate how *any* tier is reachable through the wire
+   protocol (the protocol itself doesn't know what tier the verifier
+   targets).
+2. To support test scenarios where Tier-A toolchains aren't available
+   in CI (the conformance suite at `test/conformance/` uses it).
+
+If a property genuinely cannot reach Tier A and Tier B, k4k's
+trade-off-negotiation flow may end up using a Tier-C verifier like
+this — but only with explicit user sign-off recorded in the `.k4k`
+file. See the PRD's verification-tier table.
 
 ## What it does
 

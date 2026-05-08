@@ -21,21 +21,22 @@ Signatures, pre/post-conditions, error contracts. Implementations live in code; 
 
 ## Public CLI contract
 
-`k4k <subcommand>? <file.k4k> <flags>...`
+`k4k <file.k4k>`
 
-| Form                                | Pre-conditions                                       | Post-conditions                                                                  | Exit codes                                  |
-|-------------------------------------|------------------------------------------------------|----------------------------------------------------------------------------------|---------------------------------------------|
-| `k4k <file.k4k>`                    | File exists, ≤ 10 MB, UTF-8, parseable               | If stable & gap empty: `done` on stdout + exit 0. On any failure: exit code per `error-taxonomy.md`, stderr line `k4k: <message>`, no partial mutation of `.k4k/`. | 0, 1, 2, 3, 4, 5                            |
-| `k4k --check <file.k4k>`            | Same as above                                        | Prints `stable` or unstable diagnostic; never invokes a gap-step.                | 0 (stable), 1 (unstable)                    |
-| `k4k --status <file.k4k>`           | `.k4k/` exists                                       | Prints current gap properties (id, status, risk_score) one per line. No writes.  | 0 always (or 5 if `.k4k/` missing)          |
-| `k4k --reset <file.k4k> --yes`      | `--yes` provided                                     | `.k4k/` removed; manifest reinitialized empty.                                   | 0                                           |
+| Form               | Pre-conditions                          | Post-conditions                                                                                                                       | Exit codes                  |
+|--------------------|-----------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------|-----------------------------|
+| `k4k <file.k4k>`   | File exists, ≤ 10 MB, UTF-8, parseable  | The watcher process starts and runs autonomously (per `domain/prd.md`). All further interaction goes through the `.k4k` file via cotype. The process exits only on signal, terminal failure, or operator request. | 0 on graceful shutdown; non-zero only if the watcher cannot start (cotype not installed, file unreadable, host environment broken). |
 
-Flags: `-v` / `-vv` (verbosity), `--no-color`, `--max-steps N`, `--budget M`. See `error-taxonomy.md` for all exit codes.
+That is the entire user-facing CLI surface in v2. The agent's *work outcomes* (stability verdicts, version completion, trade-off proposals, errors) are reported in the `.k4k` file, not via exit codes or stdout.
+
+### Operator flags (NOT part of the user UX)
+
+`-v` / `-vv` are accepted by `bin/main.ml` for *operator* debugging (helping someone develop or fix k4k itself; routing engine-level diagnostics to stderr). They do not change behavior the end user observes through the file. Documented separately from the public contract.
 
 ### Stdout/stderr discipline (`P.stdout-discipline`)
 
-- **stdout**: only the one-line in-place TTY status, OR (when `!isatty(stdout)`) one structured log line per state transition. Final `done` or error summary on success/failure.
-- **stderr**: free-form diagnostics at `-v`/`-vv`; nothing at default verbosity.
+- **stdout**: structured progress events as JSONL. One line per state transition (matches what's written to `.k4k/log.jsonl`). The watcher emits these continuously; users typically don't read them. They exist for operators piping the watcher into a log aggregator.
+- **stderr**: free-form diagnostics at `-v` / `-vv`; nothing at default verbosity.
 - Never mix machine-parseable output with prose on the same stream.
 
 ## Agent backend interface

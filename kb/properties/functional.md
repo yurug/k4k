@@ -56,10 +56,10 @@ Each entry: **ID**, **Statement**, **Violation**, **Why**, **Test strategy**. St
 - **Test strategy:** Integration test — establish two properties on a stub program; force the agent to propose a regressive patch on the third; assert the patch is rejected.
 
 ### P6 — Three-strikes-then-blocked
-- **Statement:** A property whose `failure_count` reaches 3 is marked `blocked`; k4k stops attempting it and appends a clarification block to the interaction file.
-- **Violation:** k4k loops indefinitely on the same property.
-- **Why:** Bounded effort prevents ralph-loop runaway. See Q23.
-- **Test strategy:** Stub agent that always proposes invalid patches; assert k4k exits with the property listed as blocked after exactly 3 attempts.
+- **Statement:** A property whose `failure_count` reaches 3 within the current verification tier is marked `blocked` for that tier. k4k stops attempting it at the current tier and (per `domain/prd.md` v2) appends one of two block kinds to the interaction file: a `## k4k:clarification:<ts>` block when the failure indicates spec ambiguity, OR a `## k4k:tradeoff:proposal:<ts>` block when the property is well-specified but Tier A is genuinely too hard.
+- **Violation:** k4k loops indefinitely on the same property at the same tier; OR k4k drops a property to a lower tier without surfacing the trade-off for user sign-off.
+- **Why:** Bounded effort prevents ralph-loop runaway; the tier-negotiation protocol keeps the user in the loop on verification quality.
+- **Test strategy:** Stub agent that always proposes invalid Tier-A patches; assert k4k surfaces a clarification or tradeoff block after exactly 3 attempts and pauses development without exiting.
 
 ### P7 — Closed error taxonomy
 - **Statement:** Every user-visible error matches an entry in `spec/error-taxonomy.md`. Code that emits an unknown error is a bug.
@@ -74,10 +74,10 @@ Each entry: **ID**, **Statement**, **Violation**, **Why**, **Test strategy**. St
 - **Test strategy:** Integration test — start k4k, send SIGINT during a (stubbed-slow) agent call, assert exit ≤ 5 s.
 
 ### P9 — Budget caps respected
-- **Statement:** `budget.used` never exceeds `hard_per_invocation`. Reaching the cap triggers `EBUDGET` and a graceful exit; `.k4k/` is left in a consistent state.
-- **Violation:** k4k spends 1500 budget units when cap was 1000.
-- **Why:** Predictable cost; user-controlled spend. See Q28.
-- **Test strategy:** Stub agent that reports budget usage; force convergence to require > cap; assert exit 4 with EBUDGET.
+- **Statement:** Each agent invocation (`Backend_external.invoke ~budget`) refuses with `Budget_exhausted` rather than exceeding the cap. Engine-level budget bookkeeping (the *internal* `hard_per_invocation` and per-version caps that k4k self-selects, no longer user-facing in v2) is honored: when the cap is reached, k4k pauses development and surfaces a `## k4k:tradeoff:proposal:<ts>` block proposing how to proceed (decompose the property, drop to a lower tier, etc.) — not an exit code.
+- **Violation:** k4k spends past the cap silently; OR k4k crashes/exits when the cap is reached instead of opening an in-file negotiation.
+- **Why:** Predictable cost; the user remains in control of verification quality without managing the cap directly.
+- **Test strategy:** Stub agent that reports budget exhausted near the cap; assert k4k pauses, writes a `tradeoff:proposal` block, and waits.
 
 ### P10 — Atomic writes
 - **Statement:** `manifest.json`, `gap/properties.json`, `desired/spec.json`, `current/spec.json` are written via tmp+fsync+rename. A `kill -9` mid-write never leaves a partial file.
@@ -86,10 +86,10 @@ Each entry: **ID**, **Statement**, **Violation**, **Why**, **Test strategy**. St
 - **Test strategy:** Inject a crash hook between write and rename; restart k4k; assert prior state is intact.
 
 ### P11 — Stdout/stderr discipline
-- **Statement:** stdout carries only the in-place TTY status (or one-line-per-transition when `!isatty`); stderr carries diagnostics; the two streams never interleave.
-- **Violation:** A warning about budget appears on stdout in a piped invocation.
-- **Why:** Pipeable & scriptable. See Q34, Q37.
-- **Test strategy:** Run k4k under `2>/dev/null`, capture stdout, assert it parses as the documented machine-readable form; same with `1>/dev/null` and stderr.
+- **Statement:** The watcher emits **structured JSONL on stdout** (one event per state transition; mirrors `.k4k/log.jsonl`). stderr carries operator-level diagnostics under `-v` / `-vv`; nothing at default verbosity. The two streams never interleave. Free-form prose is forbidden on stdout.
+- **Violation:** A warning string appears on stdout that does not parse as a JSON object.
+- **Why:** Operators piping the watcher into log aggregators rely on stdout being machine-parseable. End users do not read stdout in v2 — they read the `.k4k` file's `## k4k:status` block.
+- **Test strategy:** Run k4k under `2>/dev/null`, capture stdout, assert every non-empty line is parseable JSON; same with `1>/dev/null` for stderr at default verbosity (must be empty).
 
 ### P12 — Concurrency safety on the interaction file
 - **Statement:** Concurrent writes to `<file.k4k>` (by the user, by k4k, or by other cooperating actors) never lose updates. Realized via `cotype` (`external/cotype.md`, ADR-010): every k4k-side mutation goes through `cotype open` → splice → `cotype save --base-sha`, with cotype's 3-way merge handling intervening user edits.

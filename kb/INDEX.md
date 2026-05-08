@@ -13,33 +13,35 @@ related: []
 
 ## What this KB covers
 
-`k4k` (KISS for KISS) is a deterministic harness that drives a coding agent to build POSIX-like CLI programs from an interaction file, accepting only patches a verifier validates against a formal characterization. This KB describes **k4k itself** — the tool — not the programs k4k builds (those have their own `.k4k/` KBs per ADR-006).
+`k4k` (KISS for KISS) is an autonomous coding agent that builds **formally verified** POSIX-like programs from a single user-edited file. The user writes free-form prose; k4k watches the file, asks clarifying questions in-line until the spec denotes a clear theorem, then develops + verifies in full autonomy with full formal verification by default (Rocq+Extraction, Frama-C, Lean, Verus, F*). This KB describes **k4k itself** — the tool — not the programs k4k builds (those have their own `.k4k/` KBs per ADR-006).
 
 ## How to use this KB (for agents)
 
 **Always read first:**
 1. `GLOSSARY.md` — canonical terms (no ambiguity downstream)
-2. `architecture/overview.md` — system shape (modules, DI, error hierarchy)
-3. `domain/prd.md` — what's in scope for v0
+2. `domain/prd.md` — the user-facing UX and verification-tier model (post-v2-reorientation)
+3. `architecture/overview.md` — system shape (modules, DI, error hierarchy)
 
 **Then route by task:** `indexes/by-task.md` is the navigation layer. Use it.
 
 **For background only:**
-- `NOTES.md` — the founding vision (informational; superseded by `domain/prd.md` for scope)
-- `questions-round1.md`, `questions-round2.md` — Phase 1 artefacts; useful for "why was decision X made?"
+- `NOTES.md` — the founding vision
+- `archive/v0-drifted/` — historical Phase-1 artefacts and audit reports from the v0 build; useful for "why was decision X made and why did some choices later change?"
 
 ## Quick-load bundles
 
 | Goal                                      | Load these files (in order)                                                                                      |
 |-------------------------------------------|------------------------------------------------------------------------------------------------------------------|
-| Implement a k4k feature                   | `INDEX.md` → `GLOSSARY.md` → `domain/prd.md` → `kb/plan.md` (Phase 3) → `spec/algorithms.md` + relevant spec/ → `properties/functional.md` → `architecture/overview.md` → `conventions/code-style.md` |
+| Implement a k4k feature                   | `INDEX.md` → `GLOSSARY.md` → `domain/prd.md` → `spec/algorithms.md` + relevant `spec/*` → `properties/functional.md` → `architecture/overview.md` → `conventions/code-style.md` |
 | Add an agent backend (e.g. Ollama)        | `architecture/decisions/adr-009-backend-protocol.md` → `external/backend-protocol.md` → `examples/backends/claude-code/README.md` (worked example) → `conventions/context-economy.md` → `properties/non-functional.md#NF8` — **no k4k code change required** |
-| Add a verifier (e.g. Rocq)                | `architecture/decisions/adr-008-verifier-protocol.md` → `external/verifier-protocol.md` → `examples/verifiers/dune-ocaml/README.md` (worked example) — **no k4k code change required** |
-| Run a Phase-5 audit                       | `runbooks/audit-checklist.md` → `properties/INDEX.md` → `conventions/testing-strategy.md`                       |
+| Add a verifier (Rocq, Frama-C, Lean, Verus, …) | `architecture/decisions/adr-008-verifier-protocol.md` → `external/verifier-protocol.md` → the relevant `examples/verifiers/<x>/README.md` (Tier-A reference example forthcoming) → `domain/prd.md` (verification-tier model) — **no k4k code change required** |
+| Run a quality audit                       | `runbooks/audit-checklist.md` → `properties/INDEX.md` → `conventions/testing-strategy.md`                       |
+| Run weekly drift watch                    | `runbooks/drift-watch.md` → `external/*.md`                                                                       |
 | Debug an issue                            | `spec/error-taxonomy.md` → `spec/algorithms.md` → `properties/edge-cases.md` → relevant `external/<sdk>.md`     |
 | Write or fix tests                        | `conventions/testing-strategy.md` → `properties/INDEX.md` → `spec/api-contracts.md` → `external/verifier-protocol.md` |
 | Author or modify a prompt                 | `conventions/context-economy.md` → `external/ollama.md` → `spec/algorithms.md` → `properties/functional.md`     |
 | Understand a decision                     | `GLOSSARY.md` → `architecture/decisions/INDEX.md` → relevant ADR                                                |
+| Understand the v0→v2 history              | `archive/v0-drifted/README.md`                                                                                  |
 
 ## Top-level layout
 
@@ -49,7 +51,7 @@ kb/
 ├── CLAUDE.md  (in repo root)        project-level instructions for Claude Code
 ├── GLOSSARY.md                      canonical terms
 ├── NOTES.md                         founding vision (kept for reference)
-├── questions-round{1,2}.md          Phase 1 artefacts
+├── archive/v0-drifted/              historical Phase-1 artefacts + audit reports + v0 plan
 │
 ├── domain/
 │   └── prd.md                       v0 product scope, user stories, success criteria
@@ -110,7 +112,7 @@ kb/
 ## File count and last updated
 
 - **Methodology files**: 37 (+ runbooks/drift-watch.md)
-- **Reference files** (NOTES, claude-code-report, opencode, questions-round{1,2,3}, plan, plan-simulation report, audit reports): grew through Phases 1–5
+- **Reference files** active: `NOTES.md`. Archived under `archive/v0-drifted/`: questions-round{1,2,3}, plan, plan-simulation report, all audit reports, the user's feedback that triggered the v2 reorientation.
 - **Last updated**: 2026-05-03
 
 ## Methodology phase tracker
@@ -120,9 +122,9 @@ kb/
 | 1 — Ambiguity resolution                                  | ✓ done (rounds 1, 2, 3)         |
 | 2 — KB construction                                       | ✓ done                          |
 | 2k — KB audit (Ralph Loop + KB-quiz)                      | ✓ done (10/10 quiz, 0 criticals)|
-| 3 — Plan (`kb/plan.md`) + simulation gate                 | ✓ done                          |
+| 3 — Plan + simulation gate                                | ✓ done (archived as `archive/v0-drifted/plan.md` after v2 reorientation) |
 | 4 — Implement (Ralph Loops, per step)                     | ✓ done (steps 1–4)              |
-| 5 — Quality audits                                        | ✓ done — dry pass then skeptical real pass (`kb/reports/audit-real-2026-05-02.md`); all 2 criticals + 7 highs closed |
+| 5 — Quality audits                                        | ✓ done — skeptical second pass found 2 criticals + 7 highs the dry-pass missed; all closed (`archive/v0-drifted/audit-real-2026-05-02.md`) |
 | 6 — KB sync                                               | ✓ done (ADR-007, env-var runbook, alcotest fact, T1 note; sync-quiz 3/3) |
 | 7 — Documentation & validation                            | ✓ done (README.md; e2e validation green from clean tempdir) |
 | v1 — ADR-008 verifier-protocol retrofit                   | ✓ done (`lib/Verifier_external` + `examples/verifiers/dune-ocaml/`) |
@@ -130,6 +132,7 @@ kb/
 | v1 — Reference Ollama backend                             | ✓ done (`examples/backends/ollama/`; live-verified against `qwen3.5:9b`) |
 | v1 — ADR-010 cotype delegation                            | ✓ done (`lib/cotype.ml` + `lib/cotype_stub.ml` + `lib/clarification.ml`; `lib/persist_lock.ml` removed; live cotype 0.2.3 verified) |
 | v1 — Protocol-conformance suite + drift-watch             | ✓ done (`test/conformance/` 6 tests; `kb/runbooks/drift-watch.md`; baseline at `kb/reports/dep-versions-baseline.txt`) |
+| **v2 reorientation** — UX is autonomous agent, not developer CLI; default tier is Tier-A formal verification | KB cleanup ✓ (this commit batch). Round-4 questions, ADR-011, code rewrite of `bin/main.ml` + tier-aware prompts + Tier-A reference verifier example: pending |
 
 ## Agent notes
 

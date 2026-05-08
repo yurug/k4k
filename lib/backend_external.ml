@@ -33,12 +33,19 @@ let purpose_to_string = function
   | `Kb_regen      -> "kb-regen"
 
 (* C1 — NF4 envelope: prompt + output under <k4k_dir>/scratch/<id>/,
-   never /tmp. Pre-touched so K4K_TEST_TRACE_WRITES sees the path. *)
+   never /tmp. Pre-touched so K4K_TEST_TRACE_WRITES sees the path.
+   Audit-2026-05-08-axis2 M1: a previous fallback to
+   [Filename.get_temp_dir_name ()] was dead code (production always
+   sets [k4k_dir]) AND it would have written outside the NF4
+   envelope. Reject the unset case explicitly with E_state_corrupt
+   so the contract is enforced rather than silently honored. *)
 let make_scratch_dir ~k4k_dir ~run_id =
   let base = match k4k_dir with
     | Some d -> Filename.concat d "scratch"
-    | None -> Filename.concat (Filename.get_temp_dir_name ())
-                "k4k-backend-scratch"
+    | None ->
+        raise (Error.K4k_error (Error.E_state_corrupt
+          "Backend_external scratch dir requires a k4k_dir; \
+           production callers must set Backend_external.config.k4k_dir"))
   in
   let dir = Filename.concat base run_id in
   Persist.ensure_dir dir;

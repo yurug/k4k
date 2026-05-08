@@ -1417,6 +1417,23 @@ module BEXT = struct
       Alcotest.(check bool) "prompt path under <k4k>/scratch/" true
         any_under_scratch)
 
+  (* audit-2026-05-08-axis2 M1: when k4k_dir is unset (a contract
+     violation), Backend_external must NOT silently fall back to
+     /tmp — that path was outside the NF4 envelope. The constructor
+     allows None for backward compat; the constraint binds at
+     invoke-time when scratch space is actually allocated. *)
+  let invoke_without_k4k_dir_raises_state_corrupt () =
+    let cfg = { Backend_external.default_config with
+                command = ["/bin/true"]; k4k_dir = None } in
+    let v = Backend_external.create cfg in
+    try
+      let _ = Backend_external.invoke v
+                ~purpose:`Formalization ~prompt:"x" ~budget:100 in
+      Alcotest.fail "expected K4k_error / typed failure when k4k_dir is None"
+    with Error.K4k_error (Error.E_state_corrupt msg) ->
+      Alcotest.(check bool) "msg names k4k_dir contract" true
+        (Astring.String.is_infix ~affix:"k4k_dir" msg)
+
   let tests = [
     Alcotest.test_case "Backend_external_module_conforms_to_signature"
       `Quick module_conforms_to_signature;
@@ -1432,6 +1449,8 @@ module BEXT = struct
       invalid_json_is_tool_error;
     Alcotest.test_case "Backend_external_writes_prompt_under_k4k_dir_not_tmp"
       `Quick writes_prompt_under_k4k_dir_not_tmp;
+    Alcotest.test_case "Backend_external_invoke_without_k4k_dir_raises"
+      `Quick invoke_without_k4k_dir_raises_state_corrupt;
   ]
 end
 

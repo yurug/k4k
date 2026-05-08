@@ -106,9 +106,22 @@ let pkg_manager_command pm =
   | Cargo pkg             -> Some ("cargo", ["install"; "--locked"; pkg],
                                    "cargo")
   | Npm pkg               ->
-      let prefix = Filename.concat (Sys.getenv "HOME")
-        ".local/share/k4k/npm" in
-      Some ("npm", ["install"; "-g"; "--prefix"; prefix; pkg], "npm")
+      (* The npm prefix lives under $HOME/.local/share/k4k/npm —
+         deliberately outside the NF4 per-project envelope because
+         npm-installed binaries are user-global, not per-project.
+         This is the documented exception in
+         [kb/properties/non-functional.md#NF4]. We surface a typed
+         E_state_corrupt rather than letting [Sys.getenv "HOME"]
+         throw [Not_found] (audit-2026-05-08-axis2 M2). *)
+      (match Sys.getenv_opt "HOME" with
+       | None | Some "" ->
+           raise (Error.K4k_error (Error.E_state_corrupt
+             "$HOME is not set; cannot resolve user-scoped npm prefix \
+              (k4k installs npm packages under $HOME/.local/share/k4k/npm)"))
+       | Some home ->
+           let prefix = Filename.concat home ".local/share/k4k/npm" in
+           Some ("npm", ["install"; "-g"; "--prefix"; prefix; pkg],
+                 "npm"))
   | System _              -> None
   | Other_user_install _  -> None
 

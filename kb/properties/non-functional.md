@@ -40,9 +40,10 @@ Each entry: **ID**, **Statement (with measurable criterion)**, **Violation**, **
 - **Why:** Tied to P10. Safety under arbitrary host failure.
 
 ### NF4 — State-confinement envelope
-- **Statement:** During any run, the only paths k4k mutates are `<file.k4k>`, `.k4k/<*>`, and (during gap-steps) the source tree it is building. No `/tmp`, no `$HOME`, no global state.
-- **Violation:** k4k writes a cache file in `~/.cache/k4k/`.
-- **Measurement:** Run under `strace -e trace=openat,unlink,rename`; filter writes; assert all paths fall under the allowed set.
+- **Statement:** During any run, the only paths k4k mutates are `<file.k4k>`, `.k4k/<*>`, and (during gap-steps) the source tree it is building. No `/tmp`, no global state.
+- **Documented exception:** When `Toolchain_install.ensure` actually performs an opt-in user-scoped install (not the `Already_present` no-op fast path), it is allowed to write under `$HOME/.local/share/k4k/<package-manager>/` for tools that require a persistent user-global prefix (notably `npm --prefix`). This path is fixed (no `$XDG_*` variation), surfaces in `.k4k/log.jsonl` as a `toolchain.install_started` event, and the user-scoped prefix is the only acceptable cross-run state we keep outside the per-project envelope. The audit's `K4K_TEST_TRACE_WRITES` hook does NOT see these subprocess writes (they're inside the package manager's process), so the strace check below is the only way to catch a violation; the exception is whitelisted by path prefix.
+- **Violation:** k4k writes a cache file in `~/.cache/k4k/`, or writes ANY file outside the envelope in the `Already_present` path.
+- **Measurement:** Run under `strace -e trace=openat,unlink,rename`; filter writes; assert all paths fall under the allowed set OR the documented exception prefix.
 - **Why:** Reproducibility, auditability, container-friendliness.
 
 ### NF5 — Secrets quarantine

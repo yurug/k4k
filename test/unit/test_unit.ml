@@ -624,7 +624,7 @@ module HT = struct
       with Error.K4k_error (Error.E_state_corrupt _) -> ())
 
   let tests = [
-    Alcotest.test_case "S5_check_subcommand_exits_0_when_stable_structural"
+    Alcotest.test_case "Harness_check_writes_manifest_when_stable"
       `Quick s5_check_stable_writes_manifest;
     Alcotest.test_case "T1_empty_file_is_unstable" `Quick t1_empty_file_unstable;
     Alcotest.test_case "T17_stale_manifest_corrupt" `Quick t17_stale_manifest_corrupt;
@@ -2336,26 +2336,52 @@ module GPT = struct
     Alcotest.(check bool) "convention mentions P<id>_<slug>" true
       (Astring.String.is_infix ~affix:"P<id>_<slug>" s)
 
-  let renders_examples () =
-    let mk_acc n = {
-      Characterization.name = n; argv = ["echo"; n]; stdin = None;
-      expect = { stdout = n; stderr = "";
-                 exit_code = 0; fs_after = None } } in
+  let tier_a_default () =
+    let p = mk_prop () in
+    let s = Gap_prompt.compose p Characterization.empty
+              ~current_summary:"" in
+    Alcotest.(check bool) "default is Tier A (per ADR-011)" true
+      (Astring.String.is_infix ~affix:"Tier A" s)
+
+  let tier_b_template_used_when_signed_off () =
+    let p = mk_prop () in
+    let s = Gap_prompt.compose ~tier:`B p Characterization.empty
+              ~current_summary:"" in
+    Alcotest.(check bool) "Tier B prompt mentions formal model" true
+      (Astring.String.is_infix ~affix:"formal model" s ||
+       Astring.String.is_infix ~affix:"Tier B" s)
+
+  let tier_c_template_used_when_signed_off () =
+    let p = mk_prop () in
+    let s = Gap_prompt.compose ~tier:`C p Characterization.empty
+              ~current_summary:"" in
+    Alcotest.(check bool) "Tier C prompt mentions testing-only" true
+      (Astring.String.is_infix ~affix:"testing-only" s ||
+       Astring.String.is_infix ~affix:"Tier C" s)
+
+  let renders_language_and_verifier_command () =
     let d = { Characterization.empty with
-              examples_accept = [mk_acc "e1"; mk_acc "e2"] } in
+              language = "rocq";
+              verifier_command = ["./proofs/verify.sh"]; } in
     let p = mk_prop () in
     let s = Gap_prompt.compose p d ~current_summary:"" in
-    Alcotest.(check bool) "shows e1" true
-      (Astring.String.is_infix ~affix:"e1" s);
-    Alcotest.(check bool) "shows e2" true
-      (Astring.String.is_infix ~affix:"e2" s)
+    Alcotest.(check bool) "shows language" true
+      (Astring.String.is_infix ~affix:"rocq" s);
+    Alcotest.(check bool) "shows verifier command" true
+      (Astring.String.is_infix ~affix:"./proofs/verify.sh" s)
 
   let tests = [
     Alcotest.test_case "Gap_prompt_includes_property_id" `Quick
       renders_property_id;
     Alcotest.test_case "Gap_prompt_includes_test_naming_convention" `Quick
       renders_test_naming_convention;
-    Alcotest.test_case "Gap_prompt_renders_examples" `Quick renders_examples;
+    Alcotest.test_case "Gap_prompt_tier_a_default" `Quick tier_a_default;
+    Alcotest.test_case "Gap_prompt_tier_b_template" `Quick
+      tier_b_template_used_when_signed_off;
+    Alcotest.test_case "Gap_prompt_tier_c_template" `Quick
+      tier_c_template_used_when_signed_off;
+    Alcotest.test_case "Gap_prompt_renders_language_and_verifier_command"
+      `Quick renders_language_and_verifier_command;
   ]
 end
 

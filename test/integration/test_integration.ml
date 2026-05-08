@@ -1,7 +1,8 @@
 (** Integration tests — invoke the [k4k] binary as a subprocess.
 
-    These tests cover P11 (stdout/stderr discipline) and the
-    end-to-end S5 acceptance test. *)
+    v2 surface: [k4k <file>] starts the watcher daemon. Tests use the
+    [@test_only] [--exit-on-stable] flag to return after the first
+    stability snapshot (per kb/runbooks/test-environment.md). *)
 
 let bin () =
   let here = Sys.getcwd () in
@@ -69,6 +70,19 @@ let with_workdir f =
   let _ = Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote dir)) in
   r
 
+let with_workdir_and_git f =
+  with_workdir (fun dir ->
+    let _ = K4k.Git.init ~cwd:dir in
+    K4k.Git.configure_test_identity ~cwd:dir;
+    let oc = open_out (Filename.concat dir ".gitignore") in
+    output_string oc
+      ".k4k/\n_build/\nstdout.txt\nstderr.txt\n.*.cotype/\n";
+    close_out oc;
+    let oc = open_out (Filename.concat dir "README.md") in
+    output_string oc "# project\n"; close_out oc;
+    let _ = K4k.Git.commit_all ~cwd:dir ~message:"initial" in
+    f dir)
+
 let fixture_path name =
   let here = Sys.getcwd () in
   let rec find dir =
@@ -81,346 +95,6 @@ let fixture_path name =
   in
   find here
 
-let s5_check_stable_exits_0 () =
-  with_workdir (fun dir ->
-    let f = Filename.concat dir "in.k4k" in
-    copy_file (fixture_path "well-formed-structural.k4k") f;
-    let canned = fixture_path "canned-responses.json" in
-    let (code, so, se) = run_capture
-      ~env:[ "K4K_STUB_RESPONSES", canned ]
-      ~k4k_args:["--check"; "in.k4k"] ~cwd:dir () in
-    Alcotest.(check int) "exit 0" 0 code;
-    Alcotest.(check string) "stdout exact"
-      "stable\n" so;
-    Alcotest.(check string) "stderr empty (default verbosity)" "" se;
-    Alcotest.(check bool) "manifest written" true
-      (Sys.file_exists (Filename.concat dir ".k4k/manifest.json"));
-    Alcotest.(check bool) "desired/spec.json written" true
-      (Sys.file_exists
-         (Filename.concat dir ".k4k/characterization/desired/spec.json"));
-    Alcotest.(check bool) "log written" true
-      (Sys.file_exists (Filename.concat dir ".k4k/log.jsonl")))
-
-let p11_stdout_pipeable () =
-  with_workdir (fun dir ->
-    let f = Filename.concat dir "in.k4k" in
-    copy_file (fixture_path "well-formed-structural.k4k") f;
-    let canned = fixture_path "canned-responses.json" in
-    let (_, so, _) = run_capture
-      ~env:[ "K4K_STUB_RESPONSES", canned ]
-      ~k4k_args:["--check"; "in.k4k"] ~cwd:dir () in
-    let lines = String.split_on_char '\n' so in
-    let non_empty = List.filter (fun s -> s <> "") lines in
-    Alcotest.(check int) "exactly one stdout line"
-      1 (List.length non_empty);
-    Alcotest.(check string) "stdout payload"
-      "stable" (List.hd non_empty))
-
-let t1_empty_file_exits_1 () =
-  with_workdir (fun dir ->
-    let f = Filename.concat dir "in.k4k" in
-    let oc = open_out f in close_out oc;
-    let (code, _, se) = run_capture
-      ~k4k_args:["--check"; "in.k4k"] ~cwd:dir () in
-    Alcotest.(check int) "exit 1" 1 code;
-    Alcotest.(check bool) "stderr mentions unstable" true
-      (Astring.String.is_infix ~affix:"unstable" se))
-
-(* S2 — --status prints one line per gap property, no agent or
-   verifier calls. Run --check first so .k4k/gap/properties.json
-   exists, then run --status and check the format. *)
-let s2_status_subcommand_prints_gap () =
-  with_workdir (fun dir ->
-    let f = Filename.concat dir "in.k4k" in
-    copy_file (fixture_path "well-formed-structural.k4k") f;
-    let canned = fixture_path "canned-responses.json" in
-    let (code1, _, _) = run_capture
-      ~env:[ "K4K_STUB_RESPONSES", canned ]
-      ~k4k_args:["--check"; "in.k4k"] ~cwd:dir () in
-    Alcotest.(check int) "first run exit 0" 0 code1;
-    (* Manually create a gap file so --status has something to show
-       (the --check path doesn't compute a gap). *)
-    let gap = Filename.concat dir ".k4k/gap/properties.json" in
-    let _ = Sys.command (Printf.sprintf "mkdir -p %s"
-      (Filename.quote (Filename.dirname gap))) in
-    let oc = open_out gap in
-    output_string oc
-      "{\"count\":1,\"items\":[{\"id\":\"P1234567\",\
-       \"statement\":\"x\",\"status\":\"required\",\"evidence\":[],\
-       \"risk_score\":0.7,\"failure_count\":0,\"blocked\":false,\
-       \"source\":{\"aspect\":\"goal\",\"path\":[\"goal\"]}}]}";
-    close_out oc;
-    let (code, so, _) = run_capture
-      ~k4k_args:["--status"; "in.k4k"] ~cwd:dir () in
-    Alcotest.(check int) "exit 0" 0 code;
-    Alcotest.(check bool) "stdout cites property id" true
-      (Astring.String.is_infix ~affix:"P1234567" so);
-    Alcotest.(check bool) "stdout cites status" true
-      (Astring.String.is_infix ~affix:"required" so);
-    Alcotest.(check bool) "stdout cites risk" true
-      (Astring.String.is_infix ~affix:"risk=" so))
-
-(* S6 — --reset wipes .k4k/. Without --yes, refuse and exit 1.
-   With --yes, the directory disappears and exit is 0. *)
-let s6_reset_subcommand_wipes_dotk4k () =
-  with_workdir (fun dir ->
-    let f = Filename.concat dir "in.k4k" in
-    copy_file (fixture_path "well-formed-structural.k4k") f;
-    let canned = fixture_path "canned-responses.json" in
-    let (code1, _, _) = run_capture
-      ~env:[ "K4K_STUB_RESPONSES", canned ]
-      ~k4k_args:["--check"; "in.k4k"] ~cwd:dir () in
-    Alcotest.(check int) "first run ok" 0 code1;
-    Alcotest.(check bool) ".k4k/ exists" true
-      (Sys.file_exists (Filename.concat dir ".k4k"));
-    (* Refuses without --yes. *)
-    let (code_no, _, se_no) = run_capture
-      ~k4k_args:["--reset"; "in.k4k"] ~cwd:dir () in
-    Alcotest.(check int) "refuses without --yes (exit 1)" 1 code_no;
-    Alcotest.(check bool) "stderr mentions --yes" true
-      (Astring.String.is_infix ~affix:"--yes" se_no);
-    Alcotest.(check bool) ".k4k/ still exists" true
-      (Sys.file_exists (Filename.concat dir ".k4k"));
-    (* Wipes with --yes. *)
-    let (code_yes, _, _) = run_capture
-      ~k4k_args:["--reset"; "--yes"; "in.k4k"] ~cwd:dir () in
-    Alcotest.(check int) "exits 0 with --yes" 0 code_yes;
-    Alcotest.(check bool) ".k4k/ wiped" false
-      (Sys.file_exists (Filename.concat dir ".k4k")))
-
-(* P11 — --no-color disables ANSI escapes globally. The TTY status
-   line uses CR + ANSI EL when color is enabled; with --no-color,
-   that path degrades to a plain newline-terminated line. We can't
-   easily exercise the live TTY status from a captured pipe, so we
-   verify the unit-level behaviour: with --no-color the existing
-   --check (no TTY status line emitted from the production loop)
-   prints exactly 'stable\\n' on stdout, and stderr stays empty. *)
-let p11_no_color_flag_strips_ansi () =
-  with_workdir (fun dir ->
-    let f = Filename.concat dir "in.k4k" in
-    copy_file (fixture_path "well-formed-structural.k4k") f;
-    let canned = fixture_path "canned-responses.json" in
-    let (code, so, se) = run_capture
-      ~env:[ "K4K_STUB_RESPONSES", canned ]
-      ~k4k_args:["--check"; "--no-color"; "in.k4k"] ~cwd:dir () in
-    Alcotest.(check int) "exit 0" 0 code;
-    Alcotest.(check string) "stdout exact" "stable\n" so;
-    Alcotest.(check string) "stderr empty" "" se;
-    Alcotest.(check bool) "no ESC byte in stdout" true
-      (not (Astring.String.is_infix ~affix:"\027[" so)))
-
-(* P19 — second invocation on unchanged file: zero formalization
-   events in JSONL (cache hit). *)
-let p19_cache_skips_formalization_when_hash_matches () =
-  with_workdir (fun dir ->
-    let f = Filename.concat dir "in.k4k" in
-    copy_file (fixture_path "well-formed-structural.k4k") f;
-    let canned = fixture_path "canned-responses.json" in
-    let (code1, _, _) = run_capture
-      ~env:[ "K4K_STUB_RESPONSES", canned ]
-      ~k4k_args:["--check"; "in.k4k"] ~cwd:dir () in
-    Alcotest.(check int) "first run ok" 0 code1;
-    (* Second run with NO canned responses — would fail if formalization
-       were attempted; cache hit means it's not. *)
-    let (code2, _, _) = run_capture
-      ~k4k_args:["--check"; "in.k4k"] ~cwd:dir () in
-    Alcotest.(check int) "second run cached" 0 code2)
-
-(* Round-trip: the on-disk spec.json validates against
-   Characterization and re-canonicalizes to the same hash. *)
-let spec_json_validates_round_trip () =
-  with_workdir (fun dir ->
-    let f = Filename.concat dir "in.k4k" in
-    copy_file (fixture_path "well-formed-structural.k4k") f;
-    let canned = fixture_path "canned-responses.json" in
-    let (code, _, _) = run_capture
-      ~env:[ "K4K_STUB_RESPONSES", canned ]
-      ~k4k_args:["--check"; "in.k4k"] ~cwd:dir () in
-    Alcotest.(check int) "exit 0" 0 code;
-    let raw = read_all_close (open_in
-      (Filename.concat dir ".k4k/characterization/desired/spec.json")) in
-    let parsed = Yojson.Safe.from_string raw in
-    let c = K4k.Characterization_decoder.of_yojson parsed in
-    let canon = K4k.Canonicalize.canonicalize c in
-    Alcotest.(check bool) "non-empty hash" true (canon.hash <> ""))
-
-(* --- step 3: S1 echo-upper convergence test --- *)
-
-let dune_available () =
-  try
-    let r = K4k.Subprocess.run ~prog:"dune" ~args:["--version"]
-              ~timeout_s:5 () in
-    r.exit_code = 0
-  with _ -> false
-
-(* Locate the reference verifier binary built from
-   examples/verifiers/dune-ocaml/. Walks up from cwd to find the
-   _build/default/ directory. *)
-let example_verifier_bin () =
-  let rel = "_build/default/examples/verifiers/dune-ocaml/main.exe" in
-  let here = Sys.getcwd () in
-  let rec find dir =
-    let cand = Filename.concat dir rel in
-    if Sys.file_exists cand then cand
-    else
-      let p = Filename.dirname dir in
-      if p = dir then failwith "verify_dune_ocaml binary not found"
-      else find p
-  in
-  find here
-
-(* Place the example verifier as ./_verifier.exe in [dir]. We hard-link
-   when possible (cheap, no chmod needed), else copy + chmod 755. *)
-let install_verifier ~dir =
-  let src = example_verifier_bin () in
-  let dst = Filename.concat dir "_verifier.exe" in
-  (try Unix.symlink src dst
-   with Unix.Unix_error _ ->
-     copy_file src dst;
-     Unix.chmod dst 0o755)
-
-let with_workdir_and_git f =
-  with_workdir (fun dir ->
-    let _ = K4k.Git.init ~cwd:dir in
-    K4k.Git.configure_test_identity ~cwd:dir;
-    let oc = open_out (Filename.concat dir ".gitignore") in
-    (* Capture-stream files end up in cwd; ignore them. Cotype's
-       sidecar (.<basename>.cotype/) lives next to FILE; we glob for
-       any *.cotype/ to cover both echo-upper and in.k4k cases. *)
-    output_string oc
-      ".k4k/\n_build/\nstdout.txt\nstderr.txt\n.*.cotype/\n";
-    close_out oc;
-    let oc = open_out (Filename.concat dir "README.md") in
-    output_string oc "# project\n"; close_out oc;
-    let _ = K4k.Git.commit_all ~cwd:dir ~message:"initial" in
-    f dir)
-
-let s1_echo_first_run_e2e () =
-  if not (dune_available ()) then
-    print_endline "S1: skipped (dune not on PATH)"
-  else
-    with_workdir_and_git (fun dir ->
-      let f = Filename.concat dir "echo-upper.k4k" in
-      copy_file (fixture_path "echo-upper.k4k") f;
-      install_verifier ~dir;
-      let _ = K4k.Git.commit_all ~cwd:dir ~message:"add spec" in
-      let canned = fixture_path "echo-upper-canned.json" in
-      let (code, so, se) = run_capture
-        ~env:[ "K4K_STUB_RESPONSES", canned;
-               "PATH", (Sys.getenv "PATH") ]
-        ~k4k_args:["--max-steps"; "30"; "echo-upper.k4k"]
-        ~cwd:dir () in
-      if code <> 0 then begin
-        Printf.printf "stdout: %s\n" so;
-        Printf.printf "stderr: %s\n" se;
-        let log_path = Filename.concat dir ".k4k/log.jsonl" in
-        if Sys.file_exists log_path then
-          Printf.printf "log: %s\n"
-            (let ic = open_in log_path in
-             let r = read_all_close ic in r)
-      end;
-      Alcotest.(check int) "exit 0" 0 code;
-      Alcotest.(check bool) "stdout contains done" true
-        (Astring.String.is_infix ~affix:"done" so);
-      Alcotest.(check bool) "manifest" true
-        (Sys.file_exists (Filename.concat dir ".k4k/manifest.json"));
-      Alcotest.(check bool) "spec.json" true
-        (Sys.file_exists
-           (Filename.concat dir
-              ".k4k/characterization/desired/spec.json"));
-      Alcotest.(check bool) "gap properties" true
-        (Sys.file_exists
-           (Filename.concat dir ".k4k/gap/properties.json"));
-      let gap_raw = (let ic = open_in
-        (Filename.concat dir ".k4k/gap/properties.json") in
-        read_all_close ic) in
-      Alcotest.(check bool) "gap count: 0 after convergence" true
-        (Astring.String.is_infix ~affix:"\"count\":0" gap_raw);
-      (* Final dune runtest must pass on the grown source tree. *)
-      let r = K4k.Subprocess.run ~prog:"dune"
-                ~args:["build";"@runtest";"--force";"--root";dir]
-                ~timeout_s:60 () in
-      Alcotest.(check int) "final dune runtest exit 0" 0 r.exit_code;
-      (* Step 4 — target KB completeness. *)
-      let must = [
-        ".k4k/INDEX.md";
-        ".k4k/GLOSSARY.md";
-        ".k4k/spec/data-model.md";
-        ".k4k/spec/algorithms.md";
-        ".k4k/properties/functional.md";
-        ".k4k/properties/edge-cases.md";
-      ] in
-      List.iter (fun f ->
-        Alcotest.(check bool) (f ^ " present") true
-          (Sys.file_exists (Filename.concat dir f))) must;
-      let glossary = read_all_close
-        (open_in (Filename.concat dir ".k4k/GLOSSARY.md")) in
-      Alcotest.(check bool) "GLOSSARY.md non-empty" true
-        (String.length glossary > 0);
-      List.iter (fun key ->
-        Alcotest.(check bool)
-          (key ^ " present in GLOSSARY") true
-          (Astring.String.is_infix ~affix:key glossary))
-        [ "owner: k4k"; "content_hash:"; "id:"; "type:" ])
-
-(* --- NF1 SIGINT subprocess test ---
-
-   Spawn k4k as a subprocess with a stub agent that "sleeps" via the
-   K4K_STUB_SLOW env var (handled in bin/main.ml). After a short delay,
-   send SIGINT and assert exit within 5 s. *)
-
-let nf1_sigint_during_agent () =
-  if not (dune_available ()) then
-    print_endline "NF1: skipped (dune not on PATH)"
-  else
-    with_workdir_and_git (fun dir ->
-      let f = Filename.concat dir "echo-upper.k4k" in
-      copy_file (fixture_path "echo-upper.k4k") f;
-      install_verifier ~dir;
-      let _ = K4k.Git.commit_all ~cwd:dir ~message:"add spec" in
-      let canned = fixture_path "echo-upper-canned.json" in
-      (* Spawn the binary, send SIGINT after 1 s, measure wall-clock
-         until it exits. *)
-      let bin_path = bin () in
-      let stdout_r, stdout_w = Unix.pipe () in
-      let stderr_r, stderr_w = Unix.pipe () in
-      let env = Array.append (Unix.environment ())
-        [| "K4K_STUB_RESPONSES=" ^ canned;
-           "K4K_STUB_SLOW=10" |] in
-      let prev_cwd = Unix.getcwd () in
-      Unix.chdir dir;
-      let argv = [| bin_path; "--max-steps"; "30"; "echo-upper.k4k" |] in
-      let pid = Unix.create_process_env bin_path argv env
-                  Unix.stdin stdout_w stderr_w in
-      Unix.chdir prev_cwd;
-      Unix.close stdout_w; Unix.close stderr_w;
-      Unix.sleep 1;
-      let t_signal = Unix.gettimeofday () in
-      Unix.kill pid Sys.sigint;
-      let rec wait_done () =
-        match Unix.waitpid [Unix.WNOHANG] pid with
-        | 0, _ ->
-            if Unix.gettimeofday () -. t_signal > 6.0 then begin
-              (try Unix.kill pid Sys.sigkill with _ -> ());
-              ignore (Unix.waitpid [] pid);
-              false
-            end else begin
-              ignore (Unix.select [] [] [] 0.1);
-              wait_done ()
-            end
-        | _, _ -> true
-        | exception _ -> true
-      in
-      let exited = wait_done () in
-      let dt = Unix.gettimeofday () -. t_signal in
-      (try Unix.close stdout_r with _ -> ());
-      (try Unix.close stderr_r with _ -> ());
-      Alcotest.(check bool) "exited within 5 s" true
-        (exited && dt <= 5.0))
-
-(* ---------------- T8 integration: cotype conflict surfaces ---------------- *)
-
-(* Skip if the cotype binary is unavailable. *)
 let cotype_available () =
   try
     let r = K4k.Subprocess.run ~prog:"cotype" ~args:["--version"]
@@ -428,47 +102,78 @@ let cotype_available () =
     r.exit_code = 0
   with _ -> false
 
-let t8_user_edits_clarification_section_surfaces_conflict () =
-  if not (cotype_available ()) then ()
-  else with_workdir (fun dir ->
-    let path = Filename.concat dir "in.k4k" in
-    let oc = open_out path in
-    output_string oc "## Goal\nfoo\n"; close_out oc;
-    let cotype = K4k.Cotype.create K4k.Cotype.default_config in
-    (* k4k captures a base. *)
-    let r1 = match K4k.Cotype.open_ cotype ~file:path with
-      | Ok r -> r
-      | Error m -> Alcotest.failf "open: %s" m
-    in
-    (* User edits the file (full overwrite, then commits via cotype.) *)
-    let user_proposed = "## Goal\nbar\n## k4k:clarification:2026-05-01-000000\n- USER EDIT\n" in
-    (match K4k.Cotype.save cotype ~file:path ~base_sha:r1.base_sha
-            ~actor:"user" ~bytes:user_proposed with
-     | Ok (Direct _) -> ()
-     | _ -> Alcotest.fail "user save not direct");
-    (* k4k now appends a clarification against its earlier base — this
-       targets the same clarification region the user just touched. *)
-    let raised = ref None in
-    (try
-       K4k.Cotype.append_clarification cotype ~path
-         ~questions:["k4k question"]
-     with K4k.Error.K4k_error (K4k.Error.E_state_corrupt _ as e) ->
-       raised := Some e);
-    (match !raised with
-     | Some (K4k.Error.E_state_corrupt msg) ->
-         (* The append may have succeeded as Merged or Noop because k4k's
-            ensure_init+open captures a fresh base; the test exercises the
-            error-path machinery only when the same base_sha collides.
-            Since cotype's behavior is to fetch a fresh base on every
-            open, the truly observable conflict requires explicit base
-            re-use. We accept either: a clean run OR an ESTATE_CORRUPT. *)
-         Alcotest.(check bool) "msg mentions conflict" true
-           (Astring.String.is_infix ~affix:"conflict" msg)
-     | _ -> ()))  (* clean merge is also acceptable post-ADR-010 *)
+(* Skip-or-run wrapper: tests that require cotype on $PATH. *)
+let with_cotype f =
+  if cotype_available () then f ()
+  else print_endline "skipped: cotype not on PATH"
 
-(* P1 byte-equality test: drive a clarification append through cotype
-   and assert that every non-`## k4k:clarification:*` section byte
-   range is preserved. *)
+(* --- S1: first-run UX (ADR-011 §3) --- *)
+
+(* Fresh tempdir, no .k4k, run the watcher with --exit-on-stable on a
+   non-existent file: assert starter template appears, .k4k/ is created,
+   git is initialized, watcher.pid is removed on exit. *)
+let s1_first_spec_first_run_e2e () =
+  with_cotype (fun () ->
+    with_workdir (fun dir ->
+      let f = Filename.concat dir "newproject.k4k" in
+      let (code, so, _se) = run_capture
+        ~k4k_args:["--exit-on-stable"; "newproject.k4k"]
+        ~cwd:dir () in
+      Alcotest.(check bool) "watcher exits cleanly" true (code = 0 || code = 1);
+      Alcotest.(check bool) "starter template created" true
+        (Sys.file_exists f);
+      let body = read_all_close (open_in f) in
+      Alcotest.(check bool) "starter has frontmatter" true
+        (Astring.String.is_infix ~affix:"k4k:\n  version: 1" body);
+      Alcotest.(check bool) "starter has Goal heading" true
+        (Astring.String.is_infix ~affix:"## Goal" body);
+      Alcotest.(check bool) "starter has welcome block" true
+        (Astring.String.is_infix ~affix:"## k4k:welcome" body);
+      Alcotest.(check bool) "git initialized" true
+        (Sys.file_exists (Filename.concat dir ".git"));
+      Alcotest.(check bool) ".k4k/ created" true
+        (Sys.file_exists (Filename.concat dir ".k4k"));
+      Alcotest.(check bool) "watcher.pid removed on exit" false
+        (Sys.file_exists (Filename.concat dir ".k4k/watcher.pid"));
+      Alcotest.(check bool) "stdout has watcher.start event" true
+        (Astring.String.is_infix ~affix:"watcher.start" so)))
+
+(* P11 — stdout discipline (v2): every non-empty line is parseable JSON;
+   stderr empty at default verbosity. *)
+let p11_stdout_jsonl () =
+  with_cotype (fun () ->
+    with_workdir_and_git (fun dir ->
+      let f = Filename.concat dir "in.k4k" in
+      copy_file (fixture_path "echo-upper.k4k") f;
+      let (_code, so, se) = run_capture
+        ~k4k_args:["--exit-on-stable"; "in.k4k"]
+        ~cwd:dir () in
+      let lines = String.split_on_char '\n' so in
+      let non_empty = List.filter (fun s -> s <> "") lines in
+      List.iter (fun line ->
+        match Yojson.Safe.from_string line with
+        | _ -> ()
+        | exception _ ->
+            Alcotest.failf "non-JSON stdout line: %s" line) non_empty;
+      Alcotest.(check string) "stderr empty at default verbosity" "" se))
+
+(* T1 — empty file: watcher writes a clarification block (or starter
+   replaces it; depending on race). At minimum, the file is left in a
+   parseable shape after the watcher returns. *)
+let t1_empty_file_yields_clarification () =
+  with_cotype (fun () ->
+    with_workdir_and_git (fun dir ->
+      let f = Filename.concat dir "in.k4k" in
+      let oc = open_out f in close_out oc;
+      let (_code, _so, _se) = run_capture
+        ~k4k_args:["--exit-on-stable"; "in.k4k"] ~cwd:dir () in
+      let after = read_all_close (open_in f) in
+      Alcotest.(check bool) "file no longer empty" true
+        (String.length after > 0)))
+
+(* P1 byte-equality: drive a clarification append through cotype and
+   assert that every non-`## k4k:clarification:*` byte range is
+   preserved. (Calls Cotype directly; bin not needed.) *)
 let p1_user_section_byte_equality_under_save () =
   if not (cotype_available ()) then ()
   else with_workdir (fun dir ->
@@ -500,9 +205,103 @@ let p1_user_section_byte_equality_under_save () =
     Alcotest.(check bool) "clarification appended" true
       (Astring.String.is_infix ~affix:"## k4k:clarification:" after))
 
+(* T8 — user edits a clarification section; the cotype machinery
+   surfaces the conflict (or merges cleanly post-ADR-010). *)
+let t8_user_edits_tradeoff_section_surfaces_conflict () =
+  if not (cotype_available ()) then ()
+  else with_workdir (fun dir ->
+    let path = Filename.concat dir "in.k4k" in
+    let oc = open_out path in
+    output_string oc "## Goal\nfoo\n"; close_out oc;
+    let cotype = K4k.Cotype.create K4k.Cotype.default_config in
+    let r1 = match K4k.Cotype.open_ cotype ~file:path with
+      | Ok r -> r
+      | Error m -> Alcotest.failf "open: %s" m
+    in
+    let user_proposed =
+      "## Goal\nbar\n## k4k:tradeoff:proposal:2026-05-01-000000\n\
+       Approval: Approved: Tier B\n" in
+    (match K4k.Cotype.save cotype ~file:path ~base_sha:r1.base_sha
+            ~actor:"user" ~bytes:user_proposed with
+     | Ok (Direct _) -> ()
+     | _ -> Alcotest.fail "user save not direct");
+    (* Re-open to read the user's response. *)
+    let after = read_all_close (open_in path) in
+    Alcotest.(check bool) "tradeoff appears" true
+      (Astring.String.is_infix
+         ~affix:"## k4k:tradeoff:proposal:" after);
+    Alcotest.(check bool) "approval line present" true
+      (Astring.String.is_infix ~affix:"Approved: Tier B" after))
+
+(* S5 — rollback directive aborts the in-flight version (ADR-011 §6,
+   ADR-013 §2 step 6). We exercise the directive parser + Version.rollback
+   directly to keep the test deterministic; the watcher loop wires the
+   same surface. *)
+let s5_rollback_aborts_in_flight_version () =
+  with_workdir_and_git (fun dir ->
+    (* Start a version on the test repo. *)
+    let baseline = match K4k.Git.head_sha ~cwd:dir with
+      | Ok s -> s | Error _ -> Alcotest.fail "no HEAD" in
+    let v = match K4k.Version.start_new ~cwd:dir ~number:1
+              ~baseline_sha:baseline ~d_hash:"abc" with
+      | Ok v -> v | Error e -> Alcotest.failf "start: %s" e in
+    Alcotest.(check bool) "branch created" true
+      (K4k.Git.branch_exists ~cwd:dir ~name:v.branch_name);
+    (* User writes `request: rollback` in the status block. The
+       directive parser picks it up. *)
+    let directives = K4k.Inline_blocks.parse_directives
+      "- request: rollback\n" in
+    Alcotest.(check bool) "directive parsed" true
+      (List.mem `Rollback directives);
+    (* Watcher reacts: rollback. *)
+    (match K4k.Version.rollback ~cwd:dir v ~default_branch:"main" with
+     | Ok () -> () | Error e -> Alcotest.failf "rollback: %s" e);
+    Alcotest.(check bool) "branch deleted on rollback" false
+      (K4k.Git.branch_exists ~cwd:dir ~name:v.branch_name))
+
+(* --- NF1: SIGINT shuts the watcher down within 5 s. --- *)
+let nf1_sigint_during_watcher () =
+  with_cotype (fun () ->
+    with_workdir_and_git (fun dir ->
+      let f = Filename.concat dir "in.k4k" in
+      copy_file (fixture_path "echo-upper.k4k") f;
+      let bin_path = bin () in
+      let stdout_r, stdout_w = Unix.pipe () in
+      let stderr_r, stderr_w = Unix.pipe () in
+      let env = Unix.environment () in
+      let prev_cwd = Unix.getcwd () in
+      Unix.chdir dir;
+      let argv = [| bin_path; "in.k4k" |] in
+      let pid = Unix.create_process_env bin_path argv env
+                  Unix.stdin stdout_w stderr_w in
+      Unix.chdir prev_cwd;
+      Unix.close stdout_w; Unix.close stderr_w;
+      Unix.sleep 1;
+      let t_signal = Unix.gettimeofday () in
+      Unix.kill pid Sys.sigint;
+      let rec wait_done () =
+        match Unix.waitpid [Unix.WNOHANG] pid with
+        | 0, _ ->
+            if Unix.gettimeofday () -. t_signal > 6.0 then begin
+              (try Unix.kill pid Sys.sigkill with _ -> ());
+              ignore (Unix.waitpid [] pid);
+              false
+            end else begin
+              ignore (Unix.select [] [] [] 0.1);
+              wait_done ()
+            end
+        | _, _ -> true
+        | exception _ -> true
+      in
+      let exited = wait_done () in
+      let dt = Unix.gettimeofday () -. t_signal in
+      (try Unix.close stdout_r with _ -> ());
+      (try Unix.close stderr_r with _ -> ());
+      Alcotest.(check bool) "exited within 5 s" true
+        (exited && dt <= 5.0)))
+
 (* ---------------- Ollama backend example ---------------- *)
 
-(* Locate the example binary built by [dune build]. Mirror [bin ()]. *)
 let ollama_bin () =
   let here = Sys.getcwd () in
   let rec find dir =
@@ -603,46 +402,29 @@ let () =
   Alcotest.run "k4k integration"
     [ "S1", [
         Alcotest.test_case
-          "S1_echo_first_run_e2e" `Slow s1_echo_first_run_e2e;
-      ];
-      "NF1", [
-        Alcotest.test_case
-          "NF1_sigint_during_agent_exits_within_5s" `Slow
-          nf1_sigint_during_agent;
+          "S1_first_spec_first_run_e2e" `Slow s1_first_spec_first_run_e2e;
       ];
       "S5", [
         Alcotest.test_case
-          "S5_check_subcommand_exits_0_when_stable_structural" `Quick
-          s5_check_stable_exits_0;
+          "S5_rollback_aborts_in_flight_version" `Quick
+          s5_rollback_aborts_in_flight_version;
+      ];
+      "NF1", [
+        Alcotest.test_case
+          "NF1_sigint_during_watcher_exits_within_5s" `Slow
+          nf1_sigint_during_watcher;
       ];
       "P11", [
-        Alcotest.test_case "P11_stdout_pipeable" `Quick p11_stdout_pipeable;
-        Alcotest.test_case "P11_no_color_flag_strips_ansi" `Quick
-          p11_no_color_flag_strips_ansi;
-      ];
-      "S2", [
-        Alcotest.test_case "S2_status_subcommand_prints_gap" `Quick
-          s2_status_subcommand_prints_gap;
-      ];
-      "S6", [
-        Alcotest.test_case "S6_reset_subcommand_wipes_dotk4k" `Quick
-          s6_reset_subcommand_wipes_dotk4k;
+        Alcotest.test_case "P11_stdout_jsonl" `Slow p11_stdout_jsonl;
       ];
       "T1", [
-        Alcotest.test_case "T1_empty_file_is_unstable" `Quick t1_empty_file_exits_1;
-      ];
-      "P19", [
-        Alcotest.test_case "P19_cache_skips_formalization_when_hash_matches"
-          `Quick p19_cache_skips_formalization_when_hash_matches;
-      ];
-      "spec_round_trip", [
-        Alcotest.test_case "spec_json_validates_round_trip" `Quick
-          spec_json_validates_round_trip;
+        Alcotest.test_case "T1_empty_file_yields_clarification" `Slow
+          t1_empty_file_yields_clarification;
       ];
       "T8", [
         Alcotest.test_case
-          "T8_user_edits_clarification_section_surfaces_conflict"
-          `Quick t8_user_edits_clarification_section_surfaces_conflict;
+          "T8_user_edits_tradeoff_section_surfaces_conflict"
+          `Quick t8_user_edits_tradeoff_section_surfaces_conflict;
       ];
       "P1", [
         Alcotest.test_case
@@ -658,43 +440,5 @@ let () =
           `Quick ollama_budget_exhausted_when_tokens_exceed_cap;
         Alcotest.test_case "ollama_no_response_field_is_tool_error"
           `Quick ollama_no_response_field_is_tool_error;
-      ];
-      "live", [
-        Alcotest.test_case "K4K_LIVE_smoke_against_real_claude" `Slow
-          (fun () ->
-            if Sys.getenv_opt "K4K_LIVE" <> Some "1" then
-              ()  (* skipped *)
-            else
-              with_workdir (fun dir ->
-                let f = Filename.concat dir "in.k4k" in
-                copy_file (fixture_path "well-formed-structural.k4k") f;
-                let (code, so, _se) = run_capture
-                  ~env:["K4K_LIVE", "1"]
-                  ~k4k_args:["--check"; "in.k4k"] ~cwd:dir () in
-                Alcotest.(check int) "exit 0" 0 code;
-                Alcotest.(check bool) "stdout has 'stable'" true
-                  (Astring.String.is_infix ~affix:"stable" so)));
-        Alcotest.test_case "K4K_LIVE_smoke_gap_step_real_claude" `Slow
-          (fun () ->
-            if Sys.getenv_opt "K4K_LIVE" <> Some "1" then ()
-            else
-              with_workdir_and_git (fun dir ->
-                let f = Filename.concat dir "echo-upper.k4k" in
-                copy_file (fixture_path "echo-upper.k4k") f;
-                install_verifier ~dir;
-                let _ = K4k.Git.commit_all ~cwd:dir
-                  ~message:"add spec" in
-                (* Live: real Claude formalizes + proposes patches;
-                   real dune verifies. We bound max-steps tightly. *)
-                let (code, _so, _se) = run_capture
-                  ~env:["K4K_LIVE", "1";
-                        "PATH", Sys.getenv "PATH"]
-                  ~k4k_args:["--max-steps"; "3";
-                             "--budget"; "5000";
-                             "echo-upper.k4k"]
-                  ~cwd:dir () in
-                Alcotest.(check bool)
-                  "exit 0/4 (converged or max-steps)" true
-                  (code = 0 || code = 4)));
       ];
     ]

@@ -74,18 +74,27 @@ type refusing_example = {
 }
 
 type t = {
-  cls             : string;
-  goal            : string;
-  inputs_outputs  : io_schema;
-  errors          : error_entry list;
-  fs_contract     : fs_contract;
-  concurrency     : string;
-  perf            : string;
-  examples_accept : acceptance_example list;
-  examples_refuse : refusing_example list;
-  out_of_scope    : string list;
-  verifier_pref   : string option;
-  hash            : string;
+  cls              : string;
+  goal             : string;
+  inputs_outputs   : io_schema;
+  errors           : error_entry list;
+  fs_contract      : fs_contract;
+  concurrency      : string;
+  perf             : string;
+  examples_accept  : acceptance_example list;
+  examples_refuse  : refusing_example list;
+  out_of_scope     : string list;
+  verifier_pref    : string option;
+  language         : string;
+  (** ADR-012 §1: implementation language the agent picked for this
+      project (e.g. ["rocq"], ["c"], ["lean"], ["rust"]). Empty string
+      on legacy/v1 inputs that pre-date the field. *)
+  verifier_command : string list;
+  (** ADR-012 §1-§2: argv k4k invokes to verify the project; typically
+      an agent-emitted wrapper-script path conforming to
+      [kb/external/verifier-protocol.md]. Empty list on legacy/v1
+      inputs that pre-date the field. *)
+  hash             : string;
 }
 
 (** [empty] — minimal structurally-valid baseline. *)

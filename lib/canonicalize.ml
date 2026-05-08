@@ -128,6 +128,8 @@ let pre_canonical (c : Characterization.t) : Characterization.t =
     verifier_pref = (match c.verifier_pref with
                      | None -> None
                      | Some s -> Some (normalize_string s));
+    language = normalize_string c.language;
+    verifier_command = List.map normalize_string c.verifier_command;
     hash = ""; }
 
 let canonicalize (c : Characterization.t) : Characterization.t =

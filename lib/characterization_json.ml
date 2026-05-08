@@ -114,5 +114,7 @@ let to_yojson (c : t) : Yojson.Safe.t =
     "examples_refuse", yj_list refusing_example_to_yojson c.examples_refuse;
     "out_of_scope", yj_list yj_string c.out_of_scope;
     "verifier_pref", yj_opt_string c.verifier_pref;
+    "language", yj_string c.language;
+    "verifier_command", yj_list yj_string c.verifier_command;
     "hash", yj_string c.hash;
   ]

@@ -80,18 +80,20 @@ type refusing_example = {
 }
 
 type t = {
-  cls             : string;
-  goal            : string;
-  inputs_outputs  : io_schema;
-  errors          : error_entry list;
-  fs_contract     : fs_contract;
-  concurrency     : string;
-  perf            : string;
-  examples_accept : acceptance_example list;
-  examples_refuse : refusing_example list;
-  out_of_scope    : string list;
-  verifier_pref   : string option;
-  hash            : string;
+  cls              : string;
+  goal             : string;
+  inputs_outputs   : io_schema;
+  errors           : error_entry list;
+  fs_contract      : fs_contract;
+  concurrency      : string;
+  perf             : string;
+  examples_accept  : acceptance_example list;
+  examples_refuse  : refusing_example list;
+  out_of_scope     : string list;
+  verifier_pref    : string option;
+  language         : string;        (* ADR-012: agent's chosen impl language *)
+  verifier_command : string list;   (* ADR-012: agent's wrapper-script argv *)
+  hash             : string;
 }
 
 let empty : t = {
@@ -112,5 +114,7 @@ let empty : t = {
   examples_refuse = [];
   out_of_scope = [];
   verifier_pref = None;
+  language = "";
+  verifier_command = [];
   hash = "";
 }

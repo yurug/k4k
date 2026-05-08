@@ -145,5 +145,10 @@ let of_yojson v : t =
     out_of_scope = List.map str_of
                      (list_of (lookup ~default:(`List []) "out_of_scope" fs));
     verifier_pref = opt_str (lookup "verifier_pref" fs);
+    language = str_of (lookup ~default:(`String "") "language" fs);
+    verifier_command =
+      (match lookup ~default:(`List []) "verifier_command" fs with
+       | `List xs -> List.map str_of xs
+       | _ -> parse_error "expected list for verifier_command");
     hash = str_of (lookup ~default:(`String "") "hash" fs);
   }

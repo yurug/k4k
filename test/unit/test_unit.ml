@@ -779,6 +779,46 @@ module CanonT = struct
     let c2c = Canonicalize.canonicalize c2 in
     Alcotest.(check string) "round-trip hash equal" c.hash c2c.hash
 
+  (* ADR-012 §1: [language] and [verifier_command] round-trip through
+     canonical-JSON and the decoder. *)
+  let v2_language_and_verifier_command_round_trip () =
+    let c = Canonicalize.canonicalize
+      { Characterization.empty with
+        goal = "rt";
+        language = "rocq";
+        verifier_command = ["./proofs/verify.sh"; "--strict"];
+      } in
+    let bytes = Canonicalize.canonical_bytes c in
+    let parsed = Yojson.Safe.from_string bytes in
+    let c2 = Characterization_decoder.of_yojson parsed in
+    Alcotest.(check string) "language preserved" "rocq" c2.language;
+    Alcotest.(check (list string)) "verifier_command preserved"
+      ["./proofs/verify.sh"; "--strict"] c2.verifier_command;
+    let c2c = Canonicalize.canonicalize c2 in
+    Alcotest.(check string) "round-trip hash equal" c.hash c2c.hash
+
+  (* ADR-012 §1 + ADR-005: divergence on [language] surfaces as a real
+     hash mismatch (two formalization runs disagreeing on language is
+     an ambiguity, not an equivalent paraphrase). *)
+  let v2_canonical_hash_diverges_on_language () =
+    let a = Canonicalize.canonicalize
+      { Characterization.empty with goal = "g"; language = "rocq" } in
+    let b = Canonicalize.canonicalize
+      { Characterization.empty with goal = "g"; language = "lean" } in
+    Alcotest.(check bool) "differ on language" true (a.hash <> b.hash)
+
+  (* ADR-012 §1 + ADR-005: divergence on [verifier_command] is a real
+     hash mismatch too. *)
+  let v2_canonical_hash_diverges_on_verifier_command () =
+    let a = Canonicalize.canonicalize
+      { Characterization.empty with goal = "g";
+        verifier_command = ["./a.sh"] } in
+    let b = Canonicalize.canonicalize
+      { Characterization.empty with goal = "g";
+        verifier_command = ["./b.sh"] } in
+    Alcotest.(check bool) "differ on verifier_command" true
+      (a.hash <> b.hash)
+
   let tests = [
     qcheck_to_alcotest p4_idempotent_qcheck;
     Alcotest.test_case "P4_canonicalization_preserves_structural_equivalence"
@@ -789,6 +829,12 @@ module CanonT = struct
       p4_hash_differs_on_real_change;
     Alcotest.test_case "P4_json_round_trip_preserves_hash" `Quick
       p4_json_round_trip;
+    Alcotest.test_case "v2_language_and_verifier_command_round_trip"
+      `Quick v2_language_and_verifier_command_round_trip;
+    Alcotest.test_case "v2_canonical_hash_diverges_on_language"
+      `Quick v2_canonical_hash_diverges_on_language;
+    Alcotest.test_case "v2_canonical_hash_diverges_on_verifier_command"
+      `Quick v2_canonical_hash_diverges_on_verifier_command;
   ]
 end
 

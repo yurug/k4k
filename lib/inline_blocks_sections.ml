@@ -51,74 +51,61 @@ let replace_section_with_breadcrumb raw ~name ~breadcrumb =
 let breadcrumb_for kind ts =
   Printf.sprintf "<!-- k4k:%s %s — resolved; archived -->" kind ts
 
-(* Find the first `## k4k:tradeoff:proposal:<ts>` block. Returns
-   [Some (ts, body, start, stop)] or [None]. *)
-let find_tradeoff_block raw =
+(* Locate the first `## <prefix><ts>` H2 block. Internal helper
+   that powers both [find_tradeoff_block] and
+   [find_clarification_block] — they used to be 30+ line near-
+   duplicates that only differed in the prefix string and the
+   return-shape (axis 6 M-2). *)
+let find_h2_with_prefix raw ~prefix =
   let n = String.length raw in
-  let prefix = "## k4k:tradeoff:proposal:" in
   let lp = String.length prefix in
+  let line_end_of i =
+    let rec go j =
+      if j >= n then j
+      else if raw.[j] = '\n' then j
+      else go (j + 1)
+    in go i
+  in
+  let scan_end_after body_start =
+    let rec go j =
+      if j + 3 > n then n
+      else if j > body_start && raw.[j - 1] = '\n'
+              && raw.[j] = '#' && raw.[j + 1] = '#'
+              && raw.[j + 2] = ' '
+      then j
+      else go (j + 1)
+    in
+    go body_start
+  in
   let rec scan i =
     if i + lp > n then None
     else if (i = 0 || raw.[i - 1] = '\n')
             && String.sub raw i lp = prefix
     then
-      let line_end =
-        let rec go j =
-          if j >= n then j
-          else if raw.[j] = '\n' then j
-          else go (j + 1)
-        in go (i + lp)
-      in
+      let line_end = line_end_of (i + lp) in
       let ts = String.trim (String.sub raw (i + lp) (line_end - (i + lp))) in
       let body_start = if line_end < n then line_end + 1 else line_end in
-      let rec scan_end j =
-        if j + 3 > n then n
-        else if j > body_start && raw.[j - 1] = '\n'
-                && raw.[j] = '#' && raw.[j + 1] = '#'
-                && raw.[j + 2] = ' '
-        then j
-        else scan_end (j + 1)
-      in
-      let stop = scan_end body_start in
-      let body = String.sub raw body_start (stop - body_start) in
-      Some (ts, body, i, stop)
+      let stop = scan_end_after body_start in
+      Some (ts, body_start, stop, i)
     else scan (i + 1)
   in
   scan 0
 
+(* Find the first `## k4k:tradeoff:proposal:<ts>` block. Returns
+   [Some (ts, body, start, stop)] or [None]. *)
+let find_tradeoff_block raw =
+  match find_h2_with_prefix raw ~prefix:"## k4k:tradeoff:proposal:" with
+  | None -> None
+  | Some (ts, body_start, stop, start) ->
+      let body = String.sub raw body_start (stop - body_start) in
+      Some (ts, body, start, stop)
+
 (* Find the first `## k4k:clarification:<ts>` section. Returns
    [Some (ts, start, stop)] or [None]. *)
 let find_clarification_block raw =
-  let n = String.length raw in
-  let prefix = "## k4k:clarification:" in
-  let lp = String.length prefix in
-  let rec scan i =
-    if i + lp > n then None
-    else if (i = 0 || raw.[i - 1] = '\n')
-            && String.sub raw i lp = prefix
-    then
-      let line_end =
-        let rec go j =
-          if j >= n then j
-          else if raw.[j] = '\n' then j
-          else go (j + 1)
-        in go (i + lp)
-      in
-      let ts = String.trim (String.sub raw (i + lp) (line_end - (i + lp))) in
-      let body_start = if line_end < n then line_end + 1 else line_end in
-      let rec scan_end j =
-        if j + 3 > n then n
-        else if j > body_start && raw.[j - 1] = '\n'
-                && raw.[j] = '#' && raw.[j + 1] = '#'
-                && raw.[j + 2] = ' '
-        then j
-        else scan_end (j + 1)
-      in
-      let stop = scan_end body_start in
-      Some (ts, i, stop)
-    else scan (i + 1)
-  in
-  scan 0
+  match find_h2_with_prefix raw ~prefix:"## k4k:clarification:" with
+  | None -> None
+  | Some (ts, _body_start, stop, start) -> Some (ts, start, stop)
 
 let has_welcome_section raw = find_section raw ~name:"k4k:welcome" <> None
 

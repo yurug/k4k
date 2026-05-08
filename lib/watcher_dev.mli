@@ -26,10 +26,6 @@ val after_version_done :
   tier_dist:Inline_blocks.tier_distribution ->
   unit
 
-(** P22 helper: count user-owned sections whose hash differs between
-    [baseline_hashes] (snapshot at version-N stabilization) and
-    [current_hashes] (most recent read). *)
-val pending_user_edits :
-  baseline_hashes:(string * string) list ->
-  current_hashes:(string * string) list ->
-  int
+(* Note: the P22 drift counter that previously lived here was moved
+   to [Version_user_edits.count_drift] now that the user-edits
+   queueing is wired into [Version_loop.run_gap_loop]. *)

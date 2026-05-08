@@ -4,8 +4,11 @@
     ID is derived from the heading text by [normalize_id] (lowercase;
     runs of non-alphanumeric chars → '-'; trim trailing '-').
 
-    A section heading matching `## k4k:clarification:<rest>` is
-    k4k-managed; all other sections are user-owned. *)
+    Sections whose normalized id starts with `k4k-` are k4k-managed
+    (per kb/spec/config-and-formats.md §section-identification): the
+    enumerated set is `k4k:status`, `k4k:version:<n>`,
+    `k4k:clarification:<ts>`, `k4k:tradeoff:proposal:<ts>`, and
+    `k4k:welcome`. All other H2 sections are user-owned. *)
 
 type owner = [ `User | `K4k ]
 
@@ -45,8 +48,8 @@ let normalize_id heading =
   let n = String.length s in
   if n > 0 && s.[n - 1] = '-' then String.sub s 0 (n - 1) else s
 
-let is_clarification_id id =
-  let prefix = "k4k-clarification" in
+let is_k4k_managed_id id =
+  let prefix = "k4k-" in
   let lp = String.length prefix in
   String.length id >= lp && String.sub id 0 lp = prefix
 
@@ -99,7 +102,7 @@ let build_sections raw start =
           | (next_start, _, _, _) :: _ -> next_start
           | [] -> n
         in
-        let owner = if is_clarification_id id then `K4k else `User in
+        let owner = if is_k4k_managed_id id then `K4k else `User in
         let content = String.sub raw after_heading (body_end - after_heading) in
         let sec = {
           owner; id; hash = None; content;

@@ -4994,6 +4994,62 @@ module VTT = struct
   ]
 end
 
+(* ---------------- Version_user_edits (P22) ----------------------- *)
+module VUET = struct
+  let count_drift_zero_on_identical () =
+    let h = [ "goal", "abc"; "out-of-scope", "def" ] in
+    Alcotest.(check int) "no drift" 0
+      (Version_user_edits.count_drift
+         ~baseline_hashes:h ~current_hashes:h)
+
+  let count_drift_one_when_section_edited () =
+    let baseline = [ "goal", "abc"; "out-of-scope", "def" ] in
+    let current  = [ "goal", "ZZZ"; "out-of-scope", "def" ] in
+    Alcotest.(check int) "1 section edited" 1
+      (Version_user_edits.count_drift
+         ~baseline_hashes:baseline ~current_hashes:current)
+
+  let count_drift_counts_disappearing_sections () =
+    let baseline = [ "goal", "abc"; "out-of-scope", "def" ] in
+    let current  = [ "goal", "abc" ] in
+    Alcotest.(check int) "1 section gone" 1
+      (Version_user_edits.count_drift
+         ~baseline_hashes:baseline ~current_hashes:current)
+
+  let snapshot_returns_empty_with_no_cotype_or_path () =
+    let h = Version_user_edits.snapshot ~file_path:None () in
+    Alcotest.(check int) "no cotype, no path → []" 0 (List.length h)
+
+  let check_and_queue_no_op_with_empty_baseline () =
+    with_tmpdir (fun dir ->
+      let _ = Git.init ~cwd:dir in
+      Git.configure_test_identity ~cwd:dir;
+      let oc = open_out (Filename.concat dir ".gitignore") in
+      output_string oc ".k4k/\n"; close_out oc;
+      let _ = Git.commit_all ~cwd:dir ~message:"initial" in
+      let cfg : Version_user_edits.cfg = {
+        cwd = dir; emit = (fun _ _ -> ()); file_path = None;
+      } in
+      let surfaced = ref 0 in
+      let n = Version_user_edits.check_and_queue ~cfg
+                ~v_number:1 ~baseline:[] ~surfaced () in
+      Alcotest.(check int) "empty baseline → 0" 0 n;
+      Alcotest.(check int) "surfaced unchanged" 0 !surfaced)
+
+  let tests = [
+    Alcotest.test_case "count_drift_zero_on_identical" `Quick
+      count_drift_zero_on_identical;
+    Alcotest.test_case "count_drift_one_when_section_edited" `Quick
+      count_drift_one_when_section_edited;
+    Alcotest.test_case "count_drift_counts_disappearing_sections" `Quick
+      count_drift_counts_disappearing_sections;
+    Alcotest.test_case "snapshot_returns_empty_with_no_cotype_or_path" `Quick
+      snapshot_returns_empty_with_no_cotype_or_path;
+    Alcotest.test_case "check_and_queue_no_op_with_empty_baseline" `Quick
+      check_and_queue_no_op_with_empty_baseline;
+  ]
+end
+
 let () =
   Alcotest.run "k4k unit"
     [ "Error",        ET.tests;
@@ -5046,4 +5102,5 @@ let () =
       "Tradeoff_flow", TFT.tests;
       "Watcher_form", WFT.tests;
       "Version_tradeoff", VTT.tests;
+      "Version_user_edits", VUET.tests;
     ]

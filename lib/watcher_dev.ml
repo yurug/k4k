@@ -137,8 +137,3 @@ let after_version_done ~file_path ct ~version_n ~tier_dist =
   let block = render_done_status ~version_n ~tier_dist in
   save_status_block ~file_path ct ~bytes:block
 
-let pending_user_edits ~baseline_hashes ~current_hashes : int =
-  List.length (List.filter (fun (k, v) ->
-    match List.assoc_opt k current_hashes with
-    | None -> true
-    | Some v' -> v <> v') baseline_hashes)

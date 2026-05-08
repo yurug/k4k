@@ -675,6 +675,121 @@ let s3_tradeoff_proposal_signed_off () =
            so &&
          Astring.String.is_infix ~affix:"\"tier\":\"B\"" so)))
 
+(* --- P22: user edits during development are queued, never interrupt
+   (ADR-011 §6; properties/functional.md#P22).
+
+   The user edit is injected by a verifier wrapper that, on its FIRST
+   invocation, appends a sentinel line to the user-owned `## Goal`
+   section of `in.k4k` (direct file write — simulating an external
+   editor mutation). Subsequent invocations pass through to the
+   synthetic verifier. With `K4K_SYNTH_ESTABLISHED` covering every
+   focus id, the very first gap-step is accepted, so the user edit
+   lands in the establish-commit's `git add -A`. The next
+   [run_gap_loop] iteration's [Version_user_edits.check_and_queue]
+   detects the drift, surfaces the count in the status block, and
+   emits [user_edits.queued]. *)
+
+let write_p22_verifier_wrapper ~path ~synth_path ~k4k_file =
+  let body = Printf.sprintf {|#!/bin/sh
+set -e
+SENTINEL=%s.p22-edited
+TARGET=%s
+SYNTH=%s
+if [ ! -f "$SENTINEL" ]; then
+  if [ -f "$TARGET" ]; then
+    awk '
+      BEGIN { done=0 }
+      /^## Goal[[:space:]]*$/ && done==0 {
+        print
+        print "EDITED-MID-FLIGHT-P22"
+        done=1
+        next
+      }
+      { print }
+    ' "$TARGET" > "$TARGET.tmp.p22" && mv "$TARGET.tmp.p22" "$TARGET"
+  fi
+  touch "$SENTINEL"
+fi
+exec "$SYNTH" "$@"
+|} (Filename.quote path) (Filename.quote k4k_file)
+     (Filename.quote synth_path) in
+  let oc = open_out path in
+  output_string oc body; close_out oc;
+  Unix.chmod path 0o755
+
+let p22_user_edits_queued_during_development () =
+  with_cotype (fun () ->
+    with_workdir_and_git (fun dir ->
+      let f = Filename.concat dir "in.k4k" in
+      copy_file (fixture_path "echo-upper.k4k") f;
+      let _ = K4k.Git.commit_all ~cwd:dir ~message:"add in.k4k" in
+      let here = Sys.getcwd () in
+      let rec find_synth d =
+        let cand = Filename.concat d
+          "test/conformance/fixtures/synthetic-verifier.sh" in
+        if Sys.file_exists cand then cand
+        else
+          let p = Filename.dirname d in
+          if p = d then failwith "synthetic-verifier.sh not found"
+          else find_synth p
+      in
+      let synth_src = find_synth here in
+      let synth_dst = Filename.concat dir "_synth.sh" in
+      copy_synthetic_verifier ~src:synth_src ~dst:synth_dst;
+      let verifier_dst = Filename.concat dir "_verifier.sh" in
+      write_p22_verifier_wrapper ~path:verifier_dst
+        ~synth_path:synth_dst ~k4k_file:f;
+      let d = build_d ~verifier_cmd:["./_verifier.sh"] in
+      let pids = property_ids_of d in
+      let canned_path = Filename.concat dir "canned.json" in
+      write_canned_responses ~path:canned_path
+        ~n_props:(List.length pids)
+        ~formalize_text:(formalize_payload d);
+      let _ = K4k.Git.commit_all ~cwd:dir
+        ~message:"test: add verifier + canned" in
+      let est = String.concat " " pids in
+      let env = [
+        ("K4K_STUB_RESPONSES", canned_path);
+        ("K4K_SYNTH_ESTABLISHED", est);
+      ] in
+      let (_code, so, _se) = run_capture_with_env
+        ~k4k_args:["--exit-on-done"; "in.k4k"]
+        ~cwd:dir ~env () in
+      Alcotest.(check bool) "user_edits.queued emitted" true
+        (Astring.String.is_infix ~affix:"user_edits.queued" so);
+      Alcotest.(check bool) "queue count is 1" true
+        (Astring.String.is_infix ~affix:"\"count\":1" so);
+      (* The event fires exactly once: a single user edit produces
+         one [user_edits.queued] regardless of how many gap-step
+         iterations follow. *)
+      let count_substr s sub =
+        let n = String.length sub in
+        let m = String.length s in
+        let rec loop i acc =
+          if i + n > m then acc
+          else if String.sub s i n = sub then loop (i + 1) (acc + 1)
+          else loop (i + 1) acc
+        in loop 0 0
+      in
+      Alcotest.(check int) "exactly one user_edits.queued event" 1
+        (count_substr so "\"event\":\"user_edits.queued\"");
+      Alcotest.(check bool) "version.complete emitted" true
+        (Astring.String.is_infix ~affix:"version.complete" so);
+      (* Sentinel landed on main via the version merge. *)
+      let final = read_file f in
+      Alcotest.(check bool) "user edit present in merged file" true
+        (Astring.String.is_infix ~affix:"EDITED-MID-FLIGHT-P22" final);
+      (* The version-branch's "queue user edits" commit shows up in
+         the git log (visible on main after the merge). *)
+      let log_cmd = Printf.sprintf
+        "cd %s && git log --pretty=format:%%s"
+        (Filename.quote dir) in
+      let ic = Unix.open_process_in log_cmd in
+      let log = read_all_close ic in
+      Alcotest.(check bool) "queue-user-edits commit in log" true
+        (Astring.String.is_infix
+           ~affix:"queue user edits for v" log)))
+
 let ollama_no_response_field_is_tool_error () =
   with_workdir (fun dir ->
     let p = Filename.concat dir "prompt.txt" in
@@ -711,6 +826,11 @@ let () =
         Alcotest.test_case
           "S3_tradeoff_proposal_signed_off" `Slow
           s3_tradeoff_proposal_signed_off;
+      ];
+      "P22", [
+        Alcotest.test_case
+          "P22_user_edits_queued_during_development" `Slow
+          p22_user_edits_queued_during_development;
       ];
       "NF1", [
         Alcotest.test_case

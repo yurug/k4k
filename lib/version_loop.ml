@@ -100,8 +100,15 @@ let drive_property_full ~deps_a ~d ~cfg ~v_number
            on_deferred ~cfg ~prev_outcomes q'; `Skip
        | `Stop -> `Stop)
 
+let ue_cfg cfg : Version_user_edits.cfg =
+  { cwd = cfg.cwd; emit = cfg.emit; file_path = cfg.file_path }
+
 let rec run_gap_loop ~deps_a ~d ~cfg ~v_number ~prev_status ~prev_outcomes
-    ~tier_assignments ?cotype pending =
+    ~tier_assignments ~baseline_user_hashes ~surfaced_edits ?cotype pending =
+  let _ = Version_user_edits.check_and_queue
+            ~cfg:(ue_cfg cfg) ~v_number
+            ~baseline:baseline_user_hashes ~surfaced:surfaced_edits
+            ?cotype () in
   match Property.argmax_lex pending with
   | None -> ()
   | Some p ->
@@ -112,7 +119,8 @@ let rec run_gap_loop ~deps_a ~d ~cfg ~v_number ~prev_status ~prev_outcomes
        | `Stop -> ()
        | `Continue | `Skip ->
            run_gap_loop ~deps_a ~d ~cfg ~v_number ~prev_status
-             ~prev_outcomes ~tier_assignments ?cotype rest)
+             ~prev_outcomes ~tier_assignments
+             ~baseline_user_hashes ~surfaced_edits ?cotype rest)
 
 let persist_initial ~cfg ~v ~d =
   Version_persist.ensure_dirs ~k4k_dir:cfg.k4k_dir
@@ -129,32 +137,17 @@ let mk_developing_status n =
     last_activity = Inline_blocks.timestamp_now ();
     open_tradeoffs = 0; }
 
-let save_status ~cotype ~file_path ~status_block =
-  try
-    let opened = Cotype.open_ cotype ~file:file_path in
-    match opened with
-    | Error _ -> ()
-    | Ok r ->
-        let base = Persist.read_file r.base_path in
-        let merged = Status_splice.replace_or_append base status_block in
-        let _ = Cotype.save cotype ~file:file_path
-                  ~base_sha:r.base_sha ~actor:"agent:k4k"
-                  ~bytes:merged in ()
-  with _ -> ()
-
-let commit_status_on_branch ~cwd =
-  let clean, _ = Git.is_clean ~cwd in
-  if not clean then
-    let _ = Git.commit_all ~cwd
-              ~message:"[k4k] status: developing" in ()
-
 let write_developing_status ~cfg ~v ?cotype () =
   match cfg.file_path, cotype with
   | Some fp, Some ct ->
       let block = Inline_blocks.render_status
         (mk_developing_status v.Version.number) in
-      save_status ~cotype:ct ~file_path:fp ~status_block:block;
-      commit_status_on_branch ~cwd:cfg.cwd
+      Version_user_edits.splice_status_block
+        ~cotype:ct ~file_path:fp ~status_block:block;
+      let clean, _ = Git.is_clean ~cwd:cfg.cwd in
+      if not clean then
+        let _ = Git.commit_all ~cwd:cfg.cwd
+                  ~message:"[k4k] status: developing" in ()
   | _ -> ()
 
 let to_local_result : Version_finalize.result -> result = function
@@ -164,6 +157,9 @@ let to_local_result : Version_finalize.result -> result = function
 let drive_version ~cfg ~d v ~started_at ?cotype () : result =
   persist_initial ~cfg ~v ~d;
   write_developing_status ~cfg ~v ?cotype ();
+  let baseline_user_hashes =
+    Version_user_edits.snapshot ?cotype ~file_path:cfg.file_path () in
+  let surfaced_edits = ref 0 in
   let logger = logger_for cfg in
   let budget_ref = ref cfg.budget in
   let deps_a = mk_deps cfg ~tier:`A ~budget_ref ~logger in
@@ -172,7 +168,8 @@ let drive_version ~cfg ~d v ~started_at ?cotype () : result =
   let prev_outcomes = ref [] in
   let tier_assignments = ref [] in
   run_gap_loop ~deps_a ~d ~cfg ~v_number:v.Version.number
-    ~prev_status ~prev_outcomes ~tier_assignments ?cotype gap;
+    ~prev_status ~prev_outcomes ~tier_assignments
+    ~baseline_user_hashes ~surfaced_edits ?cotype gap;
   let outcomes = List.rev !prev_outcomes in
   Version_persist.write_tiers
     ~k4k_dir:cfg.k4k_dir ~number:v.Version.number

@@ -18,6 +18,8 @@ may be null):
 {
   "class": "cli",
   "goal": "<= 200 chars summarizing what the program does",
+  "language": "ocaml|rust|c|python|...",
+  "verifier_command": ["./_verifier.sh"],
   "inputs_outputs": {
     "argv": [
       {"name": "<flag-or-positional>", "kind": "flag|option|positional",
@@ -62,6 +64,17 @@ Rules:
   field comes from the user's prose verbatim.
 - Use the user's identifiers verbatim (do not paraphrase flag names or
   error ids).
+- "language": choose from the user's prose, or default to a sensible
+  match for the verification tier they need (OCaml + Rocq for Tier-A
+  formal verification; Rust + Verus; C + Frama-C; etc.). The choice
+  participates in the canonical hash — make it deterministic given
+  the user's content.
+- "verifier_command": the argv (executable + leading args) of the
+  wrapper script you (the agent) will write, conforming to
+  kb/external/verifier-protocol.md. Typical: ["./_verifier.sh"].
+  This is what k4k will invoke for every gap-step verification.
+  k4k carries no toolchain knowledge — you pick the verifier per
+  project and emit the wrapper.
 
 Example input:
 

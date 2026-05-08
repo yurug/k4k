@@ -21,17 +21,85 @@ Procedures only. Schemas in `data-model.md`; serialization in `config-and-format
 
 ## Top-level loop
 
+The v2 binary is an autonomous watcher daemon (ADR-011 / ADR-013).
+The user runs `k4k <file>` once; thereafter the watcher polls the
+file via cotype and drives versions to completion without further
+operator action. Termination is signal-driven (SIGINT / SIGTERM) or
+via the documented test-only `--exit-on-stable` / `--exit-on-done` /
+`--max-versions=N` flags.
+
 ```
 main(file.k4k):
-  parse_frontmatter_and_sections(file)
-  read_or_init_manifest(.k4k/)
-  loop:
-    stability = stability_check(file)
-    if not stability.is_stable: append_clarification_block(file, stability.questions); exit 1
-    G = gap_construction(D, S)
-    if G is empty: print "done"; exit 0
-    if --max-steps reached or budget exhausted: exit 4
-    step(G)              # one gap-step; updates .k4k/, may modify source tree
+  Watcher.startup(file):                # ADR-011 §3
+    ensure_starter_file(file)           # creates a template if missing
+    ensure_frontmatter(file)            # auto-injects k4k:{version,class}
+    ensure_git_repo(dirname file)       # git init if not a work tree
+    ensure_toolchain("cotype", "git")   # ADR-012 §4
+    Watcher_pid.acquire(.k4k/)          # ADR-011 §2: single instance per file
+  agent_invoke = Watcher_dev.resolve_invoke()
+                                         # ALLOCATED ONCE; queues persist
+  loop until SIGINT or test-flag exit:
+    if user_directives_in_file include `request: rollback`:
+      rollback(current_version_branch)
+      stop                              # ADR-013 §2 step 6
+    if `request: pause`: sleep poll_interval; continue
+    content = Cotype.read_base(file)    # ADR-010
+    structural = stability_check(content)
+    if structural.unstable:
+      append_clarification_block(file, structural.questions)
+      sleep poll_interval; continue     # NEVER exits — ADR-011 §1
+    process_stable():                   # archive resolved clarifications;
+                                        # auto-delete the welcome block
+                                        # (ADR-011 §7)
+    outcome = attempt_version(content, agent_invoke)
+                                         # see "Version loop" below
+    if outcome is Done:                 versions_done += 1
+    if exit_on_done and outcome ∈ {Done, Rolled_back}: stop
+    if max_versions and versions_done ≥ max_versions: stop
+    sleep poll_interval                  # default 500 ms (2 Hz)
+```
+
+The watcher never `exit`s on instability — it appends a
+clarification block and continues polling. The only "termination"
+in production is a signal; the test-only flags (`--exit-on-stable`,
+`--exit-on-done`, `--max-versions`) let integration tests bound a
+run deterministically.
+
+### Version loop (per stable tick)
+
+```
+attempt_version(content, agent_invoke):
+  d = formalize(content, agent_invoke) # see {#formalization}
+  if d is Error reason: emit version.skip; return Skipped
+  if d.hash == last_completed_d_hash:  # idempotence gate
+     emit version.skip "no-spec-change"; return Skipped
+  v = Version.start_new(branch=k4k/version/<n>, baseline=HEAD,
+                        d_hash=d.hash)
+  drive_version(d, v):                  # ADR-013 §2
+    write_developing_status(file)       # splice ## k4k:status block
+    baseline_user_hashes = snapshot()
+    for property p in argmax-lex order on D:
+      Version_user_edits.check_and_queue(baseline)
+                                         # P22: if the user edited
+                                         # mid-flight, surface the
+                                         # count and commit the
+                                         # residue on the version
+                                         # branch (NEVER interrupts
+                                         # the gap loop)
+      drive_property_at_tier_a(p):       # see "Gap-step" below
+        Accepted     → record commit
+        Done_blocked → defer
+        Tradeoff     → propose to user, wait for sign-off
+                       (Tradeoff_flow), retry at the approved tier
+                       OR at Tier-A with the user's guidance
+        Stop         → SIGINT / budget exit
+    Version_finalize.finalize:
+      if every property is established → merge to default branch,
+                                         tag v<n>, write audit.md →
+                                         return Done
+      else                              → write audit.md, leave
+                                         the branch around → return
+                                         Rolled_back
 ```
 
 ## Stability check {#stability}
@@ -147,6 +215,9 @@ step(p, prev_status):
   resp   = agent_backend.invoke(prompt)            # see api-contracts.md
   if resp.outcome == "budget-exhausted": return Budget_exhausted
   diff = extract_diff(resp.text)
+  Diff_filter.first_forbidden(diff)                # reject .k4k/, .git/,
+                                                   # absolute, ../ paths
+                                                   # before any FS write
   apply(diff, working_tree)                        # Git.apply_diff --index
   vresult = verifier.run(working_tree, focus=[p.id])
   if vresult.by_property[p.id] == "established"
@@ -160,9 +231,18 @@ step(p, prev_status):
     return Tradeoff if failure_count >= 3 else Rejected
 ```
 
-The `Tradeoff` outcome is a placeholder for the batch-4b
-proposal-pause-resume flow; the v2-batch-4a `Version_loop` treats it
-as a deferred property and continues with the next one.
+`Tradeoff` (3-strikes) hands off to `Tradeoff_flow.propose_and_wait`
+(ADR-011 §5): k4k splices a `## k4k:tradeoff:proposal:<ts>` block
+into the interaction file via cotype, polls until the user replies
+inline (`Approved: Tier B|C` or `Rejected: <guidance>`), archives
+the proposal under `.k4k/version/<n>/tradeoffs/`, breadcrumbs the
+in-file block, commits the residue on the version branch, and
+retries at the user-approved tier (`Version_tradeoff.handle`). The
+`p.blocked` short-circuit on a property whose `failure_count` is
+already at 3 fires only when the property has been deferred at the
+current tier and is being re-visited; the tier-reset
+(`reset_for_tier`) before each retry zeroes both fields, so the
+loop can re-converge under the new tier.
 
 ## KB regeneration {#kb-regen}
 
@@ -176,7 +256,10 @@ for fact in changed_facts:
     update_hash(kb_file)
 manifest.update()
 ```
-Full regeneration only on `--reset`.
+Full regeneration is unbounded — there is no `--reset` flag in v2.
+A user who wants a clean rebuild deletes `.k4k/manifest.json` and
+re-launches the watcher; user-owned content in the interaction file
+itself is untouched.
 
 ## Ownership-flip detection {#ownership}
 
@@ -197,9 +280,29 @@ The user may edit `<file.k4k>` while k4k runs. Contract (per ADR-010):
 
 ## Termination
 
-- `--max-steps N`: hard limit on gap-step iterations.
-- `SIGINT`/`SIGTERM`: set a flag checked at every safe point (between gap-steps and inside the verifier polling loop). Ensure `≤ 5 s` from signal to exit (`NF1`).
-- Budget exhaustion: graceful exit with `EBUDGET`.
+The v2 watcher is intentionally signal-driven; it has no
+production termination flag. The five exit paths are:
+
+- **`SIGINT` / `SIGTERM`**: cooperative shutdown via `Sigint`. Each
+  loop checks `Sigint.should_exit ()` at every safe point (between
+  gap-steps, before each agent invocation, inside the verifier
+  polling loop). NF1: `≤ 5 s` from signal to exit.
+- **Startup-phase error**: `Watcher.startup` typifies any caught
+  exception (including bare `Unix.Unix_error` from mkdir/open) into
+  the closed `Error.error` taxonomy and returns `Aborted msg`; the
+  binary prints `k4k: <msg>` to stderr and exits with the
+  category's exit code (1/2/3/4/5/64 per
+  `kb/spec/error-taxonomy.md`).
+- **PID collision**: another live watcher already owns
+  `.k4k/watcher.pid`; exit 5.
+- **Test-only flags** (kb/runbooks/test-environment.md): the
+  watcher returns cleanly after `--exit-on-stable` (first stability
+  snapshot), `--exit-on-done` (any terminal version outcome —
+  `Done` or `Rolled_back`), or `--max-versions=N` (after N terminal
+  versions). Production never sets these.
+- **Budget exhaustion**: per-version budget is internal-only in v2;
+  it is tracked as a `version.skip` event and surfaced in the
+  status block, not as a process exit.
 
 ## Agent notes
 

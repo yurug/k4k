@@ -19,16 +19,32 @@ The exhaustive list of error conditions k4k may surface. In v2 the user does not
 
 Conditions that prevent the watcher from starting cleanly OR that surface as in-file events once the watcher is running. Not for: log lines, audit-report findings.
 
-## Exit-code map (startup-phase only)
+## Exit-code map
 
-| Code | Class                    | Meaning                                                                  |
-|------|--------------------------|--------------------------------------------------------------------------|
-| 0    | success                  | Watcher started cleanly and shut down gracefully (signal received).     |
-| 1    | user error               | Interaction file missing, unparseable beyond YAML frontmatter, or `class` declared but unsupported. (Stability-of-the-spec errors are NOT exit-code errors — they surface in-file as `## k4k:clarification:*` blocks once the watcher is running.) |
-| 5    | environment error        | `.k4k/` corrupt, on-disk schema mismatch, missing dependency (cotype, git). |
-| 64+  | reserved                 | Internal panic codes (see `EINVARIANT`).                                 |
+The watcher's exit codes split into two regimes:
 
-**Conditions that no longer produce exit codes in v2** (they are reported in the file once the watcher is running, per the autonomous-agent UX):
+- **Startup phase**: `Watcher.startup` typifies any caught exception
+  (including bare `Unix.Unix_error`) into the closed `Error.error`
+  taxonomy and exits with the corresponding code.
+- **Runtime phase** (post-startup, watcher loop active): the user
+  does NOT see exit codes for normal events; the watcher reports
+  state changes in the `.k4k` file via `## k4k:clarification:*` /
+  `## k4k:tradeoff:proposal:*` / `## k4k:status` blocks. The runtime
+  phase exits cleanly (0) on signal, on the test-only flags, or on
+  a fatal verifier/agent unavailability that retries cannot
+  recover.
+
+| Code | Class                    | When it can fire                                                          |
+|------|--------------------------|---------------------------------------------------------------------------|
+| 0    | success                  | Graceful shutdown (signal, `--exit-on-stable`, `--exit-on-done`, `--max-versions`). |
+| 1    | user / spec error        | `EFILE_NOT_FOUND`, `EFILE_TOO_LARGE`, `EENCODING`, `EFORMAT`, `EVERSION`, `ECLASS_UNSUPPORTED` — startup phase. |
+| 2    | verifier                 | `EVERIFIER_UNAVAILABLE`, `EVERIFIER_TOOL_ERROR` — both phases (fatal after retries). |
+| 3    | agent                    | `EAGENT_UNAVAILABLE` — both phases (fatal after retries). |
+| 4    | resource exhaustion      | `EDISK_FULL` — both phases. (`EBUDGET` / `EMAXSTEPS` no longer surface as exit codes; see "Internal-only events" below.) |
+| 5    | environment / state      | `ESTATE_CORRUPT`, plus PID-collision (another live watcher already owns `.k4k/watcher.pid`). |
+| 64   | ownership / invariant    | `EOWNERSHIP_VIOLATION`, `EINVARIANT` — panic path; full trace appended to `.k4k/log.jsonl` plus a "please report" message. |
+
+**Internal-only events** (no longer exit codes, surface in-file once the watcher is running):
 
 - Spec instability (semantic ambiguity, missing required sections, coverage gaps) → `## k4k:clarification:<ts>` block in the file.
 - Per-property verifier rejection / 3-strikes-blocked → recorded in the `## k4k:status` block; if k4k cannot proceed, a `## k4k:tradeoff:proposal:<ts>` block.
@@ -83,44 +99,44 @@ Budget and step bookkeeping are no longer user-visible exit codes. Budget exhaus
 ### EAGENT_UNAVAILABLE
 - **Exit:** 3
 - **When:** Agent backend cannot be reached (binary missing, network down, auth failure). All retries exhausted.
-- **stderr:** `k4k: agent backend <name> unavailable: <details>`
-- **Recovery:** Check `$ANTHROPIC_API_KEY` / `claude` binary on `$PATH`; check network.
+- **stderr:** `k4k: agent backend unavailable: <details>; check that the backend binary is on $PATH and that any required credentials (e.g. ANTHROPIC_API_KEY) are set in the environment`
+- **Recovery:** Above hint covers the common cases; see `.k4k/log.jsonl` for diagnostics.
 
 ### EVERIFIER_UNAVAILABLE
 - **Exit:** 2
 - **When:** Verifier binary missing on `$PATH`, or first invocation fails before a result file is written.
-- **stderr:** `k4k: verifier <name> unavailable: <details>`
-- **Recovery:** Install the toolchain (e.g. `opam install dune`).
+- **stderr:** `k4k: verifier unavailable: <details>; check that the verifier executable from the .k4k spec's verifier_command is present and runnable`
+- **Recovery:** Install the toolchain implied by the user's spec (the agent picks the toolchain per project; ADR-012). Common cases: `opam install dune`, `opam install rocq-prover`, etc.
 
 ### EVERIFIER_TOOL_ERROR
 - **Exit:** 2
-- **When:** Verifier returned `Tool_error`. Logs are at `.k4k/verifier-runs/<id>/`.
-- **stderr:** `k4k: verifier error: <details>; see .k4k/verifier-runs/<id>/`
-- **Recovery:** Inspect the logs; fix the underlying tool issue.
+- **When:** Verifier returned `Tool_error`.
+- **stderr:** `k4k: verifier error: <details>; see the per-run record in .k4k/version/<n>/agent-runs/ and .k4k/log.jsonl for context`
+- **Recovery:** Inspect the per-version artefacts; fix the underlying tool issue.
 
 ### EDISK_FULL
 - **Exit:** 4
 - **When:** A write to `.k4k/` failed with `ENOSPC` (or equivalent). State is rolled back.
-- **stderr:** `k4k: disk full while writing <path>; rolled back`
+- **stderr:** `k4k: disk full while writing <path>; rolled back; free space and re-run`
 - **Recovery:** Free space; re-run.
 
 ### ESTATE_CORRUPT
 - **Exit:** 5
-- **When:** `.k4k/manifest.json` exists but is unparseable or version-mismatched.
-- **stderr:** `k4k: state corrupt: <details>; consider --reset`
-- **Recovery:** Inspect manifest; if irrecoverable, `k4k --reset`.
+- **When:** `.k4k/manifest.json` exists but is unparseable or version-mismatched, OR a startup-phase `Unix.Unix_error` (mkdir/open) bubbles up (e.g. `EACCES` on the workdir, `EROFS` on `.k4k/`, `EPERM` on the PID file). `Watcher.startup`'s `typify_startup_exception` maps the bare exception into this variant with a typed message.
+- **stderr:** `k4k: state corrupt: <details>; remove .k4k/manifest.json and re-launch k4k (the watcher rebuilds operational state from a clean start; user-owned content in the .k4k file is untouched)`
+- **Recovery:** Above hint covers the common case (manifest mismatch). For permission/filesystem errors, the typed message names the failing syscall + path; fix at the filesystem level.
 
 ### EOWNERSHIP_VIOLATION
-- **Exit:** 64 (panic)
-- **When:** Internal invariant — k4k attempted to write inside an `owner=user` region.
-- **stderr:** `k4k: BUG: ownership violation at <path>:<line>; please report`
-- **Recovery:** None at runtime; this is a code bug.
+- **Exit:** 64
+- **When:** A user-edit to a `## k4k:*` k4k-managed section conflicts with k4k's intended write and cotype declines to merge (returns `Conflict`). The watcher emits this rather than silently dropping the user's edit.
+- **stderr:** `k4k: ownership violation: <details>; the user edited a k4k-managed section in a way the watcher cannot reconcile (cotype declined to merge); see .k4k/log.jsonl`
+- **Recovery:** Resolve the diff3 markers cotype wrote into the file; re-run.
 
 ### EINVARIANT
-- **Exit:** 64+ (panic)
-- **When:** Any internal invariant violation not covered above.
-- **stderr:** `k4k: BUG: <message>; please report`
-- **Recovery:** None.
+- **Exit:** 64
+- **When:** Fallthrough for an OCaml exception bubbling out of the watcher loop without a typed `K4k_error` wrap. Stack trace is written to `.k4k/log.jsonl`.
+- **stderr:** `k4k: internal invariant violation: <details>; this is a bug in k4k — please report with .k4k/log.jsonl attached`
+- **Recovery:** None at runtime; this is a code bug. Restart works if the underlying state is consistent.
 
 ## How errors are emitted
 

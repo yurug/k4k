@@ -47,18 +47,30 @@ The internal AST that represents a desired (`D`) or current (`S`) program charac
 
 ```
 Characterization = {
-  class:          "cli"                                // v0: only this
-  goal:           string                               // prose, the user's "## Goal"
-  inputs_outputs: IOSchema                             // see below
-  errors:         ErrorEntry[]                         // see below
-  fs_contract:    FSContract                           // see below
-  concurrency:    string                               // free-form, may be "N/A"
-  perf:           string                               // free-form, may be "N/A"
+  class:           "cli"                               // v0/v2: only this
+  goal:            string                              // prose, the user's "## Goal"
+  language:        string                              // ADR-012 §1: target source
+                                                       // language (e.g. "ocaml",
+                                                       // "rust"); the agent picks it
+                                                       // from the prose. Participates
+                                                       // in the canonical hash.
+  verifier_command: string[]                           // ADR-012 §1: argv the
+                                                       // verifier executable expects.
+                                                       // The agent emits this; k4k
+                                                       // never hardcodes it. Also
+                                                       // hash-participating.
+  inputs_outputs:  IOSchema                            // see below
+  errors:          ErrorEntry[]                        // see below
+  fs_contract:     FSContract                          // see below
+  concurrency:     string                              // free-form, may be "N/A"
+  perf:            string                              // free-form, may be "N/A"
   examples_accept: AcceptanceExample[]                 // ≥3
   examples_refuse: RefusingExample[]                   // ≥1
-  out_of_scope:   string[]
-  verifier_pref:  string?                              // optional
-  hash:           string                               // SHA-256 of canonicalized form
+  out_of_scope:    string[]
+  verifier_pref:   string?                             // [@deprecated] superseded by
+                                                       // [verifier_command]; retained
+                                                       // for back-compat readers
+  hash:            string                              // SHA-256 of canonicalized form
 }
 IOSchema = {
   argv:           ArgSpec[]
@@ -83,22 +95,68 @@ The `hash` is computed *after* canonicalization (see `algorithms.md#canonicalize
 
 ## Manifest (`.k4k/manifest.json`)
 
+There are two manifests in v2 (post-ADR-013):
+
+**Top-level `.k4k/manifest.json`** — bookkeeping for the
+formalization cache and cotype/agent/verifier identity. Regenerated
+atomically on every successful formalization (write to
+`manifest.json.tmp`, fsync, rename). The schema is intentionally
+narrow: per-version state lives in the per-version manifest below.
+
 ```
 Manifest = {
-  k4k_version:        string
+  k4k_version:        string                           // matches Manifest.k4k_version_string;
+                                                       // a read with a different value is
+                                                       // ESTATE_CORRUPT (forward/backward
+                                                       // compat is explicit, not implicit)
   agent_backend:      { name: string, version: string }
   verifier:           { name: string, version: string }
-  interaction_file:   { path: string, sha256: string, last_user_section_hashes: { [section_id]: string } }
-  desired:            { path: ".k4k/characterization/desired/spec.json", hash: string, last_stable_at: timestamp }
-  current:            { path: ".k4k/characterization/current/spec.json", hash: string, last_verified_at: timestamp }
-  gap:                { path: ".k4k/gap/properties.json", hash: string, count: int }
-  budget:             { soft_per_step: int, hard_per_invocation: int, used: int }
-  kb_source_map:      { [kb_file_path]: AspectRef[] }      // keys: paths relative to .k4k/ (e.g. "spec/data-model.md"); used for incremental KB regeneration
-  retention:          { agent_runs_keep: int, verifier_runs_keep: int }
+  cotype:             { version: string }?             // captured at the most recent save
+  interaction_file:   { path: string, sha256: string,
+                        last_user_section_hashes: { [section_id]: string } }
+  desired:            { path: ".k4k/characterization/desired/spec.json",
+                        hash: string }
+  last_run:           timestamp
 }
 ```
 
-The manifest is regenerated atomically on every state change (write to `manifest.json.tmp`, fsync, rename).
+`current` / `gap` / `budget` / `kb_source_map` / `retention` were
+v0 fields; v2 retired them. `current` and `gap` are now per-version
+state (per-version manifest), `budget` is internal-only (no longer
+a manifest field; surfaces as a status block field), and `kb_source_map`
+/ `retention` are deferred — kb-regen in v2 walks `.k4k/`'s tree
+directly rather than maintaining a reverse index.
+
+**Per-version `.k4k/version/<n>/manifest.json`** — frozen-at-tag-time
+record of what version `<n>` produced. Written by
+`Version_finalize.persist_final` on Done or Rolled_back; ADR-013 §3.
+
+```
+PerVersionManifest = {
+  k4k_version:        string                           // top-level constant
+  version:            Version                          // see Version below
+  tools: {
+    cotype:           string                           // version captured at finalize
+    agent:            { name: string, version: string }
+    verifier:         { name: string, version: string }
+  }
+  tag:                string?                          // present iff Done
+}
+
+Version = {
+  number:             int
+  state:              "Developing" | "Done" | "Rolled_back"
+  baseline_sha:       string                           // git SHA the branch forked from
+  branch_name:        string                           // "k4k/version/<n>"
+  d_hash:             string                           // ties this version to a D
+  started_at:         float                            // Unix epoch
+  tier_assignments:   [ { property_id, tier: "A"|"B"|"C" } ]
+}
+```
+
+`.k4k/version/<n>/D-spec.json`, `tiers.json`, and `audit.md` are
+written alongside; `agent-runs/`, `clarifications/`, `tradeoffs/`
+are the per-version artefact directories.
 
 ## AgentRun (`.k4k/agent-runs/<id>/`)
 

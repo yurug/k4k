@@ -52,7 +52,9 @@ val warn : t -> string -> Yojson.Safe.t -> unit
 val error : t -> Error.error -> unit
 
 (** [stdout_line t line] — write [line] (newline-terminated) to stdout.
-    Used only by [Harness.run] for the final protocol output.
+    Used by the watcher daemon's emit closure for the JSONL event
+    stream (P11; one JSON object per line, stderr quiet at default
+    verbosity).
 
     @invariant P11. *)
 val stdout_line : t -> string -> unit
@@ -64,7 +66,12 @@ val stdout_line : t -> string -> unit
 val scrub : string -> string
 
 (** Sub-module re-export — see [tty_status.mli] for the full API.
-    Provides the in-place TTY status line used by [Run_loop].
+    Pre-v2 vestige: the in-place TTY status line is no longer used
+    by the production loop (the v2 surface is in-file via the
+    [## k4k:status] block, ADR-011); kept here so the rendering
+    helpers stay reachable in case a future operator-side mode
+    revives them.
+
     @invariant P20 — every public function in this signature carries
                      an [@invariant] doc-comment. *)
 module Tty_status = Tty_status

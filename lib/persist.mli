@@ -35,9 +35,9 @@ val trace_write_path : string -> unit
     @param crash_hook Optional pre-rename hook for crash testing.
     @raise Error.K4k_error E_disk_full on [ENOSPC].
     @invariant P10 — partial state never persists past a crash.
-    @invariant P12 — write-only; the lock-discipline is enforced at
-                     the call boundary in [Harness] (no lock held
-                     across agent calls).
+    @invariant P12 — concurrency for the user's interaction file is
+                     delegated to cotype (ADR-010); k4k itself
+                     never holds a lock across agent calls.
     @invariant NF4 — every write goes via this function, so the trace
                      hook captures the full envelope. *)
 val atomic_write : ?crash_hook:crash_hook -> path:string -> string -> unit

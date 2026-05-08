@@ -1,10 +1,14 @@
-(** [Agent_backend] — pluggable agent backend signature.
+(** [Agent_backend] — pluggable agent-backend signature.
 
-    See [kb/spec/api-contracts.md#agent-backend]. The only production
-    implementation is [Backend_external] (per ADR-009 / the wire
-    protocol in [kb/external/backend-protocol.md]); [Backend_stub] is
-    used in tests. [Harness] is a functor over this signature.
-*)
+    See [kb/spec/api-contracts.md#agent-backend]. The wire-protocol
+    contract (ADR-009 / [kb/external/backend-protocol.md]) is what
+    third-party backends conform to. v2 production wires
+    [Backend_external] from [Watcher_dev.resolve_invoke];
+    [Backend_canned] is the test-only adapter for canned responses
+    via [K4K_STUB_RESPONSES].
+
+    @invariant P15 — pluggability: nothing under [lib/] hardcodes a
+                     specific agent toolchain. *)
 
 type purpose = [ `Formalization | `Gap_step | `Kb_regen ]
 

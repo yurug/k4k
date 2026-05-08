@@ -68,6 +68,22 @@ call.
 empty by default so any `ensure` call returns `Failed` and the watcher
 aborts at startup — undesirable in production, perfectly safe.
 
+### `K4K_TEST_D_PATH=<path-to-D-spec.json>`
+**Purpose:** inject a pre-canonicalized [`Characterization.t`] JSON
+file directly into the watcher's development half (v2 batch 3).
+When set, [`Watcher_dev.try_run_version`] reads + decodes the file
+instead of running the formalization pass against an agent backend.
+Used by the S1 / S5 integration tests to drive [`Version_loop`] end
+to end without a real LLM.
+**Default:** unset → batch-3 watcher emits
+[`{"event":"version.skip", "details":{"reason":"no K4K_TEST_D_PATH; ...}}`]
+and returns. (v2 batch 4 wires real formalization; this knob will
+be deleted then.)
+**When the binary itself reads this:** every iteration of
+[`Watcher_dev.try_run_version`] (only reached when the spec is stable
+and not in `--exit-on-stable`).
+**Production effect:** none unless explicitly set.
+
 ### `K4K_TEST_TRACE_WRITES=<path-to-trace-file>`
 **Purpose:** record every filesystem write k4k performs through `Persist`, one path per line. Used by `NF4_state_confinement_envelope` to assert all writes fall under allowed paths.
 **Default:** unset → no tracing.
@@ -85,6 +101,16 @@ state. Per ADR-011 §2 the production loop runs until signal.
 **When read:** at every iteration of `Watcher_loop.one_tick`.
 **Production effect:** none — production users never pass it. Visible
 in `--help` output but documented as test-only.
+
+### `--exit-on-done`
+**Purpose:** make `bin/main.ml`'s watcher loop return once the
+in-flight version completes (state `Done`) or rolls back. Used by
+the v2 batch-3 S1 / S5 integration tests to drive the watcher
+through a full version-1 lifecycle without SIGTERM.
+**Default:** unset (operator-only flag).
+**When read:** at every iteration of `Watcher_loop.one_tick` after a
+stable spec snapshot is observed.
+**Production effect:** none — production users never pass it.
 
 ## Properties enforced
 

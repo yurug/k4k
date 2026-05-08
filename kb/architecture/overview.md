@@ -6,7 +6,7 @@ domain: architecture
 last-updated: 2026-05-02
 depends-on: [glossary, spec.api-contracts, spec.algorithms]
 refines: []
-related: [architecture.decisions, conventions.code-style, conventions.error-handling]
+related: [architecture.decisions.index, conventions.code-style, conventions.error-handling]
 ---
 
 # Architecture Overview

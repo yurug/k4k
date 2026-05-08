@@ -1,7 +1,13 @@
 (** [Manifest] — read/write/inspect [.k4k/manifest.json] per
-    [kb/spec/data-model.md#manifest]. *)
+    [kb/spec/data-model.md#manifest].
 
-let k4k_version_string = "0.1.0"
+    [k4k_version_string] is the single source of truth for the
+    project's version: [bin/main.ml]'s cmdliner --version output and
+    [Version_persist]'s per-version manifest both read it from here.
+    Bumping this string is the only place a release update needs to
+    happen (audit-2026-05-08-axis5 H3). *)
+
+let k4k_version_string = "0.2.0"
 
 let path k4k_dir = Filename.concat k4k_dir "manifest.json"
 

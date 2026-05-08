@@ -43,7 +43,7 @@ let write_manifest ~k4k_dir ~v ?tag_name
     | None -> [] | Some t -> ["tag", `String t]
   in
   let j : Yojson.Safe.t = `Assoc (
-    [ "k4k_version",   `String "0.1.0";
+    [ "k4k_version",   `String Manifest.k4k_version_string;
       "version", Version.to_yojson v;
       "tools", `Assoc [
         "cotype",   `String cotype_version;

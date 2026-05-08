@@ -2042,6 +2042,68 @@ module GT = struct
       Alcotest.(check string) "README restored" "hi"
         (Bytes.unsafe_to_string b))
 
+  (* audit-2026-05-08-axis2 H1: agent-supplied diffs cannot reach
+     k4k's operational state. [Diff_filter] rejects any diff
+     touching [.k4k/], [.git/], absolute paths, or [..]-segments
+     before [Git.apply_diff] writes anything. *)
+  let diff_filter_rejects_dot_k4k () =
+    let diff =
+      "diff --git a/.k4k/manifest.json b/.k4k/manifest.json\n\
+       --- a/.k4k/manifest.json\n\
+       +++ b/.k4k/manifest.json\n\
+       @@ -0,0 +1 @@\n\
+       +{\"forged\":true}\n" in
+    Alcotest.(check (option string)) "forbidden path detected"
+      (Some ".k4k/manifest.json")
+      (Diff_filter.first_forbidden diff)
+
+  let diff_filter_rejects_dot_git () =
+    let diff =
+      "--- a/.git/config\n\
+       +++ b/.git/config\n\
+       @@ -0,0 +1 @@\n\
+       +[user]\n" in
+    Alcotest.(check (option string)) "forbidden .git path"
+      (Some ".git/config")
+      (Diff_filter.first_forbidden diff)
+
+  let diff_filter_rejects_absolute_and_escape () =
+    let abs_diff = "+++ b//etc/passwd\n@@ -0,0 +1 @@\n+x\n" in
+    Alcotest.(check bool) "absolute path forbidden" true
+      (Diff_filter.is_forbidden "/etc/passwd");
+    Alcotest.(check (option string)) "absolute target detected"
+      (Some "/etc/passwd")
+      (Diff_filter.first_forbidden abs_diff);
+    Alcotest.(check bool) "escape via .. forbidden" true
+      (Diff_filter.is_forbidden "src/../../escape");
+    Alcotest.(check bool) "leading .. forbidden" true
+      (Diff_filter.is_forbidden "../escape")
+
+  let diff_filter_accepts_normal_source () =
+    let diff =
+      "diff --git a/src/p01.ml b/src/p01.ml\n\
+       new file mode 100644\n\
+       --- /dev/null\n\
+       +++ b/src/p01.ml\n\
+       @@ -0,0 +1 @@\n\
+       +let () = print_endline \"ok\"\n" in
+    Alcotest.(check (option string)) "normal source path accepted"
+      None (Diff_filter.first_forbidden diff)
+
+  let apply_diff_returns_error_on_forbidden_path () =
+    with_tmpdir (fun dir ->
+      init_and_commit dir;
+      let diff =
+        "--- a/.k4k/manifest.json\n\
+         +++ b/.k4k/manifest.json\n\
+         @@ -0,0 +1 @@\n\
+         +{}\n" in
+      match Git.apply_diff ~cwd:dir ~diff with
+      | Ok () -> Alcotest.fail "expected Error for .k4k/-touching diff"
+      | Error msg ->
+          Alcotest.(check bool) "error mentions forbidden" true
+            (Astring.String.is_infix ~affix:"forbidden" msg))
+
   let tests = [
     Alcotest.test_case "Git_is_repo_after_init" `Quick is_repo_after_init;
     Alcotest.test_case "Git_is_clean_detects_dirty" `Quick dirty_when_modified;
@@ -2051,6 +2113,16 @@ module GT = struct
       k4k_state_filtered;
     Alcotest.test_case "Git_reset_hard_rewinds_uncommitted" `Quick
       reset_hard_rewinds_uncommitted;
+    Alcotest.test_case "Git_diff_filter_rejects_dot_k4k" `Quick
+      diff_filter_rejects_dot_k4k;
+    Alcotest.test_case "Git_diff_filter_rejects_dot_git" `Quick
+      diff_filter_rejects_dot_git;
+    Alcotest.test_case "Git_diff_filter_rejects_absolute_and_escape" `Quick
+      diff_filter_rejects_absolute_and_escape;
+    Alcotest.test_case "Git_diff_filter_accepts_normal_source" `Quick
+      diff_filter_accepts_normal_source;
+    Alcotest.test_case "Git_apply_diff_rejects_forbidden_path" `Quick
+      apply_diff_returns_error_on_forbidden_path;
   ]
 end
 

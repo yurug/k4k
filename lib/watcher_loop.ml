@@ -94,9 +94,8 @@ let attempt_version cfg ct ~agent_invoke =
   match Watcher_dev.try_run_version ~file_path:cfg.file_path
           ~k4k_dir:cfg.k4k_dir ~emit:cfg.emit ~agent_invoke ct with
   | `Done ->
-      let next_n = Version_persist.next_version_number
-                     ~k4k_dir:cfg.k4k_dir - 1 in
-      let n = max 1 next_n in
+      let n = max 1 (Version_persist.next_version_number
+                       ~k4k_dir:cfg.k4k_dir - 1) in
       Watcher_dev.after_version_done ~file_path:cfg.file_path ct
         ~version_n:n
         ~tier_dist:{ tier_a = 0; tier_b = 0; tier_c = 0 };

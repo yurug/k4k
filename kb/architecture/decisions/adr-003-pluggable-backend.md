@@ -6,7 +6,7 @@ domain: architecture
 last-updated: 2026-05-02
 depends-on: [domain.prd, spec.api-contracts]
 refines: []
-related: [adr-005, conventions.context-economy, external.claude-code, external.ollama, properties.non-functional]
+related: [adr-005, conventions.context-economy, external.ollama, properties.non-functional]
 ---
 
 # ADR-003: Pluggable agent backend; design for the weakest supported model

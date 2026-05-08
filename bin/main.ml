@@ -75,7 +75,7 @@ let main_term =
 
 let cmd =
   let info = Cmdliner.Cmd.info "k4k"
-    ~version:"0.2.0"
+    ~version:Manifest.k4k_version_string
     ~doc:"k4k — autonomous coding-agent watcher (ADR-011)."
   in
   Cmdliner.Cmd.v info main_term

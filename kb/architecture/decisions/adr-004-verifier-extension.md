@@ -6,7 +6,7 @@ domain: architecture
 last-updated: 2026-05-02
 depends-on: [domain.prd, spec.api-contracts]
 refines: []
-related: [adr-001, adr-003, external.dune]
+related: [adr-001, adr-003]
 ---
 
 # ADR-004: Pluggable verifier; v0 ships dune-ocaml only

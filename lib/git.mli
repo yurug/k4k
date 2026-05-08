@@ -33,7 +33,18 @@ val checkout : cwd:string -> name:string -> (unit, string) result
 val delete_branch : cwd:string -> name:string -> (unit, string) result
 
 (** [apply_diff ~cwd ~diff] = [git apply --index] over a unified-diff
-    string. The [--index] flag keeps working tree and index in sync. *)
+    string, with a path-filter pre-check delegated to
+    [Diff_filter.first_forbidden] (audit-2026-05-08-axis2 H1).
+
+    The [--index] flag keeps working tree and index in sync. The
+    filter rejects any diff touching [.k4k/], [.git/], absolute
+    paths, or paths escaping the workdir via [..] BEFORE writing
+    anything; the post-rejection [reset_hard] does NOT clean
+    [.k4k/], so this is the load-bearing defense against a poisoned
+    agent diff corrupting k4k's own operational state.
+
+    @invariant P14 — file ownership: agent diffs are confined to the
+                     user's source tree on the version branch. *)
 val apply_diff : cwd:string -> diff:string -> (unit, string) result
 
 (** [commit_all ~cwd ~message] stages all changes and commits with the

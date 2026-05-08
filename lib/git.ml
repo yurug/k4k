@@ -94,17 +94,24 @@ let delete_branch ~cwd ~name : (unit, string) result =
 
 (* C1 — NF4 envelope. The patch file used to land in /tmp via
    [Filename.temp_file]; route it under [<cwd>/.k4k/scratch/<id>/]
-   instead. The directory and file are created via [Persist] so the
-   K4K_TEST_TRACE_WRITES hook captures them. *)
+   instead. Paths are checked first ([Diff_filter.first_forbidden])
+   so a poisoned agent diff cannot reach k4k's own operational
+   state under [.k4k/] (audit-2026-05-08-axis2 H1). *)
 let apply_diff ~cwd ~diff : (unit, string) result =
-  let id = Persist.agent_run_id () in
-  let scratch_dir = Filename.concat cwd
-    (Filename.concat ".k4k" (Filename.concat "scratch" id)) in
-  let tmp = Filename.concat scratch_dir "gap.patch" in
-  Persist.atomic_write ~path:tmp diff;
-  let r = run_git ~cwd ["apply"; "--index"; tmp] in
-  (try Sys.remove tmp with _ -> ());
-  if r.exit_code = 0 then Ok () else Error (trim r.stderr)
+  match Diff_filter.first_forbidden diff with
+  | Some p ->
+      Error (Printf.sprintf
+               "diff touches forbidden path: %s (agent diffs may not \
+                modify .k4k/, .git/, or paths outside the workdir)" p)
+  | None ->
+      let id = Persist.agent_run_id () in
+      let scratch_dir = Filename.concat cwd
+        (Filename.concat ".k4k" (Filename.concat "scratch" id)) in
+      let tmp = Filename.concat scratch_dir "gap.patch" in
+      Persist.atomic_write ~path:tmp diff;
+      let r = run_git ~cwd ["apply"; "--index"; tmp] in
+      (try Sys.remove tmp with _ -> ());
+      if r.exit_code = 0 then Ok () else Error (trim r.stderr)
 
 let commit_all ~cwd ~message : (unit, string) result =
   let r1 = run_git ~cwd ["add"; "-A"] in

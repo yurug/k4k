@@ -4,9 +4,9 @@ type: concept
 summary: Prompt design discipline — every agent call must succeed on the weakest supported backend (7B-class local Ollama). Concrete rules, with examples and an enforcement checklist.
 domain: conventions
 last-updated: 2026-05-02
-depends-on: [glossary, external.ollama, architecture.decisions]
+depends-on: [glossary, external.ollama, architecture.decisions.index]
 refines: []
-related: [adr-003, properties.non-functional, external.claude-code]
+related: [adr-003, properties.non-functional]
 ---
 
 # Context Economy

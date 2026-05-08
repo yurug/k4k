@@ -1,19 +1,15 @@
 (** Protocol-conformance tests.
 
-    These tests validate that the in-tree example binaries emit JSON
-    matching the documented wire-protocol schemas in
+    These tests validate that the in-tree example backend binaries
+    emit JSON matching the documented wire-protocol schemas in
     [kb/external/{backend,verifier}-protocol.md]. They are independent
     from integration tests (which test k4k as a whole) — they catch
     drift between the protocol *specs* and the example *implementations*.
 
-    Run on every CI build. If a future contributor changes
-    [kb/external/<protocol>.md] without updating the corresponding
-    example, these tests fail loudly. The reverse drift (example
-    changes its output without a spec update) is also caught.
-
-    Per the architectural commitment in ADR-008/ADR-009, k4k carries no
-    tool-specific code; conformance tests are how we keep that
-    commitment honest as the code evolves. *)
+    Per ADR-011 / round-5 I2: v2 ships no Tier-C verifier example. The
+    verifier-side conformance is exercised against a synthetic stub at
+    [test/conformance/fixtures/synthetic-verifier.sh] that conforms to
+    the wire protocol without invoking any toolchain. *)
 
 (* ---------------- Locate the example binaries ---------------- *)
 
@@ -31,8 +27,20 @@ let find_up rel =
 let ollama_bin () =
   find_up "_build/default/examples/backends/ollama/main.exe"
 
-let dune_verifier_bin () =
-  find_up "_build/default/examples/verifiers/dune-ocaml/main.exe"
+let synthetic_verifier_bin () =
+  (* Resolve via the source tree (not _build/) since dune (deps ...)
+     makes the file available next to the test executable but doesn't
+     install it under _build/default/.
+     We walk up to the dune-project root and append the fixtures path. *)
+  let rec find_root dir =
+    if Sys.file_exists (Filename.concat dir "dune-project") then dir
+    else
+      let p = Filename.dirname dir in
+      if p = dir then failwith "dune-project root not found"
+      else find_root p
+  in
+  let root = find_root (Sys.getcwd ()) in
+  Filename.concat root "test/conformance/fixtures/synthetic-verifier.sh"
 
 (* ---------------- Tempdir helper ---------------- *)
 
@@ -63,7 +71,6 @@ let read_file path =
 
 (* ---------------- Schema validators ---------------- *)
 
-(** [require_string fs key] — the field [key] must be present and a string. *)
 let require_string fs key =
   match List.assoc_opt key fs with
   | Some (`String s) -> s
@@ -90,7 +97,6 @@ let parse_json_object path =
       Alcotest.failf "result file is not valid JSON: %s" msg
   | _ -> Alcotest.failf "result file is not a JSON object"
 
-(** Validate a backend result file against the documented schema. *)
 let validate_backend_result path : unit =
   let fs = parse_json_object path in
   let outcome = require_string fs "outcome" in
@@ -99,9 +105,7 @@ let validate_backend_result path : unit =
        let _text = require_string fs "text" in
        let used = require_int fs "budget_used" in
        Alcotest.(check bool) "budget_used >= 0" true (used >= 0)
-   | "budget_exhausted" ->
-       (* No required fields beyond outcome+duration_ms. *)
-       ()
+   | "budget_exhausted" -> ()
    | "tool_error" ->
        let _err = require_string fs "error" in ()
    | other ->
@@ -109,17 +113,13 @@ let validate_backend_result path : unit =
   let dur = require_int fs "duration_ms" in
   Alcotest.(check bool) "duration_ms >= 0" true (dur >= 0)
 
-(** Validate a verifier result file against the documented schema. *)
 let validate_verifier_result path : unit =
   let fs = parse_json_object path in
   let _by_property = require_assoc fs "by_property" in
   let _exit = require_int fs "raw_exit_code" in
   let dur = require_int fs "duration_ms" in
   Alcotest.(check bool) "duration_ms >= 0" true (dur >= 0)
-  (* warnings is optional; if present must be a list. *)
 
-(** Each value in [by_property] must be one of the three documented
-    status strings. *)
 let validate_status_values path =
   let fs = parse_json_object path in
   let by = require_assoc fs "by_property" in
@@ -202,55 +202,44 @@ let backend_accepts_all_three_purposes () =
       validate_backend_result o))
   ["formalization"; "gap-step"; "kb-regen"]
 
-(* ---------------- Verifier protocol — dune-ocaml example ---------------- *)
+(* ---------------- Verifier protocol — synthetic stub ---------------- *)
 
-(* Build a minimal OCaml project under [dir] with one passing test. *)
-let scaffold_passing_project dir =
-  write_file (Filename.concat dir "dune-project")
-    "(lang dune 3.22)\n";
-  Unix.mkdir (Filename.concat dir "test") 0o755;
-  write_file (Filename.concat dir "test/dune")
-    "(test (name t) (libraries alcotest))\n";
-  write_file (Filename.concat dir "test/t.ml")
-    "let () = Alcotest.run \"conf\" \
-     [ \"S\", [ Alcotest.test_case \"Paaa1234_trivial\" `Quick \
-                 (fun () -> Alcotest.(check bool) \"true\" true true) ]]\n"
-
-let run_dune_verifier ~workdir ~focus ~output =
-  let bin = dune_verifier_bin () in
+let run_synthetic_verifier ~workdir ~focus ~output ~established =
+  let bin = synthetic_verifier_bin () in
   let focus_args =
     if focus = [] then ""
     else "--focus " ^
          String.concat " " (List.map Filename.quote focus) in
   let cmd = Printf.sprintf
-    "%s --workdir %s %s --output %s 2>/dev/null"
+    "K4K_SYNTH_ESTABLISHED=%s %s --workdir %s %s --output %s 2>/dev/null"
+    (Filename.quote (String.concat " " established))
     (Filename.quote bin) (Filename.quote workdir)
     focus_args (Filename.quote output) in
   Sys.command cmd
 
 let verifier_passing_run_matches_schema () =
   with_workdir (fun dir ->
-    scaffold_passing_project dir;
     let o = Filename.concat dir "result.json" in
-    let code = run_dune_verifier ~workdir:dir
-                 ~focus:["Paaa1234"] ~output:o in
+    let code = run_synthetic_verifier ~workdir:dir
+                 ~focus:["P1234567"] ~output:o
+                 ~established:["P1234567"] in
     Alcotest.(check int) "exit 0" 0 code;
     validate_verifier_result o;
     validate_status_values o;
     let fs = parse_json_object o in
     let by = require_assoc fs "by_property" in
-    match List.assoc_opt "Paaa1234" by with
+    match List.assoc_opt "P1234567" by with
     | Some (`String "established") -> ()
     | Some (`String s) ->
-        Alcotest.failf "Paaa1234: expected established, got %s" s
-    | _ -> Alcotest.failf "Paaa1234 missing or not a string")
+        Alcotest.failf "P1234567: expected established, got %s" s
+    | _ -> Alcotest.failf "P1234567 missing or not a string")
 
 let verifier_unknown_focus_id_is_unknown () =
   with_workdir (fun dir ->
-    scaffold_passing_project dir;
     let o = Filename.concat dir "result.json" in
-    let code = run_dune_verifier ~workdir:dir
-                 ~focus:["Pdeadbee"] ~output:o in
+    let code = run_synthetic_verifier ~workdir:dir
+                 ~focus:["Pdeadbee"] ~output:o
+                 ~established:[] in
     Alcotest.(check int) "exit 0" 0 code;
     validate_verifier_result o;
     validate_status_values o;

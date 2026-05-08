@@ -2165,6 +2165,211 @@ module VerT = struct
   ]
 end
 
+(* ---------------- Audit_md (v2 batch 3) ---------------- *)
+module AuditMdT = struct
+  let render_basic () =
+    let a : Audit_md.t = {
+      version_number = 1; d_hash = "abc"; baseline_sha = "def";
+      branch_name = "k4k/version/1"; tag_name = Some "v1";
+      properties = [
+        { id = "P_x"; status = "established"; tier = "A";
+          commit = Some "1234567" };
+        { id = "P_y"; status = "blocked"; tier = "A"; commit = None };
+      ];
+      outcome = "done"; duration_ms = 1500;
+    } in
+    let s = Audit_md.render a in
+    Alcotest.(check bool) "title" true
+      (Astring.String.is_infix ~affix:"# k4k version 1 audit" s);
+    Alcotest.(check bool) "tag" true
+      (Astring.String.is_infix ~affix:"Tag: v1" s);
+    Alcotest.(check bool) "property table row" true
+      (Astring.String.is_infix ~affix:"| P_x | A | established | 1234567 |" s);
+    Alcotest.(check bool) "blocked dash" true
+      (Astring.String.is_infix ~affix:"| P_y | A | blocked | — |" s)
+
+  let render_no_tag_for_in_flight () =
+    let a : Audit_md.t = {
+      version_number = 2; d_hash = ""; baseline_sha = "";
+      branch_name = "k4k/version/2"; tag_name = None;
+      properties = []; outcome = "in-flight"; duration_ms = 0;
+    } in
+    let s = Audit_md.render a in
+    Alcotest.(check bool) "tag em-dash" true
+      (Astring.String.is_infix ~affix:"Tag: —" s);
+    Alcotest.(check bool) "outcome surfaces" true
+      (Astring.String.is_infix ~affix:"Outcome: in-flight" s)
+
+  let render_zero_properties () =
+    let a : Audit_md.t = {
+      version_number = 3; d_hash = "h"; baseline_sha = "b";
+      branch_name = "k4k/version/3"; tag_name = Some "v3";
+      properties = []; outcome = "done"; duration_ms = 10;
+    } in
+    let s = Audit_md.render a in
+    Alcotest.(check bool) "header still present" true
+      (Astring.String.is_infix ~affix:"## Per-property results" s);
+    Alcotest.(check bool) "header row present" true
+      (Astring.String.is_infix ~affix:"| Property | Tier | Status | Commit |" s)
+
+  let tests = [
+    Alcotest.test_case "Audit_md_render_basic_includes_title_tag_rows" `Quick
+      render_basic;
+    Alcotest.test_case "Audit_md_render_handles_in_flight_with_no_tag" `Quick
+      render_no_tag_for_in_flight;
+    Alcotest.test_case "Audit_md_render_zero_properties_table_header" `Quick
+      render_zero_properties;
+  ]
+end
+
+(* ---------------- Version_persist (v2 batch 3) ---------------- *)
+module VPT = struct
+  let next_version_empty () =
+    with_tmpdir (fun dir ->
+      let n = Version_persist.next_version_number ~k4k_dir:dir in
+      Alcotest.(check int) "fresh dir → 1" 1 n)
+
+  let next_version_increments () =
+    with_tmpdir (fun dir ->
+      Version_persist.ensure_dirs ~k4k_dir:dir ~number:1;
+      Version_persist.ensure_dirs ~k4k_dir:dir ~number:5;
+      let n = Version_persist.next_version_number ~k4k_dir:dir in
+      Alcotest.(check int) "max+1" 6 n)
+
+  let writes_d_spec_and_manifest () =
+    with_tmpdir (fun dir ->
+      let v : Version.t = {
+        number = 1; state = Developing; baseline_sha = "b";
+        branch_name = "k4k/version/1"; d_hash = "h";
+        started_at = 1.0; tier_assignments = [];
+      } in
+      let d = Characterization.empty in
+      Version_persist.write_d_spec ~k4k_dir:dir ~number:1 ~d;
+      Version_persist.write_manifest ~k4k_dir:dir ~v
+        ~tag_name:"v1" ~cotype_version:"0.2.3" ();
+      let mf = Version_persist.manifest_path ~k4k_dir:dir ~number:1 in
+      Alcotest.(check bool) "manifest written" true (Sys.file_exists mf);
+      let m_raw = read_all mf in
+      Alcotest.(check bool) "manifest carries tag" true
+        (Astring.String.is_infix ~affix:"\"tag\": \"v1\"" m_raw);
+      Alcotest.(check bool) "D-spec written" true
+        (Sys.file_exists (Version_persist.d_spec_path
+                            ~k4k_dir:dir ~number:1)))
+
+  let writes_audit_md () =
+    with_tmpdir (fun dir ->
+      Version_persist.write_audit ~k4k_dir:dir ~number:1
+        ~content:"# done";
+      let p = Version_persist.audit_path ~k4k_dir:dir ~number:1 in
+      Alcotest.(check string) "content" "# done" (read_all p))
+
+  let tests = [
+    Alcotest.test_case "Version_persist_next_version_empty_dir" `Quick
+      next_version_empty;
+    Alcotest.test_case "Version_persist_next_version_increments_max" `Quick
+      next_version_increments;
+    Alcotest.test_case "Version_persist_writes_D_spec_and_manifest" `Quick
+      writes_d_spec_and_manifest;
+    Alcotest.test_case "Version_persist_writes_audit_md" `Quick
+      writes_audit_md;
+  ]
+end
+
+(* ---------------- Version_loop (v2 batch 3) ---------------- *)
+module VLT = struct
+  let init_repo dir =
+    let _ = Git.init ~cwd:dir in
+    Git.configure_test_identity ~cwd:dir;
+    let oc = open_out (Filename.concat dir "README") in
+    output_string oc "hi"; close_out oc;
+    let _ = Git.commit_all ~cwd:dir ~message:"initial" in
+    ()
+
+  let make_config dir k4k_dir events =
+    { Version_loop.cwd = dir;
+      k4k_dir;
+      default_branch = Git.default_branch ~cwd:dir;
+      emit = (fun e d -> events := (e, d) :: !events);
+      delete_branch_on_done = true;
+    }
+
+  let smoke_run_version_done () =
+    with_tmpdir (fun dir ->
+      init_repo dir;
+      let k4k_dir = Filename.concat dir ".k4k" in
+      Persist.ensure_dir k4k_dir;
+      let baseline = match Git.head_sha ~cwd:dir with
+        | Ok s -> s | Error e -> Alcotest.fail e in
+      let events = ref [] in
+      let cfg = make_config dir k4k_dir events in
+      let d = { Characterization.empty with goal = "echo" } in
+      let r = Version_loop.run ~cfg ~baseline_sha:baseline ~d () in
+      (match r with
+       | Done { tag; _ } ->
+           Alcotest.(check string) "tag" "v1" tag;
+           Alcotest.(check bool) "tag exists" true
+             (Git.tag_exists ~cwd:dir ~name:"v1");
+           Alcotest.(check bool) "branch deleted" false
+             (Git.branch_exists ~cwd:dir ~name:"k4k/version/1");
+           Alcotest.(check bool) "audit.md written" true
+             (Sys.file_exists
+                (Version_persist.audit_path ~k4k_dir ~number:1));
+           Alcotest.(check bool) "manifest.json written" true
+             (Sys.file_exists
+                (Version_persist.manifest_path ~k4k_dir ~number:1));
+           Alcotest.(check bool) "version.start emitted" true
+             (List.exists (fun (e,_) -> e = "version.start") !events);
+           Alcotest.(check bool) "version.complete emitted" true
+             (List.exists (fun (e,_) -> e = "version.complete") !events)
+       | Rolled_back -> Alcotest.fail "expected Done"))
+
+  let increments_version_number () =
+    with_tmpdir (fun dir ->
+      init_repo dir;
+      let k4k_dir = Filename.concat dir ".k4k" in
+      Persist.ensure_dir k4k_dir;
+      let baseline = match Git.head_sha ~cwd:dir with
+        | Ok s -> s | Error e -> Alcotest.fail e in
+      let events = ref [] in
+      let cfg = make_config dir k4k_dir events in
+      let d = Characterization.empty in
+      let _ = Version_loop.run ~cfg ~baseline_sha:baseline ~d () in
+      let _ = Version_loop.run ~cfg
+                ~baseline_sha:baseline ~d () in
+      Alcotest.(check bool) "v1 tag" true
+        (Git.tag_exists ~cwd:dir ~name:"v1");
+      Alcotest.(check bool) "v2 tag" true
+        (Git.tag_exists ~cwd:dir ~name:"v2"))
+
+  let collision_yields_rolled_back () =
+    with_tmpdir (fun dir ->
+      init_repo dir;
+      let k4k_dir = Filename.concat dir ".k4k" in
+      Persist.ensure_dir k4k_dir;
+      let baseline = match Git.head_sha ~cwd:dir with
+        | Ok s -> s | Error e -> Alcotest.fail e in
+      (* Pre-create the v1 branch to force a collision. *)
+      let _ = Git.create_branch ~cwd:dir ~name:"k4k/version/1" in
+      let _ = Git.checkout ~cwd:dir ~name:"main" in
+      let events = ref [] in
+      let cfg = make_config dir k4k_dir events in
+      let d = Characterization.empty in
+      match Version_loop.run ~cfg ~baseline_sha:baseline ~d () with
+      | Rolled_back ->
+          Alcotest.(check bool) "version.start_error emitted" true
+            (List.exists (fun (e,_) -> e = "version.start_error") !events)
+      | Done _ -> Alcotest.fail "expected Rolled_back")
+
+  let tests = [
+    Alcotest.test_case "Version_loop_smoke_run_completes_with_tag" `Quick
+      smoke_run_version_done;
+    Alcotest.test_case "Version_loop_increments_version_number" `Quick
+      increments_version_number;
+    Alcotest.test_case "Version_loop_branch_collision_yields_rolled_back"
+      `Quick collision_yields_rolled_back;
+  ]
+end
+
 (* ---------------- Toolchain_install (ADR-012, ≥5) ---------------- *)
 module TInst = struct
   let with_stub f =
@@ -4279,6 +4484,9 @@ let () =
       "Diff_extract", DET.tests;
       "Git",          GT.tests;
       "Version",      VerT.tests;
+      "Audit_md",     AuditMdT.tests;
+      "Version_persist", VPT.tests;
+      "Version_loop", VLT.tests;
       "Toolchain",    TInst.tests;
       "Sigint",       SigT.tests;
       "Gap_prompt",   GPT.tests;

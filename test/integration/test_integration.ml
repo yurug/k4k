@@ -259,6 +259,103 @@ let s5_rollback_aborts_in_flight_version () =
     Alcotest.(check bool) "branch deleted on rollback" false
       (K4k.Git.branch_exists ~cwd:dir ~name:v.branch_name))
 
+(* --- S1 v2 batch 3: drive the watcher to v1 completion --- *)
+
+(* Synthesize a minimal [Characterization.t] JSON for K4K_TEST_D_PATH.
+   We use [Characterization_json.to_yojson] so the canonical hash and
+   structure match what the runtime canonicalizer would produce. *)
+let write_d_path dir =
+  let d = { K4k.Characterization.empty with
+            goal = "echo argv with optional uppercasing";
+            cls = "cli";
+            language = "ocaml";
+            verifier_command = ["./_verifier.sh"];
+          } in
+  let canon = K4k.Canonicalize.canonicalize d in
+  let bytes = K4k.Canonical_json.to_string
+                (K4k.Characterization_json.to_yojson canon) in
+  let p = Filename.concat dir "d-spec.json" in
+  let oc = open_out p in output_string oc bytes; close_out oc;
+  p
+
+let read_file p =
+  let ic = open_in p in
+  let n = in_channel_length ic in
+  let b = Bytes.create n in really_input ic b 0 n; close_in ic;
+  Bytes.unsafe_to_string b
+
+let run_capture_with_d ~k4k_args ~cwd ~d_path () =
+  run_capture ~env:[("K4K_TEST_D_PATH", d_path)]
+    ~k4k_args ~cwd ()
+
+let s1_watcher_drives_v1_to_completion () =
+  with_cotype (fun () ->
+    with_workdir_and_git (fun dir ->
+      let f = Filename.concat dir "in.k4k" in
+      copy_file (fixture_path "echo-upper.k4k") f;
+      let _ = K4k.Git.commit_all ~cwd:dir ~message:"add in.k4k" in
+      let d_path = write_d_path dir in
+      let (_code, so, se) = run_capture_with_d
+        ~k4k_args:["--exit-on-done"; "in.k4k"]
+        ~cwd:dir ~d_path () in
+      let _ = se in
+      Alcotest.(check bool) "version.start emitted" true
+        (Astring.String.is_infix ~affix:"version.start" so);
+      Alcotest.(check bool) "version.complete emitted" true
+        (Astring.String.is_infix ~affix:"version.complete" so);
+      Alcotest.(check bool) "v1 tag exists" true
+        (K4k.Git.tag_exists ~cwd:dir ~name:"v1");
+      Alcotest.(check bool) "version branch deleted" false
+        (K4k.Git.branch_exists ~cwd:dir ~name:"k4k/version/1");
+      let manifest_p =
+        Filename.concat dir ".k4k/version/1/manifest.json" in
+      Alcotest.(check bool) "manifest.json exists" true
+        (Sys.file_exists manifest_p);
+      let m = read_file manifest_p in
+      Alcotest.(check bool) "manifest mentions tag v1" true
+        (Astring.String.is_infix ~affix:"\"tag\": \"v1\"" m);
+      Alcotest.(check bool) "D-spec.json exists" true
+        (Sys.file_exists
+           (Filename.concat dir ".k4k/version/1/D-spec.json"));
+      Alcotest.(check bool) "audit.md exists" true
+        (Sys.file_exists
+           (Filename.concat dir ".k4k/version/1/audit.md"))))
+
+(* --- S5 v2 batch 3: drive the watcher to a rollback via directive --- *)
+let s5_rollback_via_directive_in_status_block () =
+  with_cotype (fun () ->
+    with_workdir_and_git (fun dir ->
+      let f = Filename.concat dir "in.k4k" in
+      copy_file (fixture_path "echo-upper.k4k") f;
+      (* Pre-cut a version 1 branch (simulating a partial-development
+         state) and inject `request: rollback` in the file. *)
+      let _ = K4k.Git.commit_all ~cwd:dir ~message:"add in.k4k" in
+      let baseline = match K4k.Git.head_sha ~cwd:dir with
+        | Ok s -> s | Error _ -> Alcotest.fail "no HEAD" in
+      let _ = K4k.Version.start_new ~cwd:dir ~number:1
+                ~baseline_sha:baseline ~d_hash:"abc" in
+      let _ = K4k.Git.checkout ~cwd:dir ~name:"main" in
+      (* Persist the version manifest dir so next_version_number sees it. *)
+      let k4k_dir = Filename.concat dir ".k4k" in
+      K4k.Version_persist.ensure_dirs ~k4k_dir ~number:1;
+      (* Append a request:rollback into the file. *)
+      let body = read_file f in
+      let oc = open_out f in
+      output_string oc body;
+      output_string oc
+        "\n## k4k:status\n- State: developing\n\
+         ### User control directives\n- request: rollback\n";
+      close_out oc;
+      let _ = K4k.Git.commit_all ~cwd:dir ~message:"user: request rollback" in
+      Alcotest.(check bool) "branch exists pre-watch" true
+        (K4k.Git.branch_exists ~cwd:dir ~name:"k4k/version/1");
+      let (_code, so, _se) = run_capture
+        ~k4k_args:["--exit-on-done"; "in.k4k"]
+        ~cwd:dir () in
+      let _ = so in
+      Alcotest.(check bool) "branch deleted on rollback" false
+        (K4k.Git.branch_exists ~cwd:dir ~name:"k4k/version/1")))
+
 (* --- NF1: SIGINT shuts the watcher down within 5 s. --- *)
 let nf1_sigint_during_watcher () =
   with_cotype (fun () ->
@@ -408,6 +505,14 @@ let () =
         Alcotest.test_case
           "S5_rollback_aborts_in_flight_version" `Quick
           s5_rollback_aborts_in_flight_version;
+        Alcotest.test_case
+          "S5_rollback_via_directive_in_status_block" `Slow
+          s5_rollback_via_directive_in_status_block;
+      ];
+      "S1_v2", [
+        Alcotest.test_case
+          "S1_watcher_drives_v1_to_completion" `Slow
+          s1_watcher_drives_v1_to_completion;
       ];
       "NF1", [
         Alcotest.test_case

@@ -11,12 +11,35 @@ You never run flags. You never configure tooling. You never see the verifier or 
 ## Quick start
 
 ```bash
-pipx install cotype             # the file-concurrency primitive (ADR-010)
-# install k4k from this repo:   dune build && dune install
-k4k myproject.k4k               # one-shot launch; the agent runs autonomously
+pipx install cotype                                  # ADR-010 — file-concurrency primitive
+dune build && dune install                           # build k4k from this repo
+
+# Build the reference agent backend (or your own conforming binary):
+ls _build/install/default/bin/claude_code_backend    # the example, post-build
+export K4K_BACKEND_COMMAND="$(pwd)/_build/install/default/bin/claude_code_backend"
+
+# Launch the watcher — once.
+k4k myproject.k4k
 ```
 
-After that command you only edit `myproject.k4k`. k4k:
+`K4K_BACKEND_COMMAND` points at any executable conforming to
+[`kb/external/backend-protocol.md`](kb/external/backend-protocol.md).
+Two reference backends ship under `examples/backends/`:
+[`claude-code`](examples/backends/claude-code/README.md) (calls
+`claude -p`; needs `claude` on `$PATH` + `ANTHROPIC_API_KEY`) and
+[`ollama`](examples/backends/ollama/) (calls a local Ollama server).
+Without `K4K_BACKEND_COMMAND` set, the watcher logs
+`agent.unconfigured` once and idles — useful for `--exit-on-stable`
+smokes but not for real work.
+
+To smoke-test the claude-code backend wire (one round-trip; consumes
+API tokens):
+
+```bash
+./examples/backends/claude-code/smoke.sh formalization
+```
+
+After launching the watcher you only edit `myproject.k4k`. k4k:
 
 - Appends `## k4k:clarification:<ts>` blocks until your spec denotes a clear theorem.
 - Snapshots a `## k4k:version:<n>` block and develops the version on a `k4k/version/<n>` git branch (per ADR-013). Accepted gap-steps commit as `[k4k] establish <pid>`; on completion k4k merges to `main` and tags `v<n>`.

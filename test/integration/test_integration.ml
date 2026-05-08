@@ -596,6 +596,81 @@ let ollama_budget_exhausted_when_tokens_exceed_cap () =
     Alcotest.(check string) "outcome" "budget_exhausted"
       (str_field "outcome" j))
 
+(* --- S3: Tier-A → tradeoff proposal → user signs off Tier B → version
+   completes at Tier B. *)
+
+let canned_empty_diff =
+  "no diff in this response — agent failed to produce a patch\n"
+
+let write_s3_canned_responses ~path ~formalize_text =
+  (* 2 formalization (P18) + 3 rejected Tier-A diffs to trigger
+     tradeoff + 1 successful Tier-B diff. *)
+  let formalize_entries = [
+    `Assoc [ "purpose", `String "Formalization";
+             "text", `String formalize_text ];
+    `Assoc [ "purpose", `String "Formalization";
+             "text", `String formalize_text ];
+  ] in
+  let bad_entries = List.init 3 (fun _ ->
+    `Assoc [ "purpose", `String "Gap_step";
+             "text", `String canned_empty_diff ]) in
+  let good_entry = `Assoc [
+    "purpose", `String "Gap_step";
+    "text", `String (canned_diff_for 99); ] in
+  let bytes = Yojson.Safe.to_string
+    (`List (formalize_entries @ bad_entries @ [good_entry])) in
+  let oc = open_out path in
+  output_string oc bytes; close_out oc
+
+let s3_tradeoff_proposal_signed_off () =
+  with_cotype (fun () ->
+    with_workdir_and_git (fun dir ->
+      let f = Filename.concat dir "in.k4k" in
+      copy_file (fixture_path "echo-upper.k4k") f;
+      let _ = K4k.Git.commit_all ~cwd:dir ~message:"add in.k4k" in
+      let verifier_dst = Filename.concat dir "_verifier.sh" in
+      let here = Sys.getcwd () in
+      let rec find_synth d =
+        let cand = Filename.concat d
+          "test/conformance/fixtures/synthetic-verifier.sh" in
+        if Sys.file_exists cand then cand
+        else
+          let p = Filename.dirname d in
+          if p = d then failwith "synthetic-verifier.sh not found"
+          else find_synth p
+      in
+      copy_synthetic_verifier ~src:(find_synth here) ~dst:verifier_dst;
+      let d = build_d ~verifier_cmd:["./_verifier.sh"] in
+      let pids = property_ids_of d in
+      let canned_path = Filename.concat dir "canned.json" in
+      write_s3_canned_responses ~path:canned_path
+        ~formalize_text:(formalize_payload d);
+      let _ = K4k.Git.commit_all ~cwd:dir
+        ~message:"test: add verifier + canned" in
+      (* Pin to a single property so the test stays deterministic
+         (we only have 1 successful Tier-B diff). *)
+      let est = String.concat " " pids in
+      let env = [
+        ("K4K_STUB_RESPONSES", canned_path);
+        ("K4K_SYNTH_ESTABLISHED", est);
+        ("K4K_TEST_TRADEOFF_AUTOAPPROVE", "tier-b");
+      ] in
+      let (_code, so, _se) = run_capture_with_env
+        ~k4k_args:["--exit-on-done"; "in.k4k"]
+        ~cwd:dir ~env () in
+      (* v2 batch 4b: the proposal-pause-resume state machine is wired and
+         observable via these JSONL events. The post-approval Tier-B
+         execution (running the gap-step prompt at the approved tier and
+         producing a commit on the version branch) is deferred to a
+         later batch — at that point the [version.commit] and
+         [tradeoff archived] assertions will be re-enabled. *)
+      Alcotest.(check bool) "tradeoff.proposed emitted" true
+        (Astring.String.is_infix ~affix:"tradeoff.proposed" so);
+      Alcotest.(check bool) "tradeoff.approved emitted" true
+        (Astring.String.is_infix ~affix:"tradeoff.approved" so);
+      Alcotest.(check bool) "tradeoff.resolved emitted" true
+        (Astring.String.is_infix ~affix:"tradeoff.resolved" so)))
+
 let ollama_no_response_field_is_tool_error () =
   with_workdir (fun dir ->
     let p = Filename.concat dir "prompt.txt" in
@@ -627,6 +702,11 @@ let () =
         Alcotest.test_case
           "S1_watcher_drives_v1_to_completion" `Slow
           s1_watcher_drives_v1_to_completion;
+      ];
+      "S3", [
+        Alcotest.test_case
+          "S3_tradeoff_proposal_signed_off" `Slow
+          s3_tradeoff_proposal_signed_off;
       ];
       "NF1", [
         Alcotest.test_case

@@ -1,7 +1,8 @@
 (** [Version_loop] — drives the per-version state machine and the
     direct-commit gap-step loop on top of it (ADR-011 §6, ADR-013 §2,
-    v2 batch 4a). Finalize / merge / tag delegated to
-    [Version_finalize]. *)
+    v2 batch 4a/4b). Finalize / merge / tag delegated to
+    [Version_finalize]; tradeoff retry to [Version_tradeoff]; sign-off
+    polling to [Tradeoff_flow]. *)
 
 type agent_invoke =
   purpose:Agent_backend.purpose ->
@@ -31,11 +32,21 @@ type result =
   | Done of { tag : string; tier_dist : Inline_blocks.tier_distribution }
   | Rolled_back
 
+let to_v_cfg (cfg : config) : Version_tradeoff.cfg_v = {
+  cwd = cfg.cwd;
+  k4k_dir = cfg.k4k_dir;
+  emit = cfg.emit;
+  agent_invoke = cfg.agent_invoke;
+  verifier_run = cfg.verifier_run;
+  budget = cfg.budget;
+  file_path = cfg.file_path;
+}
+
 let logger_for cfg : Logger.t =
   let jsonl = Filename.concat cfg.k4k_dir "log.jsonl" in
   Logger.create ~verbosity:`Quiet ~jsonl_path:(Some jsonl)
 
-let mk_deps cfg ~budget_ref ~logger : unit Gap_step.deps = {
+let mk_deps cfg ~tier ~budget_ref ~logger : unit Gap_step.deps = {
   k4k_dir = cfg.k4k_dir;
   workdir = cfg.cwd;
   agent_invoke = cfg.agent_invoke;
@@ -43,23 +54,22 @@ let mk_deps cfg ~budget_ref ~logger : unit Gap_step.deps = {
   logger;
   budget_remaining = budget_ref;
   agent_backend = ();
-  tier = cfg.tier;
+  tier;
 }
 
-let summarize_s prev =
-  let n = List.length prev in
-  Printf.sprintf "(%d propert%s already established)" n
-    (if n = 1 then "y" else "ies")
-
-let on_accepted ~cfg ~prev_status ~prev_outcomes q commit_sha =
+let on_accepted ~cfg ~prev_status ~prev_outcomes ~tier_assignments
+    q tier commit_sha =
   cfg.emit "version.commit"
     (`Assoc [ "property_id", `String q.Property.id;
+              "tier", `String (match tier with
+                | `A -> "A" | `B -> "B" | `C -> "C");
               "sha", `String commit_sha ]);
   prev_status := (q.Property.id, `Established) :: !prev_status;
   prev_outcomes := { Version_finalize.id = q.id;
                      status = "established";
                      commit_sha = Some commit_sha }
-                   :: !prev_outcomes
+                   :: !prev_outcomes;
+  tier_assignments := (q.Property.id, tier) :: !tier_assignments
 
 let on_deferred ~cfg ~prev_outcomes q =
   cfg.emit "version.deferred"
@@ -68,54 +78,41 @@ let on_deferred ~cfg ~prev_outcomes q =
                      status = "deferred"; commit_sha = None }
                    :: !prev_outcomes
 
-let drive_property ~deps ~d ~cfg ~prev_status ~prev_outcomes p =
-  let summary = summarize_s !prev_status in
-  let o = Gap_step.step ~deps ~d
-            ~current_summary:summary
-            ~prev_status:!prev_status ~property:p in
-  match o with
-  | Gap_step.Accepted { property = q; commit_sha } ->
-      on_accepted ~cfg ~prev_status ~prev_outcomes q commit_sha;
+let drive_property_full ~deps_a ~d ~cfg ~v_number
+    ~prev_status ~prev_outcomes ~tier_assignments ?cotype p =
+  match Version_tradeoff.drive_at_tier ~deps:deps_a ~d ~prev_status p with
+  | `Accepted (q, commit_sha) ->
+      on_accepted ~cfg ~prev_status ~prev_outcomes
+        ~tier_assignments q `A commit_sha;
       `Continue
-  | Gap_step.Rejected { property = q; reason } ->
-      cfg.emit "version.reject"
-        (`Assoc [ "property_id", `String q.Property.id;
-                  "reason", `String reason ]);
-      `Retry q
-  | Gap_step.Blocked q | Gap_step.Tradeoff { property = q } ->
-      on_deferred ~cfg ~prev_outcomes q;
-      `Skip
-  | Gap_step.Budget_exhausted ->
-      cfg.emit "version.budget_exhausted" (`Assoc []);
-      `Stop
+  | `Done_blocked q ->
+      on_deferred ~cfg ~prev_outcomes q; `Skip
+  | `Stop -> `Stop
+  | `Tradeoff (q, reason) ->
+      let v_cfg = to_v_cfg cfg in
+      (match Version_tradeoff.handle ~cfg:v_cfg ~v_number ~d
+               ~prev_status ?cotype q reason with
+       | `Accepted_at (tier, q', sha) ->
+           on_accepted ~cfg ~prev_status ~prev_outcomes
+             ~tier_assignments q' tier sha;
+           `Continue
+       | `Defer q' ->
+           on_deferred ~cfg ~prev_outcomes q'; `Skip
+       | `Stop -> `Stop)
 
-let rec drive_with_retries ~deps ~d ~cfg ~prev_status ~prev_outcomes p =
-  if Sigint.should_exit () then `Stop
-  else
-    match drive_property ~deps ~d ~cfg ~prev_status ~prev_outcomes p with
-    | (`Continue | `Skip | `Stop) as r -> r
-    | `Retry q ->
-        if q.Property.failure_count >= 3 then begin
-          prev_outcomes := { Version_finalize.id = q.id;
-                             status = "deferred"; commit_sha = None }
-                           :: !prev_outcomes;
-          `Skip
-        end
-        else drive_with_retries ~deps ~d ~cfg ~prev_status
-               ~prev_outcomes q
-
-let rec run_gap_loop ~deps ~d ~cfg ~prev_status ~prev_outcomes pending =
+let rec run_gap_loop ~deps_a ~d ~cfg ~v_number ~prev_status ~prev_outcomes
+    ~tier_assignments ?cotype pending =
   match Property.argmax_lex pending with
   | None -> ()
   | Some p ->
       let rest = List.filter
         (fun (q : Property.t) -> q.id <> p.id) pending in
-      (match drive_with_retries ~deps ~d ~cfg ~prev_status
-              ~prev_outcomes p with
+      (match drive_property_full ~deps_a ~d ~cfg ~v_number
+               ~prev_status ~prev_outcomes ~tier_assignments ?cotype p with
        | `Stop -> ()
        | `Continue | `Skip ->
-           run_gap_loop ~deps ~d ~cfg ~prev_status
-             ~prev_outcomes rest)
+           run_gap_loop ~deps_a ~d ~cfg ~v_number ~prev_status
+             ~prev_outcomes ~tier_assignments ?cotype rest)
 
 let persist_initial ~cfg ~v ~d =
   Version_persist.ensure_dirs ~k4k_dir:cfg.k4k_dir
@@ -124,10 +121,6 @@ let persist_initial ~cfg ~v ~d =
     ~number:v.Version.number ~d;
   Version_persist.write_manifest ~k4k_dir:cfg.k4k_dir ~v ()
 
-(* v2 batch 4b: write a "developing" status block on the version branch
-   via cotype, then commit so the gap-step preflight clean-tree check
-   passes. Best-effort: failures are swallowed (the gap loop will still
-   surface its own preflight errors). *)
 let mk_developing_status n =
   { Inline_blocks.version_n = n;
     state = "developing";
@@ -173,12 +166,17 @@ let drive_version ~cfg ~d v ~started_at ?cotype () : result =
   write_developing_status ~cfg ~v ?cotype ();
   let logger = logger_for cfg in
   let budget_ref = ref cfg.budget in
-  let deps = mk_deps cfg ~budget_ref ~logger in
+  let deps_a = mk_deps cfg ~tier:`A ~budget_ref ~logger in
   let gap = Property.from_characterization d in
   let prev_status = ref [] in
   let prev_outcomes = ref [] in
-  run_gap_loop ~deps ~d ~cfg ~prev_status ~prev_outcomes gap;
+  let tier_assignments = ref [] in
+  run_gap_loop ~deps_a ~d ~cfg ~v_number:v.Version.number
+    ~prev_status ~prev_outcomes ~tier_assignments ?cotype gap;
   let outcomes = List.rev !prev_outcomes in
+  Version_persist.write_tiers
+    ~k4k_dir:cfg.k4k_dir ~number:v.Version.number
+    ~tiers:(List.rev !tier_assignments);
   to_local_result
     (Version_finalize.finalize
        ~cwd:cfg.cwd ~k4k_dir:cfg.k4k_dir

@@ -35,8 +35,19 @@ let verifier_invoke ~k4k_dir ~d : Version_loop.verifier_run =
   let v = Verifier_external.create cfg in
   fun ~workdir ~focus -> Verifier_external.run v ~workdir ~focus
 
+let commit_user_pending ~cwd ~emit =
+  let clean, _ = Git.is_clean ~cwd in
+  if not clean then begin
+    match Git.commit_all ~cwd ~message:"[k4k] file: pruning + housekeeping" with
+    | Ok () -> emit "watcher.commit_pending" (`Assoc [])
+    | Error e ->
+        emit "watcher.commit_pending_error"
+          (`Assoc [ "error", `String e ])
+  end
+
 let dispatch_one ~file_path ~k4k_dir ~emit ~ct ~d ~agent_invoke =
   let cwd = Filename.dirname file_path in
+  commit_user_pending ~cwd ~emit;
   let baseline = match Git.head_sha ~cwd with
     | Ok s -> s | Error _ -> ""
   in

@@ -159,6 +159,15 @@ let starts_with prefix s =
   let lp = String.length prefix and ls = String.length s in
   ls >= lp && String.sub s 0 lp = prefix
 
+(* --- section helpers — see [Inline_blocks_sections] (extracted for
+   the 200-line cap). *)
+
+let delete_section_named = Inline_blocks_sections.delete_section_named
+let replace_section_with_breadcrumb =
+  Inline_blocks_sections.replace_section_with_breadcrumb
+let breadcrumb_for = Inline_blocks_sections.breadcrumb_for
+let find_tradeoff_block = Inline_blocks_sections.find_tradeoff_block
+
 let parse_tradeoff_resolution s =
   let lines = String.split_on_char '\n' s in
   let rec scan = function

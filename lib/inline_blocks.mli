@@ -86,3 +86,29 @@ val render_version_summary_line : version_block -> string
 (** {1 Common ts helper} *)
 
 val timestamp_now : unit -> string
+
+(** {1 Section deletion / breadcrumb replacement (ADR-011 §7)} *)
+
+(** [delete_section_named raw ~name] removes the H2 section whose
+    heading is exactly `## <name>` (heading line + body). Returns [raw]
+    unchanged when no such section exists. Idempotent. Used to delete
+    `## k4k:welcome` after the first clarification round resolves. *)
+val delete_section_named : string -> name:string -> string
+
+(** [replace_section_with_breadcrumb raw ~name ~breadcrumb] replaces
+    the H2 section `## <name>` with [breadcrumb] (typically an
+    HTML-comment line so it renders invisibly). When no such section
+    exists [raw] is returned unchanged. Used by clarification /
+    tradeoff archival per ADR-011 §7. *)
+val replace_section_with_breadcrumb :
+  string -> name:string -> breadcrumb:string -> string
+
+(** [breadcrumb_for kind ts] renders the canonical breadcrumb left in
+    place of an archived block: [<!-- k4k:<kind> <ts> — resolved; archived -->]. *)
+val breadcrumb_for : string -> string -> string
+
+(** [find_tradeoff_block raw] — return [Some (timestamp, body, start_offset,
+    stop_offset)] for the first `## k4k:tradeoff:proposal:<ts>` block
+    in [raw], or [None]. The body excludes the heading line. *)
+val find_tradeoff_block :
+  string -> (string * string * int * int) option

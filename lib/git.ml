@@ -114,6 +114,20 @@ let commit_all ~cwd ~message : (unit, string) result =
                            "--allow-empty"] in
     if r2.exit_code = 0 then Ok () else Error (trim r2.stderr)
 
+(* ADR-013 §2 step 3 (v2 retrofit): on a rejected gap-step the working
+   tree is rewound to a fixed ref (typically [HEAD], the last accepted
+   commit). [git reset --hard] discards staged changes, working-tree
+   modifications, and any untracked files added by the failed
+   [git apply --index]. Untracked files outside the index are also
+   removed via [git clean -fd] so the next gap-step starts from a
+   clean slate. *)
+let reset_hard ~cwd ~ref : (unit, string) result =
+  let r = run_git ~cwd ["reset"; "--hard"; ref] in
+  if r.exit_code <> 0 then Error (trim r.stderr)
+  else
+    let r2 = run_git ~cwd ["clean"; "-fd"] in
+    if r2.exit_code = 0 then Ok () else Error (trim r2.stderr)
+
 let merge_ff_only ~cwd ~name : (unit, string) result =
   let r = run_git ~cwd ["merge"; "--ff-only"; name] in
   if r.exit_code = 0 then Ok () else Error (trim r.stderr)
@@ -169,11 +183,3 @@ let configure_test_identity ~cwd =
   let _ = run_git ~cwd ["config"; "user.name"; "k4k-test"] in
   ()
 
-let scratch_branch_name ~property_id =
-  let t = Unix.gettimeofday () in
-  let tm = Unix.gmtime t in
-  let stamp = Printf.sprintf "%04d%02d%02d-%02d%02d%02d"
-    (tm.tm_year + 1900) (tm.tm_mon + 1) tm.tm_mday
-    tm.tm_hour tm.tm_min tm.tm_sec in
-  let rand = Printf.sprintf "%06x" (Random.bits () land 0xffffff) in
-  Printf.sprintf "k4k/gap/%s/%s-%s" property_id stamp rand

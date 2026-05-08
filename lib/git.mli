@@ -41,6 +41,13 @@ val apply_diff : cwd:string -> diff:string -> (unit, string) result
 val commit_all :
   cwd:string -> message:string -> (unit, string) result
 
+(** [reset_hard ~cwd ~ref] = [git reset --hard <ref>] followed by
+    [git clean -fd]. ADR-013 §2 step 3 (v2): on a rejected gap-step
+    the working tree is rewound to the last accepted commit (typically
+    [HEAD]); untracked-files added by the failed [git apply] are also
+    removed so the next gap-step starts from a clean slate. *)
+val reset_hard : cwd:string -> ref:string -> (unit, string) result
+
 (** [merge_ff_only ~cwd ~name] = [git merge --ff-only <name>]. *)
 val merge_ff_only : cwd:string -> name:string -> (unit, string) result
 
@@ -84,6 +91,3 @@ val init : cwd:string -> (unit, string) result
     edits the user's git config. *)
 val configure_test_identity : cwd:string -> unit
 
-(** [scratch_branch_name ~property_id] — Q3.2 naming
-    [k4k/gap/<property-id>/<YYYYMMDD-HHMMSS-rand>]. *)
-val scratch_branch_name : property_id:string -> string

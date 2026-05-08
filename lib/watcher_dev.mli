@@ -8,15 +8,39 @@
 
 type emit_fn = string -> Yojson.Safe.t -> unit
 
-(** [try_run_version ~file_path ~k4k_dir ~emit ct] returns [`Done] if
-    a version completed successfully, [`Pending] otherwise (rollback,
-    or no D available). *)
+(** [resolve_invoke ~emit] resolves the agent-invoke closure ONCE per
+    watcher run. Reuse the same closure across every
+    [try_run_version] call: the canned backend ([Backend_canned])
+    holds per-purpose queues internally, and re-loading the canned
+    JSON on every iteration would reset those queues — formalize
+    would then always return the first canned payload regardless of
+    how many versions have already consumed responses. Production
+    swaps in [Backend_external] (which is stateless w.r.t. iteration
+    count and tolerates re-allocation, but the same single-allocation
+    discipline keeps the watcher uniform). *)
+val resolve_invoke :
+  emit:emit_fn ->
+  Version_loop.agent_invoke
+
+(** [try_run_version ~file_path ~k4k_dir ~emit ~agent_invoke ct]:
+    - [`Done] when the version completed (all properties established,
+      merged + tagged);
+    - [`Rolled_back] when the version-loop rolled back (some
+      properties deferred / blocked) or raised;
+    - [`Skipped] when no version was attempted (formalize error or
+      idempotence gate via [last_completed_d_hash]).
+
+    [`Done] and [`Rolled_back] are both terminal version outcomes;
+    [`Skipped] is non-terminal. The watcher's main loop counts the
+    terminal outcomes against [max_versions] and treats either as
+    sufficient to satisfy [exit_on_done]. *)
 val try_run_version :
   file_path:string ->
   k4k_dir:string ->
   emit:emit_fn ->
+  agent_invoke:Version_loop.agent_invoke ->
   Cotype.t ->
-  [ `Done | `Pending ]
+  [ `Done | `Rolled_back | `Skipped ]
 
 (** Splice a [state: done] status block into the file via cotype save. *)
 val after_version_done :

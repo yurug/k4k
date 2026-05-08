@@ -12,6 +12,11 @@ type config = {
         reaches state [Done] (or [Rolled_back]). Used by S1 / S5
         integration tests; documented in
         [kb/runbooks/test-environment.md]. *)
+  max_versions     : int option;
+    (** [@test_only] When [Some n], the watcher returns after [n]
+        versions have completed ([Done] only). [None] means no cap.
+        Used by integration tests that need to drive multiple
+        versions deterministically. *)
   poll_interval_ms : int;
   emit             : string -> Yojson.Safe.t -> unit;
 }

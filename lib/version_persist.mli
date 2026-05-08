@@ -45,3 +45,11 @@ val write_audit : k4k_dir:string -> number:int -> content:string -> unit
 (** Highest existing [.k4k/version/<n>/] number plus one; 1 on a
     fresh project. *)
 val next_version_number : k4k_dir:string -> int
+
+(** [last_completed_d_hash ~k4k_dir] reads the highest-numbered
+    [.k4k/version/<n>/manifest.json] and returns its
+    [version.d_hash] field. Returns [None] when no manifest exists
+    or the field is unreadable. Used by [Watcher_dev.try_run_version]
+    to skip a redundant version-start when [formalize] reproduces a
+    hash that already converged. *)
+val last_completed_d_hash : k4k_dir:string -> string option

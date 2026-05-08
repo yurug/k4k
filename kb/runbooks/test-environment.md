@@ -68,20 +68,16 @@ call.
 empty by default so any `ensure` call returns `Failed` and the watcher
 aborts at startup — undesirable in production, perfectly safe.
 
-### `K4K_TEST_D_PATH=<path-to-D-spec.json>`
-**Purpose:** inject a pre-canonicalized [`Characterization.t`] JSON
-file directly into the watcher's development half (v2 batch 3).
-When set, [`Watcher_dev.try_run_version`] reads + decodes the file
-instead of running the formalization pass against an agent backend.
-Used by the S1 / S5 integration tests to drive [`Version_loop`] end
-to end without a real LLM.
-**Default:** unset → batch-3 watcher emits
-[`{"event":"version.skip", "details":{"reason":"no K4K_TEST_D_PATH; ...}}`]
-and returns. (v2 batch 4 wires real formalization; this knob will
-be deleted then.)
-**When the binary itself reads this:** every iteration of
-[`Watcher_dev.try_run_version`] (only reached when the spec is stable
-and not in `--exit-on-stable`).
+### `K4K_TEST_TRADEOFF_AUTOAPPROVE=<resolution>`
+**Purpose:** short-circuit the [`Tradeoff_flow.propose_and_wait`]
+polling loop in tests so [`S3_tradeoff_proposal_signed_off`] does
+not need a second cotype client to write the user's reply. Accepted
+values: `tier-b` (or `b`), `tier-c` (or `c`), `reject:<reason>`,
+`timeout`. The watcher splices the proposal block into the file
+exactly as it would in production, then resolves the proposal to
+the configured outcome instead of waiting for an inline reply.
+**Default:** unset → real cotype-mediated polling.
+**When read:** every [`Tradeoff_flow.propose_and_wait`] call.
 **Production effect:** none unless explicitly set.
 
 ### `K4K_TEST_TRACE_WRITES=<path-to-trace-file>`
@@ -111,6 +107,20 @@ through a full version-1 lifecycle without SIGTERM.
 **When read:** at every iteration of `Watcher_loop.one_tick` after a
 stable spec snapshot is observed.
 **Production effect:** none — production users never pass it.
+
+### `--max-versions=<N>`
+**Purpose:** make `bin/main.ml`'s watcher loop return after `N`
+versions have completed (state `Done`). Used by integration tests
+that must drive the watcher through multiple consecutive versions
+deterministically — e.g. [`P22b_v1_to_v2_picks_up_user_edits`],
+which validates that a user edit applied to the file mid-v1 surfaces
+during v2's formalization.
+**Default:** unset → no cap.
+**When read:** at every iteration of `Watcher_loop.on_stable` after
+a `Done` outcome.
+**Production effect:** none unless explicitly set. Setting it in
+production is harmless: the watcher exits cooperatively after `N`
+completed versions.
 
 ## Properties enforced
 

@@ -93,3 +93,23 @@ let next_version_number ~k4k_dir : int =
     match List.sort compare nums with
     | [] -> 1
     | xs -> 1 + List.fold_left max 0 xs
+
+let last_completed_d_hash ~k4k_dir : string option =
+  let n = next_version_number ~k4k_dir - 1 in
+  if n < 1 then None
+  else
+    let p = manifest_path ~k4k_dir ~number:n in
+    if not (Sys.file_exists p) then None
+    else
+      try
+        let bytes = Persist.read_file p in
+        match Yojson.Safe.from_string bytes with
+        | `Assoc m ->
+            (match List.assoc_opt "version" m with
+             | Some (`Assoc vm) ->
+                 (match List.assoc_opt "d_hash" vm with
+                  | Some (`String s) -> Some s
+                  | _ -> None)
+             | _ -> None)
+        | _ -> None
+      with _ -> None

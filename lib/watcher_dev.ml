@@ -9,9 +9,13 @@
 
 type emit_fn = string -> Yojson.Safe.t -> unit
 
-(** Lazily-resolved agent-invoke closure: shared across formalization
-    and gap-step. Per-purpose queues in [Backend_canned] mean a single
-    handle suffices. Production swaps in [Backend_external]. *)
+(** Resolve the agent-invoke closure. Called ONCE at watcher startup;
+    the resulting closure is reused across every [try_run_version]
+    iteration so the canned backend's per-purpose queues persist
+    across the watcher's main loop (a fresh load on every iteration
+    would reset them, causing formalize to always return the first
+    canned payload regardless of how many versions have already
+    consumed responses). Production swaps in [Backend_external]. *)
 let resolve_invoke ~emit : Version_loop.agent_invoke =
   match Sys.getenv_opt "K4K_STUB_RESPONSES" with
   | None | Some "" ->
@@ -81,34 +85,60 @@ let formalize ~k4k_dir ~ct ~file_path ~emit ~agent_invoke
   | Some content ->
       Watcher_form.run ~k4k_dir ~content ~agent_invoke ~emit
 
-(** Try to drive the development half of the watcher loop. Returns
-    [`Done] iff a version completed; [`Pending] otherwise (rollback,
-    formalization failure, or version-start error). *)
-let try_run_version ~file_path ~k4k_dir ~emit ct : [ `Done | `Pending ] =
-  let agent_invoke = resolve_invoke ~emit in
+(** Try to drive the development half of the watcher loop. The
+    [agent_invoke] closure must be allocated ONCE per watcher run and
+    threaded through every iteration (see [resolve_invoke]). The
+    three outcomes are:
+    - [`Done] — version-loop returned [Done] (all properties
+      established, merged + tagged on the default branch);
+    - [`Rolled_back] — version-loop returned [Rolled_back] (or
+      raised); a version branch may still exist as scratch state for
+      audit;
+    - [`Skipped] — no version was attempted (formalization failed, or
+      [Version_persist.last_completed_d_hash] matched the new
+      D-hash so the idempotence gate fired).
+
+    Both [`Done] and [`Rolled_back] are terminal version outcomes —
+    [Watcher_loop.on_stable] treats them equally for the
+    [exit_on_done] / [max_versions] gates. [`Skipped] is non-terminal:
+    the loop sleeps and tries again. *)
+let try_run_version ~file_path ~k4k_dir ~emit ~agent_invoke ct
+    : [ `Done | `Rolled_back | `Skipped ] =
   match formalize ~k4k_dir ~ct ~file_path ~emit ~agent_invoke with
   | Error reason ->
       emit "version.skip"
         (`Assoc [ "reason", `String ("formalize: " ^ reason) ]);
-      `Pending
+      `Skipped
   | Ok d ->
-      try
-        (match dispatch_one ~file_path ~k4k_dir ~emit ~ct ~d
-                 ~agent_invoke with
-         | Done _ -> `Done
-         | Rolled_back -> `Pending)
-      with
-      | Error.K4k_error e ->
-          emit "version.error" (`Assoc [
-            "code", `String (Error.code_id e);
-            "render", `String (Error.render e);
-          ]);
-          `Pending
-      | exn ->
-          emit "version.exn" (`Assoc [
-            "exn", `String (Printexc.to_string exn);
-          ]);
-          `Pending
+      (* Idempotence gate: if the previously-completed version already
+         converged at this exact D-hash, do not start a new version.
+         Without this gate the watcher main loop spins on stable specs,
+         starting redundant version branches whose merge-back is a
+         no-op. *)
+      (match Version_persist.last_completed_d_hash ~k4k_dir with
+       | Some prev when prev = d.Characterization.hash ->
+           emit "version.skip"
+             (`Assoc [ "reason", `String "no-spec-change";
+                       "d_hash", `String d.hash ]);
+           `Skipped
+       | _ ->
+           try
+             (match dispatch_one ~file_path ~k4k_dir ~emit ~ct ~d
+                      ~agent_invoke with
+              | Done _ -> `Done
+              | Rolled_back -> `Rolled_back)
+           with
+           | Error.K4k_error e ->
+               emit "version.error" (`Assoc [
+                 "code", `String (Error.code_id e);
+                 "render", `String (Error.render e);
+               ]);
+               `Rolled_back
+           | exn ->
+               emit "version.exn" (`Assoc [
+                 "exn", `String (Printexc.to_string exn);
+               ]);
+               `Rolled_back)
 
 let render_done_status ~version_n ~tier_dist =
   let s : Inline_blocks.status = {

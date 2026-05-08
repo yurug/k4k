@@ -8,6 +8,7 @@ type config = {
   verbosity        : [ `Quiet | `Verbose | `Debug ];
   exit_on_stable   : bool;
   exit_on_done     : bool;
+  max_versions     : int option;
   poll_interval_ms : int;
 }
 
@@ -116,6 +117,7 @@ let run ~config : int =
         verbosity = config.verbosity;
         exit_on_stable = config.exit_on_stable;
         exit_on_done = config.exit_on_done;
+        max_versions = config.max_versions;
         poll_interval_ms = config.poll_interval_ms;
         emit = (fun e d -> emit_event ~verbosity:config.verbosity e d);
       } in

@@ -20,6 +20,11 @@ type config = {
   exit_on_done     : bool;
     (** [@test_only] When [true], the watcher returns once a version
         completes (or rolls back). *)
+  max_versions     : int option;
+    (** [@test_only] When [Some n], the watcher returns after [n]
+        versions have completed (in any combination of [Done] /
+        [Rolled_back] outcomes that increment the counter — currently
+        only [Done] does). [None] means no cap. *)
   poll_interval_ms : int;
     (** Default 500 ms (2 Hz). Tests may shorten. *)
 }

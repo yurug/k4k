@@ -25,10 +25,14 @@ open K4k
 type purpose = [ `Formalization | `Gap_step | `Kb_regen ]
 
 type args = {
-  purpose     : purpose;
-  prompt_file : string;
-  budget      : int;
-  output      : string;
+  purpose       : purpose;
+  prompt_file   : string;
+  budget        : int;
+  output        : string;
+  mock_response : string option;
+    (* Test mode: when set, the backend reads the JSON wrapper
+       from this path instead of spawning [claude]. Parallel to
+       ollama's [--mock-response]. Production users never set it. *)
 }
 
 let purpose_of_string = function
@@ -43,6 +47,7 @@ let parse_args argv =
   let prompt_file = ref "" in
   let budget = ref 0 in
   let output = ref "" in
+  let mock_response = ref None in
   let i = ref 1 in
   while !i < n do
     let a = argv.(!i) in
@@ -56,6 +61,8 @@ let parse_args argv =
          i := !i + 2
      | "--output" when !i + 1 < n ->
          output := argv.(!i + 1); i := !i + 2
+     | "--mock-response" when !i + 1 < n ->
+         mock_response := Some argv.(!i + 1); i := !i + 2
      | _ -> incr i)
   done;
   match !purpose with
@@ -63,7 +70,8 @@ let parse_args argv =
   | Some p ->
       if !prompt_file = "" || !output = "" || !budget <= 0 then None
       else Some { purpose = p; prompt_file = !prompt_file;
-                  budget = !budget; output = !output }
+                  budget = !budget; output = !output;
+                  mock_response = !mock_response }
 
 (* ---------- claude invocation ---------- *)
 
@@ -151,18 +159,34 @@ let interpret_claude ~budget ~duration_ms (sub : Subprocess.result) =
     | Ok (text, used) ->
         result_json_ok ~text ~budget_used:used ~duration_ms
 
+let mock_subprocess raw : Subprocess.result =
+  { exit_code = 0; stdout = raw; stderr = "";
+    timed_out = false; duration_ms = 0 }
+
 let run_backend args ~prompt =
   let t0 = Unix.gettimeofday () in
-  match Subprocess.run ~prog:"claude"
-          ~args:(claude_args ~prompt ~purpose:args.purpose)
-          ~timeout_s:300 () with
-  | exception Unix.Unix_error (Unix.ENOENT, _, _) ->
-      `Missing
-  | sub ->
-      let elapsed = int_of_float
-        ((Unix.gettimeofday () -. t0) *. 1000.0) in
-      `Result (interpret_claude
-                 ~budget:args.budget ~duration_ms:elapsed sub)
+  let elapsed_ms () =
+    int_of_float ((Unix.gettimeofday () -. t0) *. 1000.0) in
+  match args.mock_response with
+  | Some path ->
+      (try
+         let raw = Persist.read_file path in
+         `Result (interpret_claude ~budget:args.budget
+                    ~duration_ms:(elapsed_ms ())
+                    (mock_subprocess raw))
+       with _ ->
+         `Result (result_json_tool_error ~duration_ms:(elapsed_ms ())
+                    ~error:("could not read mock-response: " ^ path)))
+  | None ->
+      (match Subprocess.run ~prog:"claude"
+               ~args:(claude_args ~prompt ~purpose:args.purpose)
+               ~timeout_s:300 () with
+       | exception Unix.Unix_error (Unix.ENOENT, _, _) ->
+           `Missing
+       | sub ->
+           `Result (interpret_claude
+                      ~budget:args.budget
+                      ~duration_ms:(elapsed_ms ()) sub))
 
 let main args =
   match read_prompt args.prompt_file with

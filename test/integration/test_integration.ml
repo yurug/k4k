@@ -675,6 +675,15 @@ let s3_tradeoff_proposal_signed_off () =
            so &&
          Astring.String.is_infix ~affix:"\"tier\":\"B\"" so)))
 
+let count_substr s sub =
+  let n = String.length sub in
+  let m = String.length s in
+  let rec loop i acc =
+    if i + n > m then acc
+    else if String.sub s i n = sub then loop (i + 1) (acc + 1)
+    else loop (i + 1) acc
+  in loop 0 0
+
 (* --- P22: user edits during development are queued, never interrupt
    (ADR-011 §6; properties/functional.md#P22).
 
@@ -762,15 +771,6 @@ let p22_user_edits_queued_during_development () =
       (* The event fires exactly once: a single user edit produces
          one [user_edits.queued] regardless of how many gap-step
          iterations follow. *)
-      let count_substr s sub =
-        let n = String.length sub in
-        let m = String.length s in
-        let rec loop i acc =
-          if i + n > m then acc
-          else if String.sub s i n = sub then loop (i + 1) (acc + 1)
-          else loop (i + 1) acc
-        in loop 0 0
-      in
       Alcotest.(check int) "exactly one user_edits.queued event" 1
         (count_substr so "\"event\":\"user_edits.queued\"");
       Alcotest.(check bool) "version.complete emitted" true
@@ -789,6 +789,160 @@ let p22_user_edits_queued_during_development () =
       Alcotest.(check bool) "queue-user-edits commit in log" true
         (Astring.String.is_infix
            ~affix:"queue user edits for v" log)))
+
+(* --- P22 (b): version N+1 picks up the queued edits. Drives the
+   watcher with --max-versions=2: v1 completes despite the mid-flight
+   user edit; v2 then starts because the file's user-section hashes
+   no longer match v1's manifest, formalize produces a fresh D, and
+   the idempotence gate (Watcher_dev.try_run_version vs.
+   Version_persist.last_completed_d_hash) lets the new version
+   through. *)
+
+let write_v1_v2_canned ~path ~payload1 ~n1 ~payload2 ~n2 =
+  let formalize p = `Assoc [ "purpose", `String "Formalization";
+                             "text", `String p ] in
+  let gap n = `Assoc [ "purpose", `String "Gap_step";
+                       "text", `String (canned_diff_for n) ] in
+  let v1_form = [formalize payload1; formalize payload1] in
+  let v1_gap  = List.init n1 (fun i -> gap (i + 1)) in
+  let v2_form = [formalize payload2; formalize payload2] in
+  let v2_gap  = List.init n2 (fun i -> gap (n1 + i + 1)) in
+  let extras  = List.init 4 (fun i -> gap (n1 + n2 + i + 1)) in
+  let bytes = Yojson.Safe.to_string
+    (`List (v1_form @ v1_gap @ v2_form @ v2_gap @ extras)) in
+  let oc = open_out path in
+  output_string oc bytes; close_out oc
+
+let p22b_v1_to_v2_picks_up_user_edits () =
+  with_cotype (fun () ->
+    with_workdir_and_git (fun dir ->
+      let f = Filename.concat dir "in.k4k" in
+      copy_file (fixture_path "echo-upper.k4k") f;
+      let _ = K4k.Git.commit_all ~cwd:dir ~message:"add in.k4k" in
+      let here = Sys.getcwd () in
+      let rec find_synth d =
+        let cand = Filename.concat d
+          "test/conformance/fixtures/synthetic-verifier.sh" in
+        if Sys.file_exists cand then cand
+        else
+          let p = Filename.dirname d in
+          if p = d then failwith "synthetic-verifier.sh not found"
+          else find_synth p
+      in
+      let synth_dst = Filename.concat dir "_synth.sh" in
+      copy_synthetic_verifier ~src:(find_synth here) ~dst:synth_dst;
+      let verifier_dst = Filename.concat dir "_verifier.sh" in
+      write_p22_verifier_wrapper ~path:verifier_dst
+        ~synth_path:synth_dst ~k4k_file:f;
+      let d1 = build_d ~verifier_cmd:["./_verifier.sh"] in
+      let d2 =
+        { d1 with K4k.Characterization.goal =
+                    d1.K4k.Characterization.goal ^ " (v2)" } in
+      let pids1 = property_ids_of d1 in
+      let pids2 = property_ids_of d2 in
+      let canned_path = Filename.concat dir "canned.json" in
+      write_v1_v2_canned ~path:canned_path
+        ~payload1:(formalize_payload d1) ~n1:(List.length pids1)
+        ~payload2:(formalize_payload d2) ~n2:(List.length pids2);
+      let _ = K4k.Git.commit_all ~cwd:dir
+        ~message:"test: add verifier + canned" in
+      let est = String.concat " " (pids1 @ pids2) in
+      let env = [
+        ("K4K_STUB_RESPONSES", canned_path);
+        ("K4K_SYNTH_ESTABLISHED", est);
+      ] in
+      let (_code, so, _se) = run_capture_with_env
+        ~k4k_args:["--max-versions=2"; "in.k4k"]
+        ~cwd:dir ~env () in
+      Alcotest.(check int) "two version.complete events" 2
+        (count_substr so "\"event\":\"version.complete\"");
+      Alcotest.(check bool) "v1 tag created" true
+        (K4k.Git.tag_exists ~cwd:dir ~name:"v1");
+      Alcotest.(check bool) "v2 tag created" true
+        (K4k.Git.tag_exists ~cwd:dir ~name:"v2");
+      Alcotest.(check bool) "user_edits.queued seen during v1" true
+        (Astring.String.is_infix ~affix:"user_edits.queued" so);
+      Alcotest.(check bool) "version.start fires twice" true
+        (count_substr so "\"event\":\"version.start\"" = 2)))
+
+(* ---------------- claude-code backend example ---------------- *)
+
+let claude_code_bin () =
+  let here = Sys.getcwd () in
+  let rec find dir =
+    let cand = Filename.concat dir
+      "_build/default/examples/backends/claude-code/main.exe" in
+    if Sys.file_exists cand then cand
+    else
+      let p = Filename.dirname dir in
+      if p = dir then failwith "claude_code_backend binary not found"
+      else find p
+  in find here
+
+let run_claude_code ~mock ~budget ~prompt ~output =
+  let bin = claude_code_bin () in
+  let cmd = Printf.sprintf "%s --mock-response %s --purpose formalization \
+                            --prompt-file %s --budget %d --output %s 2>/dev/null"
+    (Filename.quote bin) (Filename.quote mock)
+    (Filename.quote prompt) budget (Filename.quote output) in
+  Sys.command cmd
+
+let claude_code_emits_ok_for_well_formed_response () =
+  with_workdir (fun dir ->
+    let p = Filename.concat dir "prompt.txt" in
+    write_file p "translate to JSON";
+    let m = Filename.concat dir "mock.json" in
+    write_file m
+      {|{"result":{"text":"OK"},"usage":{"input_tokens":4,"output_tokens":3}}|};
+    let o = Filename.concat dir "result.json" in
+    let code = run_claude_code ~mock:m ~budget:1000 ~prompt:p ~output:o in
+    Alcotest.(check int) "exit 0" 0 code;
+    let j = read_json o in
+    Alcotest.(check string) "outcome" "ok" (str_field "outcome" j);
+    Alcotest.(check string) "text" "OK" (str_field "text" j);
+    Alcotest.(check int) "budget_used" 7 (int_field "budget_used" j))
+
+let claude_code_budget_exhausted_when_tokens_exceed_cap () =
+  with_workdir (fun dir ->
+    let p = Filename.concat dir "prompt.txt" in
+    write_file p "x";
+    let m = Filename.concat dir "mock.json" in
+    write_file m
+      {|{"result":{"text":"R"},"usage":{"input_tokens":50,"output_tokens":60}}|};
+    let o = Filename.concat dir "result.json" in
+    let code = run_claude_code ~mock:m ~budget:100 ~prompt:p ~output:o in
+    Alcotest.(check int) "exit 0" 0 code;
+    let j = read_json o in
+    Alcotest.(check string) "outcome" "budget_exhausted"
+      (str_field "outcome" j))
+
+let claude_code_malformed_json_is_tool_error () =
+  with_workdir (fun dir ->
+    let p = Filename.concat dir "prompt.txt" in
+    write_file p "x";
+    let m = Filename.concat dir "mock.json" in
+    write_file m {|not-a-json}|};
+    let o = Filename.concat dir "result.json" in
+    let code = run_claude_code ~mock:m ~budget:100 ~prompt:p ~output:o in
+    Alcotest.(check int) "exit 0" 0 code;
+    let j = read_json o in
+    Alcotest.(check string) "outcome" "tool_error"
+      (str_field "outcome" j))
+
+let claude_code_missing_text_yields_empty_ok () =
+  (* The wrapper schema parser tolerates missing result.text by
+     defaulting to "". Documents the behavior; not a hard contract. *)
+  with_workdir (fun dir ->
+    let p = Filename.concat dir "prompt.txt" in
+    write_file p "x";
+    let m = Filename.concat dir "mock.json" in
+    write_file m {|{"usage":{"input_tokens":1,"output_tokens":1}}|};
+    let o = Filename.concat dir "result.json" in
+    let code = run_claude_code ~mock:m ~budget:100 ~prompt:p ~output:o in
+    Alcotest.(check int) "exit 0" 0 code;
+    let j = read_json o in
+    Alcotest.(check string) "outcome" "ok" (str_field "outcome" j);
+    Alcotest.(check string) "text" "" (str_field "text" j))
 
 let ollama_no_response_field_is_tool_error () =
   with_workdir (fun dir ->
@@ -831,6 +985,9 @@ let () =
         Alcotest.test_case
           "P22_user_edits_queued_during_development" `Slow
           p22_user_edits_queued_during_development;
+        Alcotest.test_case
+          "P22b_v1_to_v2_picks_up_user_edits" `Slow
+          p22b_v1_to_v2_picks_up_user_edits;
       ];
       "NF1", [
         Alcotest.test_case
@@ -853,6 +1010,16 @@ let () =
         Alcotest.test_case
           "P1_user_section_byte_equality_under_save" `Quick
           p1_user_section_byte_equality_under_save;
+      ];
+      "claude_code_backend", [
+        Alcotest.test_case "claude_code_emits_ok_for_well_formed_response"
+          `Quick claude_code_emits_ok_for_well_formed_response;
+        Alcotest.test_case "claude_code_budget_exhausted_when_tokens_exceed_cap"
+          `Quick claude_code_budget_exhausted_when_tokens_exceed_cap;
+        Alcotest.test_case "claude_code_malformed_json_is_tool_error"
+          `Quick claude_code_malformed_json_is_tool_error;
+        Alcotest.test_case "claude_code_missing_text_yields_empty_ok"
+          `Quick claude_code_missing_text_yields_empty_ok;
       ];
       "ollama_backend", [
         Alcotest.test_case "ollama_emits_ok_for_well_formed_response"

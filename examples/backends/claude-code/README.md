@@ -55,6 +55,22 @@ recognises works — typically `ANTHROPIC_API_KEY` or whatever local
 configuration `claude` is set up with. k4k itself does not forward any
 credentials; that is the backend's responsibility.
 
+## Testing
+
+Wire-level tests live in `test/integration/test_integration.ml` under
+the `claude_code_backend` group: they exercise the binary with
+`--mock-response`, validating the protocol output for `ok`,
+`budget_exhausted`, malformed-JSON `tool_error`, and the
+missing-text-defaults-to-empty edge case. Run them with:
+
+```bash
+dune runtest test/integration  # covers everything; ~50s
+```
+
+For a real-Claude smoke (consumes API tokens) run `./smoke.sh
+formalization` from this directory. The smoke script is opt-in and
+not part of the test suite.
+
 ## Known limitations
 
 - `--max-turns 1`: a single round-trip per call. If your prompt requires

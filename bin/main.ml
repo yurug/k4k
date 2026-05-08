@@ -45,13 +45,22 @@ let exit_on_done_arg =
                or rolls back. Documented in \
                kb/runbooks/test-environment.md.")
 
-let dispatch verbosity exit_on_stable exit_on_done file =
+let max_versions_arg =
+  let open Cmdliner in
+  Arg.(value & opt (some int) None &
+       info [ "max-versions" ]
+         ~docv:"N"
+         ~doc:"Test-only: exit after N versions have completed. \
+               Documented in kb/runbooks/test-environment.md.")
+
+let dispatch verbosity exit_on_stable exit_on_done max_versions file =
   let cfg = {
     Watcher.file_path = file;
     k4k_dir = ".k4k";
     verbosity;
     exit_on_stable;
     exit_on_done;
+    max_versions;
     poll_interval_ms = 500;
   } in
   Watcher.run ~config:cfg
@@ -61,6 +70,7 @@ let main_term =
                  $ verbosity_arg
                  $ exit_on_stable_arg
                  $ exit_on_done_arg
+                 $ max_versions_arg
                  $ file_arg)
 
 let cmd =

@@ -6,6 +6,7 @@ type config = {
   verbosity        : [ `Quiet | `Verbose | `Debug ];
   exit_on_stable   : bool;
   exit_on_done     : bool;
+  max_versions     : int option;
   poll_interval_ms : int;
   emit             : string -> Yojson.Safe.t -> unit;
 }
@@ -39,18 +40,8 @@ let append_clarification cfg ct ~issues =
   with Error.K4k_error _ -> ()
 
 let render_and_save_status cfg ct ~status_block =
-  try
-    let opened = Cotype.open_ ct ~file:cfg.file_path in
-    match opened with
-    | Error _ -> ()
-    | Ok r ->
-        let base = Persist.read_file r.base_path in
-        let merged = Status_splice.replace_or_append base status_block in
-        let _ = Cotype.save ct ~file:cfg.file_path
-                  ~base_sha:r.base_sha ~actor:"agent:k4k"
-                  ~bytes:merged in
-        ()
-  with _ -> ()
+  Version_user_edits.splice_status_block
+    ~cotype:ct ~file_path:cfg.file_path ~status_block
 
 let user_directives_in_file cfg ct =
   match read_file_via_cotype ct ~file:cfg.file_path with
@@ -88,31 +79,20 @@ let process_unstable cfg ct issues =
   cfg.emit "stability.unstable"
     (`Assoc [ "issues", `Int (List.length issues) ])
 
-(* Test-mode exit: under --exit-on-stable, return after the first
-   state transition (stable OR unstable). Production loop never sets
-   this. *)
-let test_exit_now cfg = cfg.exit_on_stable
-
-(* v2 batch 4b: do NOT mutate the working tree with status writes
-   before [Version.start_new] runs. The developing-state status block
-   is written from inside [Version_loop] after the version branch is
-   created. On stable, however, we DO run the file-pruning rules
-   (ADR-011 §7): archive resolved clarifications + maybe-delete the
-   welcome block. These mutate the file via cotype but only when
-   there's something to prune; idempotent post-condition. *)
+(* On stable we run the file-pruning rules (ADR-011 §7): archive
+   resolved clarifications + maybe-delete the welcome block.
+   Idempotent post-condition; only mutates when there's something to
+   prune. We do NOT splice a developing-status block here: that
+   happens from inside [Version_loop] after the version branch is
+   created (v2 batch 4b — never mutate working tree before start_new). *)
 let process_stable cfg ct =
   Watcher_prune.run ~ct ~file_path:cfg.file_path
     ~k4k_dir:cfg.k4k_dir ~emit:cfg.emit;
   cfg.emit "stability.pass" (`Assoc [])
 
-(* On a stable spec, try to drive the development half. When the test
-   knob [K4K_TEST_D_PATH] is set we cut a version branch, run the
-   accept-only gap loop, merge + tag, and (if [exit_on_done]) return.
-   Production v2 batch 3 emits [version.skip] until batch 4 wires
-   formalization. *)
-let attempt_version cfg ct =
+let attempt_version cfg ct ~agent_invoke =
   match Watcher_dev.try_run_version ~file_path:cfg.file_path
-          ~k4k_dir:cfg.k4k_dir ~emit:cfg.emit ct with
+          ~k4k_dir:cfg.k4k_dir ~emit:cfg.emit ~agent_invoke ct with
   | `Done ->
       let next_n = Version_persist.next_version_number
                      ~k4k_dir:cfg.k4k_dir - 1 in
@@ -121,7 +101,8 @@ let attempt_version cfg ct =
         ~version_n:n
         ~tier_dist:{ tier_a = 0; tier_b = 0; tier_c = 0 };
       `Done
-  | `Pending -> `Pending
+  | `Rolled_back -> `Rolled_back
+  | `Skipped -> `Skipped
 
 let on_rollback cfg ct =
   let cwd = Filename.dirname cfg.file_path in
@@ -142,17 +123,29 @@ let on_rollback cfg ct =
   render_and_save_status cfg ct
     ~status_block:(Inline_blocks.render_status s)
 
-let on_stable cfg ct ~stable_seen =
+(* On every stable tick (production OR test), attempt to drive a
+   version. The idempotence gate inside [Watcher_dev.try_run_version]
+   short-circuits when the spec is unchanged from the last completed
+   version, so this is cheap on a fully-developed-and-idle file. The
+   exit gates ([exit_on_done] and [max_versions]) trigger only after
+   a [Done] outcome — a [Pending] tick (rollback, gated, or
+   formalize-error) just sleeps and tries again. *)
+let on_stable cfg ct ~stable_seen ~versions_done ~agent_invoke =
   if not stable_seen then process_stable cfg ct;
   if cfg.exit_on_stable then `Stop
-  else if cfg.exit_on_done then begin
-    let _ = attempt_version cfg ct in `Stop
-  end
-  else (sleep_ms cfg.poll_interval_ms; `Continue true)
+  else
+    let outcome = attempt_version cfg ct ~agent_invoke in
+    let terminal = outcome = `Done || outcome = `Rolled_back in
+    if terminal then incr versions_done;
+    let cap_hit = match cfg.max_versions with
+      | Some m -> !versions_done >= m | None -> false
+    in
+    if (cfg.exit_on_done && terminal) || cap_hit then `Stop
+    else (sleep_ms cfg.poll_interval_ms; `Continue true)
 
 let on_unstable cfg ct issues ~stable_seen =
   process_unstable cfg ct issues;
-  if test_exit_now cfg then `Stop
+  if cfg.exit_on_stable then `Stop
   else (sleep_ms cfg.poll_interval_ms; `Continue stable_seen)
 
 let process_directives cfg ct directives ~stable_seen =
@@ -164,7 +157,7 @@ let process_directives cfg ct directives ~stable_seen =
     sleep_ms cfg.poll_interval_ms; `Continue stable_seen
   end else `No_directive
 
-let one_tick cfg ct ~stable_seen =
+let one_tick cfg ct ~stable_seen ~versions_done ~agent_invoke =
   if Sigint.should_exit () then `Stop
   else begin
     let directives = user_directives_in_file cfg ct in
@@ -177,7 +170,9 @@ let one_tick cfg ct ~stable_seen =
         | Some content ->
             (match stability_of_text ~content with
              | `Unstable issues -> on_unstable cfg ct issues ~stable_seen
-             | `Stable _ -> on_stable cfg ct ~stable_seen)
+             | `Stable _ ->
+                 on_stable cfg ct ~stable_seen ~versions_done
+                   ~agent_invoke)
   end
 
 let run cfg : int =
@@ -192,8 +187,12 @@ let run cfg : int =
        output_string stderr (Printf.sprintf "k4k: cotype: %s\n" msg);
        flush stderr);
   let stable = ref false in
+  let versions_done = ref 0 in
+  (* Resolve once; canned-backend queues must persist across ticks. *)
+  let agent_invoke = Watcher_dev.resolve_invoke ~emit:cfg.emit in
   let rec loop () =
-    match one_tick cfg ct ~stable_seen:!stable with
+    match one_tick cfg ct ~stable_seen:!stable ~versions_done
+            ~agent_invoke with
     | `Stop -> ()
     | `Continue s -> stable := s; loop ()
   in

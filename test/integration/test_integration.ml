@@ -511,6 +511,83 @@ let nf1_sigint_during_watcher () =
       Alcotest.(check bool) "exited within 5 s" true
         (exited && dt <= 5.0)))
 
+(* T15 — SIGINT during agent call (axis 1 H2 deferred from batch C).
+   Uses K4K_BACKEND_COMMAND pointing at a shell script that sleeps
+   long enough for SIGINT to land mid-call. Asserts: exit ≤ 5 s
+   from signal (NF1 / P8); no half-written agent-runs/<id>/
+   directory survives. *)
+let t15_sigint_during_agent_call () =
+  with_cotype (fun () ->
+    with_workdir_and_git (fun dir ->
+      let f = Filename.concat dir "in.k4k" in
+      copy_file (fixture_path "echo-upper.k4k") f;
+      let bin_path = bin () in
+      let backend_script = Filename.concat dir "_slow_backend.sh" in
+      let oc = open_out backend_script in
+      output_string oc
+        "#!/bin/sh\n\
+         # T15 fixture: sleeps 60s then exits. The watcher's\n\
+         # Subprocess.run polls Sigint.should_exit() every 50ms\n\
+         # and kills the subprocess on signal.\n\
+         sleep 60\n\
+         exit 1\n";
+      close_out oc;
+      Unix.chmod backend_script 0o755;
+      let env_pairs = [|
+        Printf.sprintf "K4K_BACKEND_COMMAND=%s" backend_script;
+        "PATH=" ^ (try Sys.getenv "PATH" with _ -> "/usr/bin:/bin");
+        "HOME=" ^ (try Sys.getenv "HOME" with _ -> "/tmp");
+      |] in
+      let argv = [| bin_path; "--exit-on-done"; "in.k4k" |] in
+      let stdout_r, stdout_w = Unix.pipe () in
+      let stderr_r, stderr_w = Unix.pipe () in
+      let prev_cwd = Unix.getcwd () in
+      Unix.chdir dir;
+      let pid = Unix.create_process_env bin_path argv env_pairs
+                  Unix.stdin stdout_w stderr_w in
+      Unix.chdir prev_cwd;
+      Unix.close stdout_w; Unix.close stderr_w;
+      (* Sleep long enough for the watcher to reach formalize → spawn
+         the slow backend → block on subprocess wait. 2s is plenty. *)
+      Unix.sleep 2;
+      let t_signal = Unix.gettimeofday () in
+      Unix.kill pid Sys.sigint;
+      let rec wait_done () =
+        match Unix.waitpid [Unix.WNOHANG] pid with
+        | 0, _ ->
+            if Unix.gettimeofday () -. t_signal > 6.0 then begin
+              (try Unix.kill pid Sys.sigkill with _ -> ());
+              ignore (Unix.waitpid [] pid);
+              false
+            end else begin
+              ignore (Unix.select [] [] [] 0.1);
+              wait_done ()
+            end
+        | _, _ -> true
+        | exception _ -> true
+      in
+      let exited = wait_done () in
+      let dt = Unix.gettimeofday () -. t_signal in
+      (try Unix.close stdout_r with _ -> ());
+      (try Unix.close stderr_r with _ -> ());
+      Alcotest.(check bool) "exited within 5 s of SIGINT" true
+        (exited && dt <= 5.0);
+      (* No half-written agent-runs: every agent-runs/<id>/ that
+         exists must have a verdict.json (the last write of
+         Persist.write_agent_run; if it's there, the call completed
+         atomically). *)
+      let agent_runs = Filename.concat dir ".k4k/agent-runs" in
+      if Sys.file_exists agent_runs then begin
+        let entries = Array.to_list (Sys.readdir agent_runs) in
+        List.iter (fun e ->
+          let v = Filename.concat agent_runs
+                    (Filename.concat e "verdict.json") in
+          if not (Sys.file_exists v) then
+            Alcotest.failf
+              "T15: half-written agent-run survived: %s" e
+        ) entries
+      end))
+
 (* ---------------- Ollama backend example ---------------- *)
 
 let ollama_bin () =
@@ -1049,6 +1126,11 @@ let () =
         Alcotest.test_case
           "NF1_sigint_during_watcher_exits_within_5s" `Slow
           nf1_sigint_during_watcher;
+      ];
+      "T15", [
+        Alcotest.test_case
+          "T15_sigint_during_agent_call" `Slow
+          t15_sigint_during_agent_call;
       ];
       "P11", [
         Alcotest.test_case "P11_stdout_jsonl" `Slow p11_stdout_jsonl;

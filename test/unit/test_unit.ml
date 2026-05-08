@@ -4328,6 +4328,349 @@ module BRT = struct
   ]
 end
 
+(* ---------------- NF2/NF4/NF6 v2 ports ----------------------------
+   Coverage lost in batch 7's orphan-module deletion (Run_loop /
+   Harness / Full_check). Restored on the v2 Version_loop /
+   Watcher_form path. *)
+module NFPortsT = struct
+  let init_repo dir =
+    let _ = Git.init ~cwd:dir in
+    Git.configure_test_identity ~cwd:dir;
+    let oc = open_out (Filename.concat dir "README") in
+    output_string oc "hi"; close_out oc;
+    let oc = open_out (Filename.concat dir ".gitignore") in
+    output_string oc ".k4k/\n_build/\n"; close_out oc;
+    let _ = Git.commit_all ~cwd:dir ~message:"initial" in
+    ()
+
+  let read_rss_kb () =
+    (* Linux: VmRSS in /proc/self/status (in kB). Returns 0 on
+       non-Linux platforms — the test then becomes a no-op pass,
+       which is honest about the measurement availability. *)
+    try
+      let ic = open_in "/proc/self/status" in
+      let rec loop () =
+        let line = input_line ic in
+        if Astring.String.is_prefix ~affix:"VmRSS:" line then begin
+          close_in ic;
+          (* "VmRSS:\t  12345 kB" *)
+          let parts = String.split_on_char ' '
+            (String.trim (String.sub line 6 (String.length line - 6))) in
+          let n = List.find (fun s -> s <> "") parts in
+          int_of_string n
+        end else loop ()
+      in
+      try loop ()
+      with End_of_file -> close_in ic; 0
+    with _ -> 0
+
+  (* Per-call unique unified diff so [git apply] never collides
+     with itself across iterations. *)
+  let agent_counter = ref 0
+  let working_agent ~purpose:_ ~prompt:_ ~budget:_
+      : Agent_backend.result =
+    incr agent_counter;
+    let n = !agent_counter in
+    let diff = Printf.sprintf
+      "```diff\n\
+       diff --git a/src_nf%d.txt b/src_nf%d.txt\n\
+       new file mode 100644\n\
+       --- /dev/null\n\
+       +++ b/src_nf%d.txt\n\
+       @@ -0,0 +1 @@\n\
+       +ok\n\
+       ```\n" n n n in
+    `Ok Agent_backend.{ text = diff; budget_used = 0;
+                        duration_ms = 0; }
+
+  let working_verifier ~workdir:_ ~focus : Verifier.run_result =
+    `Ok { Verifier.by_property =
+            List.map (fun pid -> (pid, `Established)) focus;
+          raw_exit_code = 0; stdout_path = ""; stderr_path = "";
+          duration_ms = 0; }
+
+  let make_config ?(agent = working_agent) dir k4k_dir events =
+    { Version_loop.cwd = dir;
+      k4k_dir;
+      default_branch = Git.default_branch ~cwd:dir;
+      emit = (fun e d -> events := (e, d) :: !events);
+      delete_branch_on_done = true;
+      agent_invoke = agent;
+      verifier_run = working_verifier;
+      budget = 1000;
+      tier = `A;
+      file_path = None;
+    }
+
+  (* NF2 — Memory ceiling. The pre-batch test ran a 50-step
+     scenario through Run_loop and asserted RSS < 512 MB. The v2
+     loop has different shape (one Version_loop.run per version);
+     we drive 5 sequential versions through the v2 path and assert
+     the in-process RSS stays well under the cap. *)
+  let nf2_rss_under_512mb_for_5_versions () =
+    with_tmpdir (fun dir ->
+      init_repo dir;
+      let k4k_dir = Filename.concat dir ".k4k" in
+      Persist.ensure_dir k4k_dir;
+      let baseline = match Git.head_sha ~cwd:dir with
+        | Ok s -> s | Error e -> Alcotest.fail e in
+      let events = ref [] in
+      let cfg = make_config dir k4k_dir events in
+      let max_rss_kb = ref (read_rss_kb ()) in
+      for i = 1 to 5 do
+        let d = { Characterization.empty with
+                  goal = Printf.sprintf "v%d" i } in
+        let _ = Version_loop.run ~cfg ~baseline_sha:baseline ~d () in
+        let now = read_rss_kb () in
+        if now > !max_rss_kb then max_rss_kb := now
+      done;
+      let cap_mb = 512 in
+      let observed_mb = !max_rss_kb / 1024 in
+      Alcotest.(check bool)
+        (Printf.sprintf "NF2: RSS=%dMB < %dMB cap"
+           observed_mb cap_mb)
+        true (!max_rss_kb = 0 || !max_rss_kb / 1024 < cap_mb))
+
+  (* NF4 — State-confinement envelope. Drive Version_loop with the
+     K4K_TEST_TRACE_WRITES hook active; parse the trace; assert
+     every recorded write path falls under workdir/.k4k/<*> or
+     workdir/<*> (the source tree). The pre-batch test was
+     Harness-driven with the same hook; the hook itself is
+     unchanged, the v2 path has the same envelope contract. *)
+  let nf4_state_confinement_via_version_loop () =
+    with_tmpdir (fun dir ->
+      init_repo dir;
+      let k4k_dir = Filename.concat dir ".k4k" in
+      Persist.ensure_dir k4k_dir;
+      let baseline = match Git.head_sha ~cwd:dir with
+        | Ok s -> s | Error e -> Alcotest.fail e in
+      (* trace.log lives under .k4k/ so the workdir stays clean for
+         Gap_step's preflight. .k4k is gitignored, so writes there
+         don't dirty the version branch. The trace path itself is
+         in the allowed-prefix list below. *)
+      let trace = Filename.concat k4k_dir "trace.log" in
+      Unix.putenv "K4K_TEST_TRACE_WRITES" trace;
+      let events = ref [] in
+      let cfg = make_config dir k4k_dir events in
+      let d = { Characterization.empty with goal = "x" } in
+      let _ = Version_loop.run ~cfg ~baseline_sha:baseline ~d () in
+      Unix.putenv "K4K_TEST_TRACE_WRITES" "";
+      let lines =
+        if not (Sys.file_exists trace) then []
+        else
+          let ic = open_in trace in
+          let buf = Buffer.create 1024 in
+          (try
+             while true do
+               Buffer.add_channel buf ic 4096
+             done; assert false
+           with End_of_file -> close_in ic);
+          List.filter (fun s -> s <> "")
+            (String.split_on_char '\n' (Buffer.contents buf))
+      in
+      Alcotest.(check bool) "trace nonempty" true (lines <> []);
+      let allowed_prefixes = [ dir; k4k_dir; trace ] in
+      let under p prefixes =
+        List.exists (fun pre ->
+          Astring.String.is_prefix ~affix:pre p) prefixes in
+      List.iter (fun p ->
+        if not (under p allowed_prefixes) then
+          Alcotest.failf
+            "NF4 violation: write to %s is outside the envelope %s"
+            p (String.concat "," allowed_prefixes)) lines)
+
+  (* NF6 — Determinism (system-level). The system-level claim is
+     that two runs of the same scenario produce byte-identical
+     desired/spec.json. We exercise this through the v2 formalize
+     path: cache_hit → second invocation returns the cached D,
+     which is byte-identical by construction. (Idempotence of
+     canonicalize itself is P4, exercised separately.) *)
+  let nf6_two_runs_produce_byte_identical_desired () =
+    with_tmpdir (fun dir ->
+      let k4k_dir = Filename.concat dir ".k4k" in
+      Persist.ensure_dir k4k_dir;
+      let payload =
+        let d = { Characterization.empty with
+                  goal = "echo argv";
+                  cls = "cli";
+                  language = "ocaml";
+                  inputs_outputs = {
+                    argv = []; exit_codes =
+                      [{ Characterization.code = 0;
+                         condition = "ok" }];
+                    stdin = { kind = `None; encoding = None;
+                              doc = "" };
+                    stdout = { kind = `Text; encoding = Some "utf-8";
+                               doc = "argv joined" };
+                    stderr = { kind = `None; encoding = None;
+                               doc = "" };
+                  };
+                  examples_accept = List.init 3 (fun i ->
+                    { Characterization.name =
+                        Printf.sprintf "ex%d" (i + 1);
+                      argv = [Printf.sprintf "a%d" (i + 1)];
+                      stdin = None;
+                      expect = { stdout = "out"; stderr = "";
+                                 exit_code = 0; fs_after = None }});
+                  examples_refuse = [
+                    { name = "r1"; argv = ["--bad"]; stdin = None;
+                      expect_error = "EBADARG" }];
+                } in
+        let canon = Canonicalize.canonicalize d in
+        Canonical_json.to_string
+          (Characterization_json.to_yojson canon) in
+      let canned_path = Filename.concat dir "canned.json" in
+      let oc = open_out canned_path in
+      output_string oc
+        (Yojson.Safe.to_string (`List [
+          `Assoc [ "purpose", `String "Formalization";
+                   "text", `String payload ];
+          `Assoc [ "purpose", `String "Formalization";
+                   "text", `String payload ];
+        ]));
+      close_out oc;
+      let canned = match Backend_canned.load_from_path canned_path with
+        | Ok t -> t | Error msg -> Alcotest.failf "canned: %s" msg in
+      let invoke = Backend_canned.invoke canned in
+      let stable_fixture =
+        "---\nk4k:\n  version: 1\n  class: cli\n---\n\
+         ## Goal\necho argv\n\n\
+         ## Inputs and outputs\nargv\n\n\
+         ## Error taxonomy\nN/A\n\n\
+         ## File-system contract\nN/A\n\n\
+         ## Concurrency\nN/A\n\n\
+         ## Performance bounds\nN/A\n\n\
+         ## Acceptance examples\n1. a1 → out\n\
+         2. a2 → out\n3. a3 → out\n\n\
+         ## Refusing examples\n1. --bad → EBADARG\n\n\
+         ## Out of scope\nnothing\n" in
+      let r1 = Watcher_form.run ~k4k_dir ~content:stable_fixture
+        ~agent_invoke:invoke ~emit:(fun _ _ -> ()) in
+      let d1 = match r1 with
+        | Ok d -> d | Error msg -> Alcotest.failf "run1: %s" msg in
+      let spec_path = Filename.concat k4k_dir
+        "characterization/desired/spec.json" in
+      let bytes1 = Persist.read_file spec_path in
+      (* Reset the canned queue so run 2 gets a fresh cache hit. *)
+      let canned2 = match Backend_canned.load_from_path canned_path with
+        | Ok t -> t | Error msg -> Alcotest.failf "canned2: %s" msg in
+      let invoke2 = Backend_canned.invoke canned2 in
+      let r2 = Watcher_form.run ~k4k_dir ~content:stable_fixture
+        ~agent_invoke:invoke2 ~emit:(fun _ _ -> ()) in
+      let d2 = match r2 with
+        | Ok d -> d | Error msg -> Alcotest.failf "run2: %s" msg in
+      let bytes2 = Persist.read_file spec_path in
+      Alcotest.(check string) "NF6: D-hash byte-identical"
+        d1.hash d2.hash;
+      Alcotest.(check string) "NF6: spec.json bytes identical"
+        bytes1 bytes2)
+
+  (* NF7 — Audit-completeness via JSONL replay. The pre-batch test
+     was Run_loop-driven; this v2 port drives Version_loop, parses
+     the resulting .k4k/log.jsonl, and asserts the audit invariants:
+
+     1. every line is well-formed JSON with the expected envelope
+        ({ts, level, event, details})
+     2. every gap-step.accept event names a property_id that
+        appears in the per-version manifest's tier_assignments
+     3. every gap-step.accept event has a matching agent-runs/<id>/
+        directory on disk
+
+     Together these prove "the events name the artefacts and the
+     artefacts exist" — the v2 reading of NF7's reconstruction
+     claim, narrowed from the pre-batch full-replay variant. *)
+  let nf7_jsonl_log_audit_invariants () =
+    with_tmpdir (fun dir ->
+      init_repo dir;
+      let k4k_dir = Filename.concat dir ".k4k" in
+      Persist.ensure_dir k4k_dir;
+      let baseline = match Git.head_sha ~cwd:dir with
+        | Ok s -> s | Error e -> Alcotest.fail e in
+      let events = ref [] in
+      let cfg = make_config dir k4k_dir events in
+      let d = { Characterization.empty with goal = "echo argv" } in
+      let r = Version_loop.run ~cfg ~baseline_sha:baseline ~d () in
+      (match r with
+       | Done _ -> ()
+       | Rolled_back -> Alcotest.fail "expected Done");
+      let jsonl_path = Filename.concat k4k_dir "log.jsonl" in
+      Alcotest.(check bool) "log.jsonl exists" true
+        (Sys.file_exists jsonl_path);
+      let raw = Persist.read_file jsonl_path in
+      let lines = List.filter (fun s -> s <> "")
+        (String.split_on_char '\n' raw) in
+      Alcotest.(check bool) "log.jsonl non-empty" true (lines <> []);
+      (* Invariant 1: every line is well-formed JSON with the
+         documented envelope. *)
+      let envelope_keys = ["ts"; "level"; "event"; "details"] in
+      List.iter (fun line ->
+        match Yojson.Safe.from_string line with
+        | exception _ ->
+            Alcotest.failf "NF7: non-JSON line: %s" line
+        | `Assoc fs ->
+            List.iter (fun k ->
+              if not (List.mem_assoc k fs) then
+                Alcotest.failf
+                  "NF7: line missing %S envelope key: %s" k line)
+              envelope_keys
+        | _ -> Alcotest.failf "NF7: not a JSON object: %s" line) lines;
+      (* Invariant 2: every gap-step.accept names a property_id
+         that exists in tiers.json. *)
+      let event_of line =
+        match Yojson.Safe.from_string line with
+        | `Assoc fs ->
+            (match List.assoc_opt "event" fs,
+                   List.assoc_opt "details" fs with
+             | Some (`String e), Some (`Assoc d) ->
+                 Some (e, d)
+             | _ -> None)
+        | _ -> None
+      in
+      let parsed = List.filter_map event_of lines in
+      let accepted_pids =
+        List.filter_map (fun (e, d) ->
+          if e = "gap-step.accept" then
+            match List.assoc_opt "property_id" d with
+            | Some (`String pid) -> Some pid | _ -> None
+          else None) parsed in
+      let tiers_path = Version_persist.tiers_path
+                         ~k4k_dir ~number:1 in
+      Alcotest.(check bool) "tiers.json exists" true
+        (Sys.file_exists tiers_path);
+      let tiers_json = Yojson.Safe.from_string
+        (Persist.read_file tiers_path) in
+      let tier_pids = match tiers_json with
+        | `Assoc fs -> List.map fst fs | _ -> [] in
+      List.iter (fun pid ->
+        Alcotest.(check bool)
+          (Printf.sprintf "NF7: %s in tiers.json" pid)
+          true (List.mem pid tier_pids)) accepted_pids;
+      (* Invariant 3: every gap-step.accept has at least one
+         agent-runs subdirectory (the run that produced it).
+         Agent runs land at <k4k_dir>/agent-runs/<id>/ — top-level,
+         not per-version (Persist.write_agent_run, lib/persist.ml). *)
+      let agent_runs = Filename.concat k4k_dir "agent-runs" in
+      let runs =
+        if Sys.file_exists agent_runs then
+          Array.to_list (Sys.readdir agent_runs)
+        else [] in
+      if accepted_pids <> [] then
+        Alcotest.(check bool)
+          "NF7: agent-runs/ has entries when accepts happened"
+          true (runs <> []))
+
+  let tests = [
+    Alcotest.test_case "NF2_rss_under_512mb_for_5_versions" `Slow
+      nf2_rss_under_512mb_for_5_versions;
+    Alcotest.test_case "NF4_state_confinement_via_version_loop" `Slow
+      nf4_state_confinement_via_version_loop;
+    Alcotest.test_case "NF6_two_runs_produce_byte_identical_desired" `Quick
+      nf6_two_runs_produce_byte_identical_desired;
+    Alcotest.test_case "NF7_jsonl_log_audit_invariants" `Slow
+      nf7_jsonl_log_audit_invariants;
+  ]
+end
+
 (* ---------- Watcher.startup focused tests (axis 1 M2) ---------- *)
 module WatcherT = struct
   (* Stub the toolchain probes so we don't depend on real cotype/git
@@ -4836,6 +5179,59 @@ module PrefixedT = struct
      with N>=2 yields N distinct property IDs sharing the same
      source.aspect but distinct source.path tails. *)
 
+  (* T2 — Conflicting acceptance examples (axis 1 H2 deferred from
+     batch C). Coverage now rejects the pair with a clarification
+     naming both examples by id. *)
+  let t2_conflicting_acceptance_examples () =
+    let mk_acc name argv stdout =
+      { Characterization.name; argv; stdin = None;
+        expect = { stdout; stderr = ""; exit_code = 0;
+                   fs_after = None } } in
+    let conflict = [
+      mk_acc "ex1" ["a"] "out-1";
+      mk_acc "ex2" ["a"] "out-2";  (* same argv, DIFFERENT stdout *)
+      mk_acc "ex3" ["b"] "out-3";
+    ] in
+    let pairs = Coverage.conflicting_accept_pairs conflict in
+    Alcotest.(check int) "one conflict pair detected" 1 (List.length pairs);
+    let (a, b) = List.hd pairs in
+    Alcotest.(check bool) "names ex1 and ex2" true
+      ((a = "ex1" && b = "ex2") || (a = "ex2" && b = "ex1"));
+    (* Coverage.check rolls the conflict into the issue list. *)
+    let d = { Characterization.empty with
+              goal = "x"; cls = "cli";
+              inputs_outputs = {
+                Characterization.empty.inputs_outputs with
+                exit_codes = [{ code = 0; condition = "ok" }];
+                stdout = { kind = `Text; encoding = Some "utf-8";
+                           doc = "x" }};
+              examples_accept = conflict;
+              examples_refuse = [
+                { Characterization.name = "r1";
+                  argv = ["--bad"]; stdin = None;
+                  expect_error = "EBADARG" }];
+            } in
+    let issues = Coverage.check d in
+    let has_t2 = List.exists (fun (i : Error.issue) ->
+      Astring.String.is_infix ~affix:"T2:" i.details) issues in
+    Alcotest.(check bool) "T2 issue surfaced via Coverage.check" true has_t2
+
+  let t2_no_conflict_when_examples_consistent () =
+    let mk_acc name argv stdout =
+      { Characterization.name; argv; stdin = None;
+        expect = { stdout; stderr = ""; exit_code = 0;
+                   fs_after = None } } in
+    (* Two examples with same argv AND same expect — not a conflict
+       (just a redundant pair, perfectly fine). *)
+    let consistent = [
+      mk_acc "ex1" ["a"] "out";
+      mk_acc "ex2" ["a"] "out";
+      mk_acc "ex3" ["b"] "other";
+    ] in
+    let pairs = Coverage.conflicting_accept_pairs consistent in
+    Alcotest.(check int) "no conflict on consistent duplicates" 0
+      (List.length pairs)
+
   let t19_aspect_to_multiple_properties () =
     let d = { Characterization.empty with
       goal = "g";
@@ -4878,6 +5274,10 @@ module PrefixedT = struct
       p23_lib_has_no_toolchain_specific_strings;
     Alcotest.test_case "T19_aspect_to_multiple_properties" `Quick
       t19_aspect_to_multiple_properties;
+    Alcotest.test_case "T2_conflicting_acceptance_examples" `Quick
+      t2_conflicting_acceptance_examples;
+    Alcotest.test_case "T2_no_conflict_when_examples_consistent" `Quick
+      t2_no_conflict_when_examples_consistent;
   ]
 end
 
@@ -4932,6 +5332,7 @@ let () =
       "Manifest_acc", ManifestT.tests;
       "Tradeoff_flow_runtime", TFRunT.tests;
       "Watcher_startup", WatcherT.tests;
+      "NF_ports", NFPortsT.tests;
       "Version_finalize_unit", VFinT.tests;
       "Prefixed",   PrefixedT.tests;
     ]

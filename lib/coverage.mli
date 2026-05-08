@@ -8,3 +8,13 @@
 
     @invariant P2 — coverage failure ⇒ unstable. *)
 val check : Characterization.t -> Error.issue list
+
+(** [conflicting_accept_pairs xs] — pairs of acceptance examples
+    whose [(argv, stdin)] collide but whose [expect] outputs differ.
+    Surfaces T2 ("conflicting acceptance examples"). Returns each
+    conflict pair once, by example name.
+
+    @invariant P2 — every detected pair becomes a coverage issue. *)
+val conflicting_accept_pairs :
+  Characterization.acceptance_example list ->
+  (string * string) list

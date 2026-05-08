@@ -47,8 +47,8 @@ cannot reach an external backend without it (or
 
 ### `K4K_LIVE=1`
 **Purpose:** opt into real `claude` and real `dune` invocations during a test run.
-**Default:** unset → `Backend_stub` and (when configured) `Verifier_stub` are used; `Backend_external` (against the `examples/backends/claude-code/` reference binary) and `Verifier_external` (against the `examples/verifiers/dune-ocaml/` reference binary, which runs real `dune`) are still used for any test that explicitly requests them (e.g. `S1_echo_first_run_e2e` always uses the reference verifier).
-**When the binary itself reads this:** `bin/main.ml` selects `Backend_external` over `Backend_stub` when set. Test harness code reads it to skip live-only scenarios when unset.
+**Default:** unset. The v2 watcher resolves the agent backend through `Backend_resolve.resolve` (`K4K_STUB_RESPONSES` → `K4K_BACKEND_COMMAND` → unconfigured fallback); set `K4K_LIVE=1` only in tests that explicitly opt into the example backends under `examples/backends/{claude-code,ollama}/`. The verifier is configured per-D via `Characterization.verifier_command` (ADR-012 §1) — the agent emits the wrapper script per project; k4k ships no reference verifier example.
+**When the binary itself reads this:** never directly in v2. The flag is a test harness convention to skip live-only scenarios.
 **Production effect:** none unless explicitly set; users who want to run k4k for real *do* want this set.
 
 ### `K4K_STUB_RESPONSES=<path-to-json>`

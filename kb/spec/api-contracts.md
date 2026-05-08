@@ -150,7 +150,7 @@ Tests / theorems / proof obligations are named `P<id>_<slug>` so the verifier ex
 
 ### Reference verifier
 
-`examples/verifiers/dune-ocaml/` ships a reference implementation for OCaml + dune projects. See `external/verifier-protocol.md` and the example's own README.
+Per ADR-012, k4k ships **no** reference verifier example: the agent picks the toolchain per project (Rocq + Coq, Frama-C/ACSL, Lean, Verus, F*, dune+alcotest, etc.) and emits the wrapper script as part of its first gap-step. See `external/verifier-protocol.md` for the wire contract any such wrapper must conform to. The pre-v2 `examples/verifiers/dune-ocaml/` was deleted in batch 2's reorientation cleanup; the conformance suite uses `test/conformance/fixtures/synthetic-verifier.sh` as the deterministic stand-in.
 
 ## Internal contracts (k4k boundary)
 

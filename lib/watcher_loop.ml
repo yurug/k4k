@@ -31,13 +31,21 @@ let questions_of_issues (issues : Error.issue list) : string list =
   List.map (fun (i : Error.issue) ->
     Printf.sprintf "%s: %s" i.section i.details) issues
 
+(* audit-2026-05-08-axis4 L3: do NOT swallow cotype write failures
+   silently. Surface a [clarification.write_failed] JSONL event with
+   the typed error code + render so the operator can diagnose
+   (permission denied, conflict, etc.) instead of the watcher
+   spinning with no clarification block visible. *)
 let append_clarification cfg ct ~issues =
   try
     Cotype.append_clarification ct ~path:cfg.file_path
       ~questions:(questions_of_issues issues);
     cfg.emit "clarification.appended"
       (`Assoc [ "count", `Int (List.length issues) ])
-  with Error.K4k_error _ -> ()
+  with Error.K4k_error e ->
+    cfg.emit "clarification.write_failed"
+      (`Assoc [ "code", `String (Error.code_id e);
+                "render", `String (Error.render e) ])
 
 let render_and_save_status cfg ct ~status_block =
   Version_user_edits.splice_status_block

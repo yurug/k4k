@@ -75,6 +75,41 @@ let invoker_of_invoke (f : agent_invoke) : unit Stability.backend_invoker =
     when the spec semantically diverges or any other recoverable issue
     surfaces. Structural stability is assumed already-checked by the
     caller. *)
+let invoke_semantic ~k4k_dir ~prompt ~prev_h ~user_h ~cached inv =
+  try
+    `Ok (Stability.semantic_check_with_backend
+           ~k4k_dir ~prompt ~budget:1000
+           ~prev_hashes:prev_h ~current_hashes:user_h
+           ~cached_desired:cached inv)
+  with Error.K4k_error e -> `Err (Error.render e)
+
+let on_stable ~k4k_dir ~content ~user_h ~emit d =
+  let cov = Coverage.check d in
+  if cov <> [] then begin
+    emit "formalize.coverage_unstable"
+      (`Assoc [ "issue_count", `Int (List.length cov) ]);
+    Error "coverage-unstable"
+  end else begin
+    persist_desired ~k4k_dir d;
+    persist_manifest ~k4k_dir ~file_path:"" ~content ~user_h ~d;
+    emit "formalize.ok" (`Assoc [ "hash", `String d.Characterization.hash ]);
+    Ok d
+  end
+
+let dispatch_outcome ~k4k_dir ~content ~user_h ~emit = function
+  | `Err reason ->
+      emit "formalize.error" (`Assoc [ "reason", `String reason ]);
+      Error reason
+  | `Ok (Stability.Sem_cached d) ->
+      emit "formalize.cached" (`Assoc [ "hash", `String d.hash ]);
+      Ok d
+  | `Ok (Stability.Sem_stable (d, _runs)) ->
+      on_stable ~k4k_dir ~content ~user_h ~emit d
+  | `Ok (Stability.Sem_unstable (issues, _)) ->
+      emit "formalize.unstable"
+        (`Assoc [ "issue_count", `Int (List.length issues) ]);
+      Error "formalization-unstable"
+
 let run ~k4k_dir ~content ~agent_invoke ~emit
     : (Characterization.t, string) result =
   let parsed = Parser.parse content in
@@ -86,43 +121,5 @@ let run ~k4k_dir ~content ~agent_invoke ~emit
                  ~hash:(Manifest.desired_hash manifest) in
   let prompt = render_prompt parsed in
   let inv = invoker_of_invoke agent_invoke in
-  let outcome =
-    try
-      `Ok (Stability.semantic_check_with_backend
-             ~k4k_dir ~prompt ~budget:1000
-             ~prev_hashes:prev_h ~current_hashes:user_h
-             ~cached_desired:cached inv)
-    with Error.K4k_error e -> `Err (Error.render e)
-  in
-  match outcome with
-  | `Err reason ->
-      emit "formalize.error" (`Assoc [ "reason", `String reason ]);
-      Error reason
-  | `Ok (Sem_cached d) ->
-      emit "formalize.cached"
-        (`Assoc [ "hash", `String d.hash ]);
-      Ok d
-  | `Ok (Sem_stable (d, _runs)) ->
-      let cov = Coverage.check d in
-      if cov <> [] then begin
-        let n = List.length cov in
-        emit "formalize.coverage_unstable"
-          (`Assoc [ "issue_count", `Int n ]);
-        Error "coverage-unstable"
-      end else begin
-        persist_desired ~k4k_dir d;
-        let file_path = Filename.concat
-          (try Sys.getenv "PWD" with _ -> ".") "" in
-        let _ = file_path in
-        persist_manifest ~k4k_dir
-          ~file_path:""  (* file_path unused by D-derivation *)
-          ~content ~user_h ~d;
-        emit "formalize.ok"
-          (`Assoc [ "hash", `String d.hash ]);
-        Ok d
-      end
-  | `Ok (Sem_unstable (issues, _)) ->
-      let n = List.length issues in
-      emit "formalize.unstable"
-        (`Assoc [ "issue_count", `Int n ]);
-      Error "formalization-unstable"
+  dispatch_outcome ~k4k_dir ~content ~user_h ~emit
+    (invoke_semantic ~k4k_dir ~prompt ~prev_h ~user_h ~cached inv)

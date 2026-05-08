@@ -86,6 +86,37 @@ let formalize ~k4k_dir ~ct ~file_path ~emit ~agent_invoke
     [Watcher_loop.on_stable] treats them equally for the
     [exit_on_done] / [max_versions] gates. [`Skipped] is non-terminal:
     the loop sleeps and tries again. *)
+let dispatch_with_typed_errors ~file_path ~k4k_dir ~emit ~ct ~d
+    ~agent_invoke =
+  try
+    (match dispatch_one ~file_path ~k4k_dir ~emit ~ct ~d ~agent_invoke with
+     | Done _ -> `Done
+     | Rolled_back -> `Rolled_back)
+  with
+  | Error.K4k_error e ->
+      emit "version.error" (`Assoc [
+        "code", `String (Error.code_id e);
+        "render", `String (Error.render e); ]);
+      `Rolled_back
+  | exn ->
+      emit "version.exn"
+        (`Assoc [ "exn", `String (Printexc.to_string exn) ]);
+      `Rolled_back
+
+let start_or_skip ~file_path ~k4k_dir ~emit ~ct ~d ~agent_invoke =
+  (* Idempotence gate (audit-2026-05-08-axis6 H-3 partner): if the
+     previously-completed version already converged at this exact
+     D-hash, do not start a new version. Without this gate the
+     watcher main loop spins on stable specs. *)
+  match Version_persist.last_completed_d_hash ~k4k_dir with
+  | Some prev when prev = d.Characterization.hash ->
+      emit "version.skip"
+        (`Assoc [ "reason", `String "no-spec-change";
+                  "d_hash", `String d.hash ]);
+      `Skipped
+  | _ -> dispatch_with_typed_errors
+           ~file_path ~k4k_dir ~emit ~ct ~d ~agent_invoke
+
 let try_run_version ~file_path ~k4k_dir ~emit ~agent_invoke ct
     : [ `Done | `Rolled_back | `Skipped ] =
   match formalize ~k4k_dir ~ct ~file_path ~emit ~agent_invoke with
@@ -93,36 +124,7 @@ let try_run_version ~file_path ~k4k_dir ~emit ~agent_invoke ct
       emit "version.skip"
         (`Assoc [ "reason", `String ("formalize: " ^ reason) ]);
       `Skipped
-  | Ok d ->
-      (* Idempotence gate: if the previously-completed version already
-         converged at this exact D-hash, do not start a new version.
-         Without this gate the watcher main loop spins on stable specs,
-         starting redundant version branches whose merge-back is a
-         no-op. *)
-      (match Version_persist.last_completed_d_hash ~k4k_dir with
-       | Some prev when prev = d.Characterization.hash ->
-           emit "version.skip"
-             (`Assoc [ "reason", `String "no-spec-change";
-                       "d_hash", `String d.hash ]);
-           `Skipped
-       | _ ->
-           try
-             (match dispatch_one ~file_path ~k4k_dir ~emit ~ct ~d
-                      ~agent_invoke with
-              | Done _ -> `Done
-              | Rolled_back -> `Rolled_back)
-           with
-           | Error.K4k_error e ->
-               emit "version.error" (`Assoc [
-                 "code", `String (Error.code_id e);
-                 "render", `String (Error.render e);
-               ]);
-               `Rolled_back
-           | exn ->
-               emit "version.exn" (`Assoc [
-                 "exn", `String (Printexc.to_string exn);
-               ]);
-               `Rolled_back)
+  | Ok d -> start_or_skip ~file_path ~k4k_dir ~emit ~ct ~d ~agent_invoke
 
 let render_done_status ~version_n ~tier_dist =
   let s : Inline_blocks.status = {

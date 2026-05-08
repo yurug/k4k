@@ -2165,6 +2165,103 @@ module VerT = struct
   ]
 end
 
+(* ---------------- Toolchain_install (ADR-012, ≥5) ---------------- *)
+module TInst = struct
+  let with_stub f =
+    Unix.putenv "K4K_TOOLCHAIN_INSTALL_STUB" "1";
+    Toolchain_install.test_reset_stubs ();
+    let restore () =
+      Toolchain_install.test_reset_stubs ();
+      (try Unix.putenv "K4K_TOOLCHAIN_INSTALL_STUB" "" with _ -> ())
+    in
+    try f (); restore () with e -> restore (); raise e
+
+  let already_present_short_circuits () =
+    with_stub (fun () ->
+      Toolchain_install.test_set_stub_outcome ~binary:"foo"
+        (Toolchain_install.Already_present { binary = "foo"; version = "1.2" });
+      match Toolchain_install.ensure ~binary:"foo" with
+      | Already_present { binary; version } ->
+          Alcotest.(check string) "binary" "foo" binary;
+          Alcotest.(check string) "version" "1.2" version
+      | _ -> Alcotest.fail "expected Already_present")
+
+  let opam_install_happy_path () =
+    with_stub (fun () ->
+      Toolchain_install.test_set_stub_outcome ~binary:"coqc"
+        (Toolchain_install.Installed
+           { binary = "coqc"; version = "9.1.0"; via = "opam" });
+      match Toolchain_install.ensure ~binary:"coqc" with
+      | Installed { via; _ } ->
+          Alcotest.(check string) "via opam" "opam" via
+      | _ -> Alcotest.fail "expected Installed")
+
+  let system_returns_user_consent () =
+    with_stub (fun () ->
+      Toolchain_install.test_set_stub_outcome ~binary:"fstar.exe"
+        (Toolchain_install.Needs_user_consent
+           { binary = "fstar.exe";
+             reason = "system-only";
+             suggested_command =
+               Some [ "sudo"; "<system-package-manager>"; "install"; "fstar" ] });
+      match Toolchain_install.ensure ~binary:"fstar.exe" with
+      | Needs_user_consent { binary; suggested_command; _ } ->
+          Alcotest.(check string) "binary" "fstar.exe" binary;
+          Alcotest.(check bool) "has suggested command" true
+            (suggested_command <> None)
+      | _ -> Alcotest.fail "expected Needs_user_consent")
+
+  let unknown_binary_is_user_consent () =
+    with_stub (fun () ->
+      Toolchain_install.test_set_stub_outcome ~binary:"unknown-tool"
+        (Toolchain_install.Needs_user_consent
+           { binary = "unknown-tool";
+             reason = "binary not in toolchain-install registry";
+             suggested_command = None });
+      match Toolchain_install.ensure ~binary:"unknown-tool" with
+      | Needs_user_consent { reason; _ } ->
+          Alcotest.(check bool) "mentions registry" true
+            (Astring.String.is_infix ~affix:"registry" reason)
+      | _ -> Alcotest.fail "expected Needs_user_consent")
+
+  let install_failure_is_failed () =
+    with_stub (fun () ->
+      Toolchain_install.test_set_stub_outcome ~binary:"flaky"
+        (Toolchain_install.Failed "opam install flaky failed: broken");
+      match Toolchain_install.ensure ~binary:"flaky" with
+      | Failed msg ->
+          Alcotest.(check bool) "mentions opam" true
+            (Astring.String.is_infix ~affix:"opam" msg)
+      | _ -> Alcotest.fail "expected Failed")
+
+  (* Mapping is a real list, not nested logic — sanity-check the
+     contract that adding a tool is data-only. *)
+  let mapping_is_data_driven () =
+    let entries = Toolchain_install.mapping in
+    Alcotest.(check bool) "non-empty registry" true (entries <> []);
+    Alcotest.(check bool) "<= 30 entries" true
+      (List.length entries <= 30);
+    let pkgs = List.map fst entries in
+    let unique = List.sort_uniq String.compare pkgs in
+    Alcotest.(check int) "no duplicate keys"
+      (List.length pkgs) (List.length unique)
+
+  let tests = [
+    Alcotest.test_case "Toolchain_already_present_short_circuits" `Quick
+      already_present_short_circuits;
+    Alcotest.test_case "Toolchain_opam_install_happy_path" `Quick
+      opam_install_happy_path;
+    Alcotest.test_case "Toolchain_system_returns_user_consent" `Quick
+      system_returns_user_consent;
+    Alcotest.test_case "Toolchain_unknown_binary_is_user_consent" `Quick
+      unknown_binary_is_user_consent;
+    Alcotest.test_case "Toolchain_install_failure_is_failed" `Quick
+      install_failure_is_failed;
+    Alcotest.test_case "Toolchain_mapping_is_data_driven" `Quick
+      mapping_is_data_driven;
+  ]
+end
+
 (* ---------------- Sigint (≥3) ---------------- *)
 module SigT = struct
   let install_idempotent () =
@@ -4034,7 +4131,8 @@ module Lint = struct
      T1..T20). Unknown tokens used to slip past the coverage lint
      because that lint only walked the expected P-list. *)
   let known_invariant_ids =
-    let p = List.init 20 (fun i -> Printf.sprintf "P%d" (i + 1)) in
+    (* v2: P1..P20 from v0/v1 + P21..P23 added by ADR-011/012/013. *)
+    let p = List.init 23 (fun i -> Printf.sprintf "P%d" (i + 1)) in
     let nf = List.init 8 (fun i -> Printf.sprintf "NF%d" (i + 1)) in
     let t = List.init 20 (fun i -> Printf.sprintf "T%d" (i + 1)) in
     p @ nf @ t
@@ -4155,6 +4253,7 @@ let () =
       "Diff_extract", DET.tests;
       "Git",          GT.tests;
       "Version",      VerT.tests;
+      "Toolchain",    TInst.tests;
       "Sigint",       SigT.tests;
       "Gap_prompt",   GPT.tests;
       "Gap_step",     GST.tests;

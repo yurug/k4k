@@ -66,6 +66,20 @@ let resolve_abs path =
     Filename.concat (Sys.getcwd ()) path
   else path
 
+(* Map a bare [Unix.Unix_error] from a startup-phase mkdir/open into
+   a typed [E_state_corrupt] so the closed taxonomy holds (audit-
+   2026-05-08-axis4 H1). [Printexc.to_string] is used as a last-
+   resort wrap for genuinely unexpected exceptions; those land as
+   [E_internal_panic] (exit 64). *)
+let typify_startup_exception : exn -> Error.error = function
+  | Error.K4k_error e -> e
+  | Unix.Unix_error (code, fn, arg) ->
+      let msg = Printf.sprintf "%s(%S): %s"
+        fn arg (Unix.error_message code) in
+      Error.E_state_corrupt msg
+  | exn ->
+      Error.E_internal_panic (Printexc.to_string exn)
+
 let startup ~config : startup_outcome =
   try
     let file = resolve_abs config.file_path in
@@ -80,9 +94,7 @@ let startup ~config : startup_outcome =
     match Watcher_pid.acquire ~k4k_dir:config.k4k_dir with
     | Error pid -> Already_running pid
     | Ok () -> Started
-  with
-  | Error.K4k_error e -> Aborted (Error.render e)
-  | exn -> Aborted (Printexc.to_string exn)
+  with exn -> Aborted (Error.render (typify_startup_exception exn))
 
 let emit_event ~verbosity event details =
   let json = `Assoc [
@@ -93,9 +105,13 @@ let emit_event ~verbosity event details =
   print_endline (Yojson.Safe.to_string json);
   match verbosity with
   | `Quiet -> ()
-  | `Verbose | `Debug ->
+  | `Verbose ->
+      output_string stderr (Printf.sprintf "[k4k] %s\n" event);
+      flush stderr
+  | `Debug ->
       output_string stderr
-        (Printf.sprintf "[k4k] %s\n" event);
+        (Printf.sprintf "[k4k] %s %s\n" event
+           (Yojson.Safe.to_string details));
       flush stderr
 
 let run ~config : int =

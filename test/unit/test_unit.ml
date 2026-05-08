@@ -56,40 +56,40 @@ let stable_fixture =
 
 (* ---------------- Error tests (≥3) ---------------- *)
 module ET = struct
+  let all_errors = [
+    Error.E_format { line = 1; col = 1; reason = "x" };
+    Error.E_unstable [];
+    Error.E_version { found = 0; supported = [1] };
+    Error.E_class_unsupported "z";
+    Error.E_budget { used = 1; cap = 1 };
+    Error.E_max_steps 1;
+    Error.E_agent_unavailable "x";
+    Error.E_verifier_unavailable "x";
+    Error.E_verifier_tool_error "x";
+    Error.E_disk_full "x";
+    Error.E_state_corrupt "x";
+    Error.E_encoding 0;
+    Error.E_file_not_found "x";
+    Error.E_file_too_large 0;
+    Error.E_ownership_violation "x";
+    Error.E_internal_panic "x";
+  ]
+
   let p7_code_id_unique () =
-    let codes = List.map Error.code_id [
-      Error.E_format { line = 1; col = 1; reason = "x" };
-      Error.E_unstable [];
-      Error.E_version { found = 0; supported = [1] };
-      Error.E_class_unsupported "z";
-      Error.E_budget { used = 1; cap = 1 };
-      Error.E_max_steps 1;
-      Error.E_agent_unavailable "x";
-      Error.E_verifier_unavailable "x";
-      Error.E_verifier_tool_error "x";
-      Error.E_disk_full "x";
-      Error.E_state_corrupt "x";
-      Error.E_encoding 0;
-      Error.E_file_not_found "x";
-      Error.E_file_too_large 0;
-    ] in
+    let codes = List.map Error.code_id all_errors in
     let n = List.length codes in
     let unique = List.sort_uniq compare codes in
     Alcotest.(check int) "P7 every error has a unique id" n (List.length unique)
 
   let p7_exit_codes_in_range () =
-    let exits = List.map Error.exit_code_of [
-      Error.E_format { line = 1; col = 1; reason = "x" };
-      Error.E_unstable [];
-      Error.E_budget { used = 1; cap = 1 };
-      Error.E_disk_full "x";
-      Error.E_agent_unavailable "x";
-      Error.E_verifier_unavailable "x";
-      Error.E_state_corrupt "x";
-    ] in
+    let allowed = [1;2;3;4;5;64] in
     List.iter (fun e ->
-      Alcotest.(check bool) "exit ∈ {1..5}" true (e >= 1 && e <= 5)
-    ) exits
+      let code = Error.exit_code_of e in
+      Alcotest.(check bool)
+        (Printf.sprintf "exit %d ∈ {1,2,3,4,5,64} for %s"
+           code (Error.code_id e))
+        true (List.mem code allowed)
+    ) all_errors
 
   let p7_render_includes_topic () =
     let s = Error.render
@@ -97,10 +97,64 @@ module ET = struct
     Alcotest.(check bool) "render mentions max" true
       (Astring.String.is_infix ~affix:"10485760" s)
 
+  (* audit-2026-05-08-axis4 M2: render strings must not reference
+     removed flags (--max-steps, --reset). *)
+  let p7_render_no_phantom_flags () =
+    let phantom_flags = ["--max-steps"; "--reset"] in
+    List.iter (fun e ->
+      let s = Error.render e in
+      List.iter (fun flag ->
+        Alcotest.(check bool)
+          (Printf.sprintf "%s render must not name phantom flag %s"
+             (Error.code_id e) flag)
+          false
+          (Astring.String.is_infix ~affix:flag s)
+      ) phantom_flags
+    ) all_errors
+
+  (* audit-2026-05-08-axis4 H1 + M2: external-failure variants must
+     embed an actionable hint (path, env-var, or imperative verb). *)
+  let p7_external_errors_carry_remediation () =
+    let externals = [
+      Error.E_agent_unavailable "x";
+      Error.E_verifier_unavailable "x";
+      Error.E_verifier_tool_error "x";
+    ] in
+    let verbs = ["check"; "see"; "set"; "install"; "free"; "verify";
+                 "re-save"; "split"; "consider"; "remove"; "raise";
+                 "$PATH"; "ANTHROPIC_API_KEY"; ".k4k/"] in
+    List.iter (fun e ->
+      let s = Error.render e in
+      let has_verb = List.exists (fun v ->
+        Astring.String.is_infix ~affix:v s) verbs in
+      Alcotest.(check bool)
+        (Printf.sprintf "%s carries a remediation verb / path"
+           (Error.code_id e))
+        true has_verb
+    ) externals
+
+  let p7_panic_variants_render () =
+    let s_own = Error.render (Error.E_ownership_violation "x") in
+    let s_pan = Error.render (Error.E_internal_panic "x") in
+    Alcotest.(check int) "EOWNERSHIP_VIOLATION exit" 64
+      (Error.exit_code_of (Error.E_ownership_violation "x"));
+    Alcotest.(check int) "EINVARIANT exit" 64
+      (Error.exit_code_of (Error.E_internal_panic "x"));
+    Alcotest.(check bool) "ownership-violation render mentions cotype" true
+      (Astring.String.is_infix ~affix:"cotype" s_own);
+    Alcotest.(check bool) "panic render says please report" true
+      (Astring.String.is_infix ~affix:"please report" s_pan)
+
   let tests = [
     Alcotest.test_case "P7_unique_code_id" `Quick p7_code_id_unique;
     Alcotest.test_case "P7_exit_codes_in_range" `Quick p7_exit_codes_in_range;
     Alcotest.test_case "P7_render_topical" `Quick p7_render_includes_topic;
+    Alcotest.test_case "P7_render_no_phantom_flags" `Quick
+      p7_render_no_phantom_flags;
+    Alcotest.test_case "P7_external_errors_carry_remediation" `Quick
+      p7_external_errors_carry_remediation;
+    Alcotest.test_case "P7_panic_variants_render" `Quick
+      p7_panic_variants_render;
   ]
 end
 

@@ -73,10 +73,26 @@ let main_term =
                  $ max_versions_arg
                  $ file_arg)
 
+(* k4k's own exit-code taxonomy (kb/spec/error-taxonomy.md). Override
+   cmdliner's defaults (123/124/125) so --help shows our codes
+   (audit-2026-05-08-axis4 H1). *)
+let exits =
+  let open Cmdliner in
+  [ Cmd.Exit.info 0 ~doc:"graceful shutdown.";
+    Cmd.Exit.info 1 ~doc:"user / spec error (EFORMAT, EUNSTABLE, …).";
+    Cmd.Exit.info 2 ~doc:"verifier unavailable or tool error.";
+    Cmd.Exit.info 3 ~doc:"agent backend unavailable.";
+    Cmd.Exit.info 4 ~doc:"resource exhaustion (EBUDGET, EDISK_FULL).";
+    Cmd.Exit.info 5 ~doc:"another watcher already owns the PID file, \
+                          or state is corrupt.";
+    Cmd.Exit.info 64 ~doc:"ownership / invariant violation \
+                           (please report)." ]
+
 let cmd =
   let info = Cmdliner.Cmd.info "k4k"
     ~version:Manifest.k4k_version_string
     ~doc:"k4k — autonomous coding-agent watcher (ADR-011)."
+    ~exits
   in
   Cmdliner.Cmd.v info main_term
 

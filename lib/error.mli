@@ -32,6 +32,13 @@ type error =
   | E_encoding             of int
   | E_file_not_found       of string
   | E_file_too_large       of int
+  | E_ownership_violation  of string
+    (** A k4k-managed [k4k:*] section in the interaction file was
+        edited in a way cotype declined to merge. Exit 64. *)
+  | E_internal_panic       of string
+    (** Fallthrough for an uncaught OCaml exception; full trace in
+        [.k4k/log.jsonl]. Exit 64
+        (audit-2026-05-08-axis4 H1). *)
 
 (** Raised for every user-visible failure. The wrapping
     [try ... with K4k_error e -> ...] lives in [bin/main.ml]. *)
@@ -48,9 +55,9 @@ val code_id : error -> string
 
 (** [exit_code_of e] returns the exit code for [e].
 
-    @return An integer in {0, 1, 2, 3, 4, 5, 64}; 64 reserved for
-            the invariant-violation hand-off but never returned by
-            this function (panics use a separate path).
+    @return An integer in {1, 2, 3, 4, 5, 64}: 1 user / spec error,
+            2 verifier, 3 agent, 4 resource exhaustion, 5 state
+            corrupt, 64 ownership / invariant panic.
     @invariant P7 — exit codes are documented in the taxonomy. *)
 val exit_code_of : error -> int
 

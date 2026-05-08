@@ -2039,6 +2039,132 @@ module GT = struct
   ]
 end
 
+(* ---------------- Version (ADR-013, ≥3 unit + 2 integration) ---- *)
+module VerT = struct
+  let init_repo dir =
+    let _ = Git.init ~cwd:dir in
+    Git.configure_test_identity ~cwd:dir;
+    let oc = open_out (Filename.concat dir "README") in
+    output_string oc "hi"; close_out oc;
+    let _ = Git.commit_all ~cwd:dir ~message:"initial" in
+    ()
+
+  let branch_name_format () =
+    Alcotest.(check string) "branch name" "k4k/version/3"
+      (Version.branch_name_of 3);
+    Alcotest.(check string) "tag name" "v3" (Version.tag_name_of 3)
+
+  let manifest_round_trip () =
+    let v : Version.t = {
+      number = 1; state = Developing;
+      baseline_sha = "deadbeef"; branch_name = "k4k/version/1";
+      d_hash = "abc123"; started_at = 1700000000.0;
+      tier_assignments = [ ("P_x", `A); ("P_y", `B) ];
+    } in
+    let s = Yojson.Safe.to_string (Version.to_yojson v) in
+    let v2 = Version.of_yojson (Yojson.Safe.from_string s) in
+    Alcotest.(check int) "number" 1 v2.number;
+    Alcotest.(check string) "branch" "k4k/version/1" v2.branch_name;
+    Alcotest.(check string) "d_hash" "abc123" v2.d_hash;
+    Alcotest.(check int) "tier count" 2 (List.length v2.tier_assignments)
+
+  let start_new_creates_branch () =
+    with_tmpdir (fun dir ->
+      init_repo dir;
+      let baseline = match Git.head_sha ~cwd:dir with
+        | Ok s -> s | Error e -> Alcotest.fail e in
+      match Version.start_new ~cwd:dir ~number:1
+              ~baseline_sha:baseline ~d_hash:"h" with
+      | Error e -> Alcotest.fail e
+      | Ok v ->
+          Alcotest.(check string) "branch" "k4k/version/1" v.branch_name;
+          Alcotest.(check bool) "branch exists" true
+            (Git.branch_exists ~cwd:dir ~name:"k4k/version/1");
+          Alcotest.(check bool) "checked out" true
+            (Git.current_branch ~cwd:dir = "k4k/version/1"))
+
+  let start_new_collision_is_error () =
+    with_tmpdir (fun dir ->
+      init_repo dir;
+      let baseline = match Git.head_sha ~cwd:dir with
+        | Ok s -> s | Error e -> Alcotest.fail e in
+      let _ = Version.start_new ~cwd:dir ~number:1
+                ~baseline_sha:baseline ~d_hash:"h" in
+      let _ = Git.checkout ~cwd:dir ~name:"main" in
+      match Version.start_new ~cwd:dir ~number:1
+              ~baseline_sha:baseline ~d_hash:"h" with
+      | Ok _ -> Alcotest.fail "expected collision error"
+      | Error msg ->
+          Alcotest.(check bool) "mentions corruption" true
+            (Astring.String.is_infix ~affix:"E_state_corrupt" msg))
+
+  (* Integration #1: full lifecycle start → commit → complete. *)
+  let lifecycle_complete () =
+    with_tmpdir (fun dir ->
+      init_repo dir;
+      let baseline = match Git.head_sha ~cwd:dir with
+        | Ok s -> s | Error e -> Alcotest.fail e in
+      let v = match Version.start_new ~cwd:dir ~number:1
+                      ~baseline_sha:baseline ~d_hash:"h" with
+        | Ok v -> v | Error e -> Alcotest.fail e in
+      let oc = open_out (Filename.concat dir "feature.ml") in
+      output_string oc "let x = 1\n"; close_out oc;
+      (match Version.commit_accept ~cwd:dir
+               ~property_id:"P_x" ~message:"[k4k] establish P_x" with
+       | Ok _sha -> ()
+       | Error e -> Alcotest.fail e);
+      let default_branch = Version.current_default_branch ~cwd:dir in
+      (match Version.complete ~cwd:dir v ~default_branch
+               ~delete_branch:true () with
+       | Error e -> Alcotest.fail e
+       | Ok tag ->
+           Alcotest.(check string) "tag name" "v1" tag;
+           Alcotest.(check bool) "tag exists" true
+             (Git.tag_exists ~cwd:dir ~name:"v1");
+           Alcotest.(check bool) "branch deleted" false
+             (Git.branch_exists ~cwd:dir ~name:"k4k/version/1");
+           Alcotest.(check string) "back on default"
+             default_branch (Git.current_branch ~cwd:dir)))
+
+  (* Integration #2: lifecycle start → commit → rollback. *)
+  let lifecycle_rollback () =
+    with_tmpdir (fun dir ->
+      init_repo dir;
+      let baseline = match Git.head_sha ~cwd:dir with
+        | Ok s -> s | Error e -> Alcotest.fail e in
+      let v = match Version.start_new ~cwd:dir ~number:2
+                      ~baseline_sha:baseline ~d_hash:"h" with
+        | Ok v -> v | Error e -> Alcotest.fail e in
+      let oc = open_out (Filename.concat dir "feature.ml") in
+      output_string oc "let x = 1\n"; close_out oc;
+      let _ = Version.commit_accept ~cwd:dir
+                ~property_id:"P_x" ~message:"[k4k] establish P_x" in
+      let default_branch = Version.current_default_branch ~cwd:dir in
+      (match Version.rollback ~cwd:dir v ~default_branch with
+       | Error e -> Alcotest.fail e
+       | Ok () ->
+           Alcotest.(check bool) "branch deleted" false
+             (Git.branch_exists ~cwd:dir ~name:"k4k/version/2");
+           Alcotest.(check bool) "no tag" false
+             (Git.tag_exists ~cwd:dir ~name:"v2");
+           Alcotest.(check string) "default branch HEAD == baseline"
+             baseline (match Git.head_sha ~cwd:dir with
+                       | Ok s -> s | Error e -> Alcotest.fail e)))
+
+  let tests = [
+    Alcotest.test_case "Version_branch_name_format" `Quick branch_name_format;
+    Alcotest.test_case "Version_manifest_round_trip" `Quick manifest_round_trip;
+    Alcotest.test_case "Version_start_new_creates_branch" `Quick
+      start_new_creates_branch;
+    Alcotest.test_case "Version_start_new_collision_is_error" `Quick
+      start_new_collision_is_error;
+    Alcotest.test_case "Version_lifecycle_start_commit_complete" `Quick
+      lifecycle_complete;
+    Alcotest.test_case "Version_lifecycle_start_commit_rollback" `Quick
+      lifecycle_rollback;
+  ]
+end
+
 (* ---------------- Sigint (≥3) ---------------- *)
 module SigT = struct
   let install_idempotent () =
@@ -4028,6 +4154,7 @@ let () =
       "Verifier_external", VEXT.tests;
       "Diff_extract", DET.tests;
       "Git",          GT.tests;
+      "Version",      VerT.tests;
       "Sigint",       SigT.tests;
       "Gap_prompt",   GPT.tests;
       "Gap_step",     GST.tests;

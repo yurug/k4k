@@ -44,6 +44,30 @@ val commit_all :
 (** [merge_ff_only ~cwd ~name] = [git merge --ff-only <name>]. *)
 val merge_ff_only : cwd:string -> name:string -> (unit, string) result
 
+(** [merge ~cwd ~name ~message] tries [git merge --ff-only <name>] first
+    and falls back to [git merge --no-ff -m <message> <name>] when
+    fast-forward is impossible. ADR-013 §2 step 5 (default version-
+    completion merge). *)
+val merge :
+  cwd:string -> name:string -> message:string -> (unit, string) result
+
+(** [tag_annotated ~cwd ~name ~message] = [git tag -a <name> -m <message>]
+    at the current [HEAD]. ADR-013 §2 step 5 (per-version annotated tag). *)
+val tag_annotated :
+  cwd:string -> name:string -> message:string -> (unit, string) result
+
+(** [tag_exists ~cwd ~name] — true iff [refs/tags/<name>] resolves. *)
+val tag_exists : cwd:string -> name:string -> bool
+
+(** [head_sha ~cwd] = [git rev-parse HEAD]. *)
+val head_sha : cwd:string -> (string, string) result
+
+(** [default_branch ~cwd] — best-effort lookup of the user's default
+    branch: tries [refs/remotes/origin/HEAD] first, then a local [main]
+    or [master], finally the current branch. Used by [Version] to know
+    where to merge a completed version branch back. ADR-013 §2. *)
+val default_branch : cwd:string -> string
+
 (** [init ~cwd] — initialize a fresh repo at [cwd] on branch [main].
 
     [@test_only] The production harness expects the user to have

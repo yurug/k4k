@@ -118,6 +118,48 @@ let merge_ff_only ~cwd ~name : (unit, string) result =
   let r = run_git ~cwd ["merge"; "--ff-only"; name] in
   if r.exit_code = 0 then Ok () else Error (trim r.stderr)
 
+(* ADR-013 §2 step 5: merge a version branch into the default branch.
+   Try fast-forward first; fall back to a no-fast-forward merge with a
+   k4k-authored message. *)
+let merge ~cwd ~name ~message : (unit, string) result =
+  let r = run_git ~cwd ["merge"; "--ff-only"; name] in
+  if r.exit_code = 0 then Ok ()
+  else
+    let r2 = run_git ~cwd
+      ["merge"; "--no-ff"; "-m"; message; name] in
+    if r2.exit_code = 0 then Ok () else Error (trim r2.stderr)
+
+(* ADR-013 §2 step 5: annotated tag at HEAD. *)
+let tag_annotated ~cwd ~name ~message : (unit, string) result =
+  let r = run_git ~cwd ["tag"; "-a"; name; "-m"; message] in
+  if r.exit_code = 0 then Ok () else Error (trim r.stderr)
+
+let tag_exists ~cwd ~name : bool =
+  let r = run_git ~cwd ["rev-parse"; "--verify"; "--quiet";
+                        "refs/tags/" ^ name] in
+  r.exit_code = 0
+
+let head_sha ~cwd : (string, string) result =
+  let r = run_git ~cwd ["rev-parse"; "HEAD"] in
+  if r.exit_code = 0 then Ok (trim r.stdout) else Error (trim r.stderr)
+
+(* ADR-013 §2 + Version.current_default_branch: find the default branch
+   name. Try [origin/HEAD] first; fall back to any local [main] /
+   [master]; otherwise return the current branch. Result is best-effort
+   (used as a hint, not a contract). *)
+let default_branch ~cwd : string =
+  let r = run_git ~cwd
+    ["symbolic-ref"; "--short"; "refs/remotes/origin/HEAD"] in
+  if r.exit_code = 0 then
+    let s = trim r.stdout in
+    (* "origin/main" -> "main" *)
+    match String.index_opt s '/' with
+    | None -> s
+    | Some i -> String.sub s (i + 1) (String.length s - i - 1)
+  else if branch_exists ~cwd ~name:"main" then "main"
+  else if branch_exists ~cwd ~name:"master" then "master"
+  else current_branch ~cwd
+
 let init ~cwd : (unit, string) result =
   let r = run_git ~cwd ["init"; "-q"; "-b"; "main"] in
   if r.exit_code = 0 then Ok () else Error (trim r.stderr)

@@ -658,18 +658,22 @@ let s3_tradeoff_proposal_signed_off () =
       let (_code, so, _se) = run_capture_with_env
         ~k4k_args:["--exit-on-done"; "in.k4k"]
         ~cwd:dir ~env () in
-      (* v2 batch 4b: the proposal-pause-resume state machine is wired and
-         observable via these JSONL events. The post-approval Tier-B
-         execution (running the gap-step prompt at the approved tier and
-         producing a commit on the version branch) is deferred to a
-         later batch — at that point the [version.commit] and
-         [tradeoff archived] assertions will be re-enabled. *)
       Alcotest.(check bool) "tradeoff.proposed emitted" true
         (Astring.String.is_infix ~affix:"tradeoff.proposed" so);
       Alcotest.(check bool) "tradeoff.approved emitted" true
         (Astring.String.is_infix ~affix:"tradeoff.approved" so);
       Alcotest.(check bool) "tradeoff.resolved emitted" true
-        (Astring.String.is_infix ~affix:"tradeoff.resolved" so)))
+        (Astring.String.is_infix ~affix:"tradeoff.resolved" so);
+      (* Post-approval Tier-B execution lands a real commit on the
+         version branch via Version.commit_accept (event:
+         "version.commit" with tier="B"). *)
+      Alcotest.(check bool) "version.commit emitted post-approval" true
+        (Astring.String.is_infix ~affix:"version.commit" so);
+      Alcotest.(check bool) "approved tier-b commit on stream" true
+        (Astring.String.is_infix
+           ~affix:"\"event\":\"version.commit\""
+           so &&
+         Astring.String.is_infix ~affix:"\"tier\":\"B\"" so)))
 
 let ollama_no_response_field_is_tool_error () =
   with_workdir (fun dir ->

@@ -26,7 +26,12 @@ type resolution =
     proposal's [Approval:] line resolves. On resolution the proposal
     block is archived to
     [.k4k/version/<version_n>/tradeoffs/<ts>.md] and replaced in
-    [file_path] with a one-line HTML-comment breadcrumb. *)
+    [file_path] with a one-line HTML-comment breadcrumb.
+
+    The function does NOT commit the resulting file mutations: the
+    caller (typically [Version_tradeoff.handle]) is responsible for
+    committing the residue on the version branch before re-entering
+    [Gap_step.step] (whose [preflight] requires a clean tree). *)
 val propose_and_wait :
   cotype:Cotype.t ->
   file_path:string ->

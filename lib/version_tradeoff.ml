@@ -99,6 +99,20 @@ let drive_at_new_tier ~cfg ~d ~prev_status ~tier p =
   | `Done_blocked q | `Tradeoff (q, _) -> `Defer q
   | `Stop -> `Stop
 
+(* Tradeoff_flow.propose_and_wait mutates the user's [.k4k] file twice
+   (proposal splice, then archive-and-breadcrumb on resolution). Those
+   modifications land on the version branch's working tree, leaving it
+   dirty. Gap_step.preflight refuses to run on a dirty tree, so any
+   retry — at the approved tier, at Tier-A with guidance, or simply
+   the next property after a deferral — would crash with
+   ESTATE_CORRUPT. We commit the residue here, on the version branch,
+   so the next preflight starts from a clean slate. *)
+let commit_tradeoff_residue ~cwd ~property_id ~label =
+  let clean, _ = Git.is_clean ~cwd in
+  if not clean then
+    let msg = Printf.sprintf "[k4k] tradeoff %s: %s" label property_id in
+    let _ = Git.commit_all ~cwd ~message:msg in ()
+
 (** [handle ~cfg ~v_number ~d ~prev_status ?cotype p_failed reason]
     — open a tradeoff proposal for [p_failed], wait for the user's
     reply, then either retry the property at the approved tier or at
@@ -106,12 +120,18 @@ let drive_at_new_tier ~cfg ~d ~prev_status ~tier p =
 let handle ~cfg ~v_number ~d ~prev_status ?cotype p_failed reason
     : unit outcome =
   match propose ~cfg ~v_number ?cotype p_failed reason with
-  | None | Some Tradeoff_flow.Timed_out ->
+  | None ->
+      `Defer p_failed
+  | Some Tradeoff_flow.Timed_out ->
+      commit_tradeoff_residue ~cwd:cfg.cwd
+        ~property_id:p_failed.Property.id ~label:"timed-out";
       `Defer p_failed
   | Some (Tradeoff_flow.Rejected guidance) ->
       cfg.emit "tradeoff.rejected"
         (`Assoc [ "property_id", `String p_failed.Property.id;
                   "guidance", `String guidance ]);
+      commit_tradeoff_residue ~cwd:cfg.cwd
+        ~property_id:p_failed.Property.id ~label:"rejected";
       let p_reset = reset_for_tier p_failed in
       drive_at_new_tier ~cfg ~d ~prev_status ~tier:`A p_reset
   | Some (Tradeoff_flow.Approved tier) ->
@@ -119,6 +139,10 @@ let handle ~cfg ~v_number ~d ~prev_status ?cotype p_failed reason
         (`Assoc [ "property_id", `String p_failed.Property.id;
                   "tier", `String (match tier with
                     | `B -> "B" | `C -> "C") ]);
+      let label = match tier with
+        | `B -> "approved-tier-b" | `C -> "approved-tier-c" in
+      commit_tradeoff_residue ~cwd:cfg.cwd
+        ~property_id:p_failed.Property.id ~label;
       let p_reset = reset_for_tier p_failed in
       let tier_abc : [ `A | `B | `C ] = match tier with
         | `B -> `B | `C -> `C in

@@ -140,6 +140,24 @@ Each entry: **ID**, **Statement**, **Violation**, **Why**, **Test strategy**. St
 - **Why:** Cost economy, especially under tight Ollama budgets. See Q13g.
 - **Test strategy:** Run twice with no edits; assert exactly one formalization invocation in the JSONL log.
 
+### P21 — Tier-A is attempted before any degradation (v2)
+- **Statement:** k4k never proposes a Tier-B or Tier-C verification for a property without first attempting Tier A. Pre-judgment ("this looks too hard") is forbidden in the gap-step prompt and in any selection logic.
+- **Violation:** A `## k4k:tradeoff:proposal:<ts>` block exists for property `P_x` whose `agent-runs/` directory shows zero Tier-A attempts.
+- **Why:** The whole point of Tier A as the default is that we don't decide for the user what's hard before trying. Per ADR-011 and round-5 F1.
+- **Test strategy:** Per-tradeoff-proposal audit — for every `## k4k:tradeoff:proposal:<ts>` block in any version, verify the corresponding `agent-runs/` directory contains ≥ 1 Tier-A attempt with a real verifier failure.
+
+### P22 — User-edits-during-development queue, never interrupt (v2)
+- **Statement:** While a version is in `Developing` state, user edits to user-owned sections of the `.k4k` file are recorded as "pending for next version" and surfaced in the status block, but do NOT interrupt the in-flight gap-step loop. The in-flight version completes (or rolls back via `request: rollback`) before the user's edits are re-evaluated.
+- **Violation:** User saves the file mid-development; k4k aborts version N's gap-step and starts version N+1 without going through completion-or-rollback.
+- **Why:** Predictable progress for the user; the autonomous agent doesn't whiplash on every keystroke. Per ADR-011 and round-4 D2.
+- **Test strategy:** Integration test — start version N; modify a user-owned section mid-development; assert (a) version N continues to completion, (b) version N+1 picks up the edits afterward, (c) status block shows "1 section changed; will queue for version N+1" during development.
+
+### P23 — k4k carries no toolchain-specific code in lib/ (v2; refines ADR-008/012)
+- **Statement:** Beyond the small data-driven mapping in `lib/Toolchain_install` (binary name → user-scoped package manager), no module under `lib/` references any toolchain by name. No `Verifier_rocq`, no `Verifier_frama_c`, no `Lib_lean`, etc. The agent picks the toolchain per project; k4k transports the choice via the wire protocol.
+- **Violation:** A new `lib/Verifier_<tool>` module is added that knows how to invoke `<tool>`.
+- **Why:** Per `feedback_tool_agnostic.md` and ADR-012. The frontier model running as the agent has world-knowledge of every Tier-A toolchain; k4k's role is faithful subprocess transport, nothing more.
+- **Test strategy:** Lint pass — `grep -rE 'coqc|frama-c|verus|lean|extraction' lib/ | grep -v toolchain_install.ml` returns empty.
+
 ### P20 — Property reference in source
 - **Statement:** Every public function in k4k carries an `@invariant P<n>` doc-comment if it participates in enforcing one.
 - **Violation:** A function that flips an ownership flag has no `@invariant P14`.

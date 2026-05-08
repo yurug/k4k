@@ -98,7 +98,7 @@ tier. See `domain/prd.md` for the full tier hierarchy.)
 
 - `k4k.version` is required. Unknown versions ⇒ `EVERSION` (`error-taxonomy.md`).
 - `class` is required. v2 accepts only `cli`.
-- **No tooling configuration is exposed to the user.** The frontmatter has only `k4k.version` and `class`; k4k self-selects the verifier, backend, and timeouts based on the formalized characterization and the host environment. (See `domain/prd.md` for the autonomous-agent UX and ADR-011 — when authored — for tier-aware tool selection.)
+- **No tooling configuration is exposed to the user.** The frontmatter has only `k4k.version` and `class`. The toolchain is chosen by the *agent* per project (ADR-012) and emerges as `language` + `verifier_command` fields in the formalized characterization. The agent emits a wrapper script that conforms to the verifier wire protocol; k4k just runs it. Missing tools are auto-installed by k4k via user-scoped package managers (opam, uv/pipx, cargo, npm).
 
 ### Section identification
 

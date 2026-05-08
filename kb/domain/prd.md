@@ -34,7 +34,7 @@ k4k watches the file. Its visible behavior to the user is entirely in-file:
 
 2. **Versioning.** When the spec stabilizes, k4k snapshots a **version** (a frozen formal characterization `D`) and starts developing it in **full autonomy**. The version's identity is recorded in the file (a `## k4k:version:<n>` block) and in the harness state.
 
-3. **Developing + verifying.** Default verification tier is **full formal verification**: implementation extracted from a Rocq development, or Frama-C-verified C, or analogous. k4k chooses the toolchain implied by the formal characterization and self-installs/configures it. Tier A is the goal on every property.
+3. **Developing + verifying.** Default verification tier is **full formal verification**: implementation extracted from a Rocq development, or Frama-C-verified C, or analogous. **The agent picks the toolchain per project** (per ADR-012) — k4k carries no built-in selection logic. Each version lives on a git branch (`k4k/version/<n>`, per ADR-013); accepted gap-steps commit to the branch; on version completion k4k merges to the default branch and tags `v<n>`. Tier A is the goal on every property.
 
 4. **Trade-off negotiation.** When Tier A is infeasible for a specific property, k4k pauses development and writes a `## k4k:tradeoff:proposal:<ts>` block: which property, why Tier A failed, what degraded tier is proposed (Tier B = formal model + intensive testing of the implementation against the model; Tier C = testing-only, forfeits formal correctness), what's lost. The user replies inline; k4k waits for sign-off before proceeding at the degraded tier.
 

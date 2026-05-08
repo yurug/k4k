@@ -42,6 +42,7 @@ related: []
 | Author or modify a prompt                 | `conventions/context-economy.md` → `external/ollama.md` → `spec/algorithms.md` → `properties/functional.md`     |
 | Understand a decision                     | `GLOSSARY.md` → `architecture/decisions/INDEX.md` → relevant ADR                                                |
 | Understand the v0→v2 history              | `archive/v0-drifted/README.md`                                                                                  |
+| Implement the v2 watcher / wrapper rewrite | `architecture/decisions/adr-011-autonomous-agent-ux.md` → `adr-012-agent-driven-toolchain.md` → `adr-013-version-as-git-branch.md` → `domain/prd.md` → `spec/config-and-formats.md` → `spec/algorithms.md` → `properties/functional.md#P21` `#P22` `#P23` |
 
 ## Top-level layout
 
@@ -83,7 +84,10 @@ kb/
 │       ├── adr-007-deterministic-kb-regen.md
 │       ├── adr-008-verifier-protocol.md
 │       ├── adr-009-backend-protocol.md
-│       └── adr-010-cotype-delegation.md
+│       ├── adr-010-cotype-delegation.md
+│       ├── adr-011-autonomous-agent-ux.md
+│       ├── adr-012-agent-driven-toolchain.md
+│       └── adr-013-version-as-git-branch.md
 │
 ├── external/
 │   ├── INDEX.md
@@ -111,7 +115,7 @@ kb/
 
 ## File count and last updated
 
-- **Methodology files**: 37 (+ runbooks/drift-watch.md)
+- **Methodology files**: 40 (+ ADR-011, ADR-012, ADR-013)
 - **Reference files** active: `NOTES.md`. Archived under `archive/v0-drifted/`: questions-round{1,2,3}, plan, plan-simulation report, all audit reports, the user's feedback that triggered the v2 reorientation.
 - **Last updated**: 2026-05-03
 
@@ -132,7 +136,7 @@ kb/
 | v1 — Reference Ollama backend                             | ✓ done (`examples/backends/ollama/`; live-verified against `qwen3.5:9b`) |
 | v1 — ADR-010 cotype delegation                            | ✓ done (`lib/cotype.ml` + `lib/cotype_stub.ml` + `lib/clarification.ml`; `lib/persist_lock.ml` removed; live cotype 0.2.3 verified) |
 | v1 — Protocol-conformance suite + drift-watch             | ✓ done (`test/conformance/` 6 tests; `kb/runbooks/drift-watch.md`; baseline at `kb/reports/dep-versions-baseline.txt`) |
-| **v2 reorientation** — UX is autonomous agent, not developer CLI; default tier is Tier-A formal verification | KB cleanup ✓ (this commit batch). Round-4 questions, ADR-011, code rewrite of `bin/main.ml` + tier-aware prompts + Tier-A reference verifier example: pending |
+| **v2 reorientation** — UX is autonomous agent, not developer CLI; default tier is Tier-A formal verification | KB cleanup ✓; round-4 + round-5 questions ✓; ADR-011 (autonomous-agent UX + tier hierarchy) ✓; ADR-012 (agent-driven toolchain + auto-install) ✓; ADR-013 (versions as git branches) ✓; **code rewrite pending** (`bin/main.ml` watcher; tier-aware prompts; remove `examples/verifiers/dune-ocaml/`; conformance suite refit; new `lib/{Toolchain_install, Version}` modules) |
 
 ## Agent notes
 

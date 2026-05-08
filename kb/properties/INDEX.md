@@ -30,7 +30,7 @@ Source code references these IDs in `@invariant` annotations; tests reference th
 
 ## File counts
 
-- `functional.md`: P1..P20 (20 entries)
+- `functional.md`: P1..P20 + P21..P23 (v2 additions: 23 entries total)
 - `non-functional.md`: NF1..NF8 (8 entries)
 - `edge-cases.md`: T1..T20 (20 entries)
 

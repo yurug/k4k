@@ -29,6 +29,9 @@ ADR format: Status, Context, Decision, Consequences, What this means for impleme
 | ADR-008 | Wire-protocol verifier; k4k ships no verifier-specific code             | Supersedes the v0-only narrowing in ADR-004; verifier moves to a JSON wire protocol |
 | ADR-009 | Wire-protocol backend; k4k ships no backend-specific code               | Supersedes the v0-only narrowing in ADR-003; symmetric to ADR-008                  |
 | ADR-010 | Delegate user-agent interaction-file concurrency to cotype              | Partially supersedes ADR-002 (ownership tags removed); cotype is a hardcoded dep   |
+| ADR-011 | Autonomous-agent UX + verification-tier hierarchy (v2 reorientation)    | The v0/v1 developer-CLI framing is replaced; user only writes prose in `.k4k`; full formal verification is the default; testing tiers require sign-off |
+| ADR-012 | Agent-driven toolchain selection + auto-installation                    | Refines ADR-008/009; the agent picks toolchains per project and writes a wrapper script; k4k auto-installs via user-scoped package managers |
+| ADR-013 | Versions are git branches                                                | Each version lives on `k4k/version/<n>`; merges to default branch + tags `v<n>` on completion; `.k4k/version/<n>/` is audit-only |
 
 ## How to add a new ADR
 

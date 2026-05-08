@@ -1,16 +1,11 @@
-(** [Watcher_loop] — the watcher's main loop. Kept narrow:
-    - poll cotype.status at [poll_interval_ms]
-    - on [`Conflicted] surface; on [`Unmanaged] init
-    - on [`Clean] read the file, parse, run stability check
-    - on unstable: append clarification block, write status, sleep
-    - on stable: snapshot a version, run convergence, write status
-    - honor SIGINT cooperatively *)
+(** [Watcher_loop] — the watcher's main loop. See [.mli]. *)
 
 type config = {
   file_path        : string;
   k4k_dir          : string;
   verbosity        : [ `Quiet | `Verbose | `Debug ];
   exit_on_stable   : bool;
+  exit_on_done     : bool;
   poll_interval_ms : int;
   emit             : string -> Yojson.Safe.t -> unit;
 }
@@ -104,32 +99,79 @@ let process_stable cfg ct =
     ~status_block:(Inline_blocks.render_status s);
   cfg.emit "stability.pass" (`Assoc [])
 
+(* On a stable spec, try to drive the development half. When the test
+   knob [K4K_TEST_D_PATH] is set we cut a version branch, run the
+   accept-only gap loop, merge + tag, and (if [exit_on_done]) return.
+   Production v2 batch 3 emits [version.skip] until batch 4 wires
+   formalization. *)
+let attempt_version cfg ct =
+  match Watcher_dev.try_run_version ~file_path:cfg.file_path
+          ~k4k_dir:cfg.k4k_dir ~emit:cfg.emit ct with
+  | `Done ->
+      let next_n = Version_persist.next_version_number
+                     ~k4k_dir:cfg.k4k_dir - 1 in
+      let n = max 1 next_n in
+      Watcher_dev.after_version_done ~file_path:cfg.file_path ct
+        ~version_n:n
+        ~tier_dist:{ tier_a = 0; tier_b = 0; tier_c = 0 };
+      `Done
+  | `Pending -> `Pending
+
+let on_rollback cfg ct =
+  let cwd = Filename.dirname cfg.file_path in
+  let default_branch = Git.default_branch ~cwd in
+  let next_n = Version_persist.next_version_number
+                 ~k4k_dir:cfg.k4k_dir - 1 in
+  let n = max 1 next_n in
+  let branch = Version.branch_name_of n in
+  if Git.branch_exists ~cwd ~name:branch then begin
+    let _ = Git.checkout ~cwd ~name:default_branch in
+    let _ = Git.delete_branch ~cwd ~name:branch in
+    cfg.emit "version.rolled_back"
+      (`Assoc [ "version", `Int n;
+                "branch", `String branch ])
+  end;
+  let s = mk_status ~version_n:n ~state:"rolled-back"
+            ~last_act:(now_iso ()) in
+  render_and_save_status cfg ct
+    ~status_block:(Inline_blocks.render_status s)
+
+let on_stable cfg ct ~stable_seen =
+  if not stable_seen then process_stable cfg ct;
+  if cfg.exit_on_stable then `Stop
+  else if cfg.exit_on_done then begin
+    let _ = attempt_version cfg ct in `Stop
+  end
+  else (sleep_ms cfg.poll_interval_ms; `Continue true)
+
+let on_unstable cfg ct issues ~stable_seen =
+  process_unstable cfg ct issues;
+  if test_exit_now cfg then `Stop
+  else (sleep_ms cfg.poll_interval_ms; `Continue stable_seen)
+
+let process_directives cfg ct directives ~stable_seen =
+  if List.mem `Rollback directives then begin
+    cfg.emit "directive.rollback" (`Assoc []);
+    on_rollback cfg ct; `Stop
+  end else if List.mem `Pause directives then begin
+    cfg.emit "directive.pause" (`Assoc []);
+    sleep_ms cfg.poll_interval_ms; `Continue stable_seen
+  end else `No_directive
+
 let one_tick cfg ct ~stable_seen =
   if Sigint.should_exit () then `Stop
   else begin
     let directives = user_directives_in_file cfg ct in
-    if List.mem `Rollback directives then begin
-      cfg.emit "directive.rollback" (`Assoc []);
-      `Stop
-    end else if List.mem `Pause directives then begin
-      cfg.emit "directive.pause" (`Assoc []);
-      sleep_ms cfg.poll_interval_ms; `Continue stable_seen
-    end else begin
-      match read_file_via_cotype ct ~file:cfg.file_path with
-      | None ->
-          sleep_ms cfg.poll_interval_ms; `Continue stable_seen
-      | Some content ->
-          (match stability_of_text ~content with
-           | `Unstable issues ->
-               process_unstable cfg ct issues;
-               if test_exit_now cfg then `Stop
-               else (sleep_ms cfg.poll_interval_ms;
-                     `Continue stable_seen)
-           | `Stable _ ->
-               if not stable_seen then process_stable cfg ct;
-               if cfg.exit_on_stable then `Stop
-               else (sleep_ms cfg.poll_interval_ms; `Continue true))
-    end
+    match process_directives cfg ct directives ~stable_seen with
+    | `Stop -> `Stop
+    | `Continue s -> `Continue s
+    | `No_directive ->
+        match read_file_via_cotype ct ~file:cfg.file_path with
+        | None -> sleep_ms cfg.poll_interval_ms; `Continue stable_seen
+        | Some content ->
+            (match stability_of_text ~content with
+             | `Unstable issues -> on_unstable cfg ct issues ~stable_seen
+             | `Stable _ -> on_stable cfg ct ~stable_seen)
   end
 
 let run cfg : int =

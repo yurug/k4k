@@ -7,6 +7,7 @@ type config = {
   k4k_dir          : string;
   verbosity        : [ `Quiet | `Verbose | `Debug ];
   exit_on_stable   : bool;
+  exit_on_done     : bool;
   poll_interval_ms : int;
 }
 
@@ -114,6 +115,7 @@ let run ~config : int =
         k4k_dir = config.k4k_dir;
         verbosity = config.verbosity;
         exit_on_stable = config.exit_on_stable;
+        exit_on_done = config.exit_on_done;
         poll_interval_ms = config.poll_interval_ms;
         emit = (fun e d -> emit_event ~verbosity:config.verbosity e d);
       } in

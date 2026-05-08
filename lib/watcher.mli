@@ -17,6 +17,9 @@ type config = {
     (** [@test_only] When [true], the watcher returns after the first
         stability snapshot rather than entering the gap-step loop. Used
         by integration tests (per [kb/runbooks/test-environment.md]). *)
+  exit_on_done     : bool;
+    (** [@test_only] When [true], the watcher returns once a version
+        completes (or rolls back). *)
   poll_interval_ms : int;
     (** Default 500 ms (2 Hz). Tests may shorten. *)
 }

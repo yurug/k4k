@@ -20,10 +20,11 @@ auth `claude` is configured with.
 
 ```bash
 cd /home/coder/workspace/k4k
-dune build
-# Optionally install on PATH; otherwise use absolute paths below.
-# dune install
+dune build && dune install   # puts k4k + claude_code_backend on $PATH
 ```
+
+If you skip `dune install`, use the absolute paths under
+`_build/install/default/bin/` in the smokes below.
 
 ## Smoke 1 — wire-only, no API tokens
 
@@ -94,15 +95,20 @@ fine for `--exit-on-stable`.
 
 ## Smoke 2 — full v1 development against real claude (consumes tokens)
 
+If `claude_code_backend` is on `$PATH` after `dune install`, k4k
+autodetects it on first run and writes `.k4k/config.json` for you.
+No env vars needed.
+
 ```bash
 # Same WORKDIR / test.k4k as above.
-export K4K_BACKEND_COMMAND="/home/coder/workspace/k4k/_build/install/default/bin/claude_code_backend"
-
-# --exit-on-done returns after the first version completes (Done) or
-# rolls back. Without it the watcher polls forever.
-/home/coder/workspace/k4k/_build/install/default/bin/k4k \
-  --exit-on-done test.k4k
+# --exit-on-done returns after the first version completes (Done)
+# or rolls back. Without it the watcher polls forever.
+k4k --exit-on-done test.k4k
 ```
+
+If autodetection didn't find a backend (rare; usually means you
+skipped `dune install`), open `.k4k/config.json` after the first
+run, set `backend.command` to your backend's path, and re-launch.
 
 Expected JSONL trajectory (event names; details elided):
 

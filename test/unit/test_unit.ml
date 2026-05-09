@@ -4266,6 +4266,82 @@ module WPidT = struct
   ]
 end
 
+(* ---------------- Config (per-project operator config) -------------- *)
+module ConfigT = struct
+  let render_default_with_no_backend_emits_null () =
+    let body = Config.render_default ~backend:None () in
+    Alcotest.(check bool) "command field is null" true
+      (Astring.String.is_infix ~affix:"\"command\": null" body);
+    Alcotest.(check bool) "_help field present" true
+      (Astring.String.is_infix ~affix:"\"_help\":" body)
+
+  let render_default_with_backend_quotes_string () =
+    let body = Config.render_default
+                 ~backend:(Some "claude_code_backend") () in
+    Alcotest.(check bool) "quoted command" true
+      (Astring.String.is_infix
+         ~affix:"\"command\": \"claude_code_backend\"" body)
+
+  let read_or_create_creates_file_when_missing () =
+    with_tmpdir (fun dir ->
+      let kdir = Filename.concat dir ".k4k" in
+      let path = Config.path ~k4k_dir:kdir in
+      Alcotest.(check bool) "file absent initially" false
+        (Sys.file_exists path);
+      let _cfg = Config.read_or_create ~k4k_dir:kdir in
+      Alcotest.(check bool) "file created" true (Sys.file_exists path);
+      let body = Persist.read_file path in
+      Alcotest.(check bool) "_help in body" true
+        (Astring.String.is_infix ~affix:"\"_help\":" body))
+
+  let read_or_create_round_trips_explicit_command () =
+    with_tmpdir (fun dir ->
+      let kdir = Filename.concat dir ".k4k" in
+      Persist.ensure_dir kdir;
+      Persist.atomic_write ~path:(Config.path ~k4k_dir:kdir)
+        (Config.render_default
+           ~backend:(Some "/usr/local/bin/my-backend --foo") ());
+      let cfg = Config.read_or_create ~k4k_dir:kdir in
+      Alcotest.(check (option string)) "round-trip"
+        (Some "/usr/local/bin/my-backend --foo")
+        cfg.backend_command)
+
+  let read_or_create_tolerates_malformed_file () =
+    with_tmpdir (fun dir ->
+      let kdir = Filename.concat dir ".k4k" in
+      Persist.ensure_dir kdir;
+      Persist.atomic_write ~path:(Config.path ~k4k_dir:kdir)
+        "{ not valid json";
+      let cfg = Config.read_or_create ~k4k_dir:kdir in
+      Alcotest.(check (option string)) "malformed → None"
+        None cfg.backend_command)
+
+  let read_or_create_handles_null_command () =
+    with_tmpdir (fun dir ->
+      let kdir = Filename.concat dir ".k4k" in
+      Persist.ensure_dir kdir;
+      Persist.atomic_write ~path:(Config.path ~k4k_dir:kdir)
+        "{\"backend\":{\"command\":null}}";
+      let cfg = Config.read_or_create ~k4k_dir:kdir in
+      Alcotest.(check (option string)) "null → None"
+        None cfg.backend_command)
+
+  let tests = [
+    Alcotest.test_case "Config_render_default_null_backend" `Quick
+      render_default_with_no_backend_emits_null;
+    Alcotest.test_case "Config_render_default_with_backend" `Quick
+      render_default_with_backend_quotes_string;
+    Alcotest.test_case "Config_creates_file_when_missing" `Quick
+      read_or_create_creates_file_when_missing;
+    Alcotest.test_case "Config_round_trips_explicit_command" `Quick
+      read_or_create_round_trips_explicit_command;
+    Alcotest.test_case "Config_tolerates_malformed_file" `Quick
+      read_or_create_tolerates_malformed_file;
+    Alcotest.test_case "Config_handles_null_command" `Quick
+      read_or_create_handles_null_command;
+  ]
+end
+
 (* ---------------- Backend_resolve (audit axis 6 H-3) ---------------- *)
 module BRT = struct
   let split_simple () =
@@ -4294,27 +4370,35 @@ module BRT = struct
       (Backend_resolve.split_command "  a   b\tc  ")
 
   let resolve_unconfigured_returns_tool_error () =
-    let saved_stub = Sys.getenv_opt "K4K_STUB_RESPONSES" in
-    let saved_cmd  = Sys.getenv_opt "K4K_BACKEND_COMMAND" in
-    Unix.putenv "K4K_STUB_RESPONSES" "";
-    Unix.putenv "K4K_BACKEND_COMMAND" "";
-    let emitted = ref [] in
-    let emit ev _ = emitted := ev :: !emitted in
-    let invoke = Backend_resolve.resolve ~emit in
-    let r = invoke ~purpose:`Formalization ~prompt:"x" ~budget:100 in
-    (match r with
-     | `Tool_error msg ->
-         Alcotest.(check bool) "msg names the gap" true
-           (Astring.String.is_infix ~affix:"no agent backend" msg)
-     | _ -> Alcotest.fail "expected Tool_error");
-    Alcotest.(check bool) "agent.unconfigured emitted" true
-      (List.mem "agent.unconfigured" !emitted);
-    (match saved_stub with
-     | Some v -> Unix.putenv "K4K_STUB_RESPONSES" v
-     | None -> Unix.putenv "K4K_STUB_RESPONSES" "");
-    (match saved_cmd with
-     | Some v -> Unix.putenv "K4K_BACKEND_COMMAND" v
-     | None -> Unix.putenv "K4K_BACKEND_COMMAND" "")
+    with_tmpdir (fun dir ->
+      let kdir = Filename.concat dir ".k4k" in
+      Persist.ensure_dir kdir;
+      (* Pre-write a config that explicitly sets the backend to
+         null, so [Config.read_or_create] doesn't autodetect a real
+         binary on the test host. *)
+      Persist.atomic_write ~path:(Config.path ~k4k_dir:kdir)
+        (Config.render_default ~backend:None ());
+      let saved_stub = Sys.getenv_opt "K4K_STUB_RESPONSES" in
+      let saved_cmd  = Sys.getenv_opt "K4K_BACKEND_COMMAND" in
+      Unix.putenv "K4K_STUB_RESPONSES" "";
+      Unix.putenv "K4K_BACKEND_COMMAND" "";
+      let emitted = ref [] in
+      let emit ev _ = emitted := ev :: !emitted in
+      let invoke = Backend_resolve.resolve ~emit ~k4k_dir:kdir in
+      let r = invoke ~purpose:`Formalization ~prompt:"x" ~budget:100 in
+      (match r with
+       | `Tool_error msg ->
+           Alcotest.(check bool) "msg names the gap" true
+             (Astring.String.is_infix ~affix:"no agent backend" msg)
+       | _ -> Alcotest.fail "expected Tool_error");
+      Alcotest.(check bool) "agent.unconfigured emitted" true
+        (List.mem "agent.unconfigured" !emitted);
+      (match saved_stub with
+       | Some v -> Unix.putenv "K4K_STUB_RESPONSES" v
+       | None -> Unix.putenv "K4K_STUB_RESPONSES" "");
+      (match saved_cmd with
+       | Some v -> Unix.putenv "K4K_BACKEND_COMMAND" v
+       | None -> Unix.putenv "K4K_BACKEND_COMMAND" ""))
 
   let tests = [
     Alcotest.test_case "split_command_simple" `Quick split_simple;
@@ -5499,6 +5583,7 @@ let () =
       "Version_tradeoff", VTT.tests;
       "Version_user_edits", VUET.tests;
       "Watcher_pid", WPidT.tests;
+      "Config",       ConfigT.tests;
       "Backend_resolve", BRT.tests;
       "Manifest_acc", ManifestT.tests;
       "Tradeoff_flow_runtime", TFRunT.tests;

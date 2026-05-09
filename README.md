@@ -11,26 +11,30 @@ You never run flags. You never configure tooling. You never see the verifier or 
 ## Quick start
 
 ```bash
-pipx install cotype                                  # ADR-010 — file-concurrency primitive
-dune build && dune install                           # build k4k from this repo
-
-# Build the reference agent backend (or your own conforming binary):
-ls _build/install/default/bin/claude_code_backend    # the example, post-build
-export K4K_BACKEND_COMMAND="$(pwd)/_build/install/default/bin/claude_code_backend"
-
-# Launch the watcher — once.
-k4k myproject.k4k
+pipx install cotype                  # ADR-010 — file-concurrency primitive
+dune build && dune install           # builds k4k + the reference backends
+                                     # and puts them on $PATH
+k4k myproject.k4k                    # one-shot launch
 ```
 
-`K4K_BACKEND_COMMAND` points at any executable conforming to
-[`kb/external/backend-protocol.md`](kb/external/backend-protocol.md).
-Two reference backends ship under `examples/backends/`:
+On first run k4k creates `myproject/.k4k/config.json` and
+**autodetects** an agent backend on `$PATH` —
+`claude_code_backend` (the bundled example) or `ollama_backend`
+(local LLM alternative). Edit the file once if you need a
+different command; subsequent runs read it back. Override with
+`K4K_BACKEND_COMMAND=...` for one-off CI runs without mutating
+the project's config.
+
+The two reference backends conform to
+[`kb/external/backend-protocol.md`](kb/external/backend-protocol.md):
 [`claude-code`](examples/backends/claude-code/README.md) (calls
 `claude -p`; needs `claude` on `$PATH` + `ANTHROPIC_API_KEY`) and
-[`ollama`](examples/backends/ollama/) (calls a local Ollama server).
-Without `K4K_BACKEND_COMMAND` set, the watcher logs
-`agent.unconfigured` once and idles — useful for `--exit-on-stable`
-smokes but not for real work.
+[`ollama`](examples/backends/ollama/) (calls a local Ollama
+server). Any executable that speaks the wire protocol works.
+
+If neither autodetection nor manual config picks a backend, the
+watcher logs `agent.unconfigured` once and idles — useful for
+`--exit-on-stable` smokes but not for real work.
 
 To smoke-test the claude-code backend wire (one round-trip; consumes
 API tokens):

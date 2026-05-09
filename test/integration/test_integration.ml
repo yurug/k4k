@@ -986,9 +986,17 @@ let backend_resolve_falls_back_to_unconfigured () =
       let f = Filename.concat dir "in.k4k" in
       copy_file (fixture_path "echo-upper.k4k") f;
       let _ = K4k.Git.commit_all ~cwd:dir ~message:"add in.k4k" in
-      (* Neither K4K_STUB_RESPONSES nor K4K_BACKEND_COMMAND set.
-         Watcher should emit agent.unconfigured at startup, then
-         exit cleanly under --exit-on-stable. *)
+      (* Pre-write a config with backend.command=null so the
+         per-project config doesn't autodetect the bundled
+         claude_code_backend that's on PATH after [dune install].
+         No env vars set either — the watcher must emit
+         agent.unconfigured. *)
+      let kdir = Filename.concat dir ".k4k" in
+      let _ = Sys.command (Printf.sprintf "mkdir -p %s"
+                             (Filename.quote kdir)) in
+      let oc = open_out (Filename.concat kdir "config.json") in
+      output_string oc "{\"backend\":{\"command\":null}}";
+      close_out oc;
       let env = [] in
       let (_code, so, _se) = run_capture_with_env
         ~k4k_args:["--exit-on-stable"; "in.k4k"]
@@ -996,6 +1004,42 @@ let backend_resolve_falls_back_to_unconfigured () =
       Alcotest.(check bool) "agent.unconfigured emitted" true
         (Astring.String.is_infix ~affix:"agent.unconfigured" so);
       Alcotest.(check bool) "agent.external_configured NOT emitted" false
+        (Astring.String.is_infix ~affix:"agent.external_configured" so)))
+
+(* On a fresh project (no .k4k/config.json yet), the watcher writes
+   one and autodetects claude_code_backend on $PATH (it's there
+   after [dune install] / it's findable via the full _build path).
+   We arrange for it to be discoverable by prepending the
+   _build/install bin dir to PATH. *)
+let backend_resolve_auto_creates_config_at_first_run () =
+  with_cotype (fun () ->
+    with_workdir_and_git (fun dir ->
+      let f = Filename.concat dir "in.k4k" in
+      copy_file (fixture_path "echo-upper.k4k") f;
+      let _ = K4k.Git.commit_all ~cwd:dir ~message:"add in.k4k" in
+      let here = Sys.getcwd () in
+      let rec find_bin_dir d =
+        let cand = Filename.concat d "_build/install/default/bin" in
+        if Sys.file_exists cand then cand
+        else
+          let p = Filename.dirname d in
+          if p = d then failwith "_build/install/default/bin not found"
+          else find_bin_dir p
+      in
+      let bin_dir = find_bin_dir here in
+      let path = Printf.sprintf "%s:%s" bin_dir
+                   (try Sys.getenv "PATH" with _ -> "/usr/bin:/bin") in
+      let env = [ ("PATH", path) ] in
+      let (_code, so, _se) = run_capture_with_env
+        ~k4k_args:["--exit-on-stable"; "in.k4k"]
+        ~cwd:dir ~env () in
+      let cfg_path = Filename.concat dir ".k4k/config.json" in
+      Alcotest.(check bool) ".k4k/config.json was auto-created" true
+        (Sys.file_exists cfg_path);
+      let body = read_all_close (open_in cfg_path) in
+      Alcotest.(check bool) "config names claude_code_backend" true
+        (Astring.String.is_infix ~affix:"claude_code_backend" body);
+      Alcotest.(check bool) "agent.external_configured emitted" true
         (Astring.String.is_infix ~affix:"agent.external_configured" so)))
 
 (* ---------------- claude-code backend example ---------------- *)
@@ -1156,6 +1200,9 @@ let () =
         Alcotest.test_case
           "Backend_resolve_falls_back_to_unconfigured" `Slow
           backend_resolve_falls_back_to_unconfigured;
+        Alcotest.test_case
+          "Backend_resolve_auto_creates_config_at_first_run" `Slow
+          backend_resolve_auto_creates_config_at_first_run;
       ];
       "claude_code_backend", [
         Alcotest.test_case "claude_code_emits_ok_for_well_formed_response"

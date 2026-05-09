@@ -196,7 +196,8 @@ let run cfg : int =
   let stable = ref false in
   let versions_done = ref 0 in
   (* Resolve once; canned-backend queues must persist across ticks. *)
-  let agent_invoke = Watcher_dev.resolve_invoke ~emit:cfg.emit in
+  let agent_invoke =
+    Watcher_dev.resolve_invoke ~emit:cfg.emit ~k4k_dir:cfg.k4k_dir in
   let rec loop () =
     match one_tick cfg ct ~stable_seen:!stable ~versions_done
             ~agent_invoke with

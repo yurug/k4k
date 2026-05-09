@@ -20,6 +20,7 @@ type emit_fn = string -> Yojson.Safe.t -> unit
     discipline keeps the watcher uniform). *)
 val resolve_invoke :
   emit:emit_fn ->
+  k4k_dir:string ->
   Version_loop.agent_invoke
 
 (** [try_run_version ~file_path ~k4k_dir ~emit ~agent_invoke ct]:

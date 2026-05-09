@@ -12,9 +12,11 @@ type emit_fn = string -> Yojson.Safe.t -> unit
 (** Resolve the agent-invoke closure ONCE at watcher startup;
     delegated to [Backend_resolve.resolve] (audit-2026-05-08-axis6
     H-3). The resulting closure is reused across every
-    [try_run_version] iteration. *)
-let resolve_invoke ~emit : Version_loop.agent_invoke =
-  Backend_resolve.resolve ~emit
+    [try_run_version] iteration. [k4k_dir] is threaded through so
+    [Config.read_or_create] can bootstrap [.k4k/config.json] on
+    first run. *)
+let resolve_invoke ~emit ~k4k_dir : Version_loop.agent_invoke =
+  Backend_resolve.resolve ~emit ~k4k_dir
 
 let verifier_invoke ~k4k_dir ~d : Version_loop.verifier_run =
   let cfg = { Verifier_external.default_config with

@@ -1,0 +1,77 @@
+---
+k4k:
+  version: 1
+  class: cli
+---
+# echo-tiny
+
+A deliberately-tiny CLI scenario for first-run end-to-end testing.
+Author this file as `<your-tempdir>/echo-tiny.k4k` and run
+`k4k echo-tiny.k4k`. Expected first-run trajectory in the README
+next to this file.
+
+## Goal
+
+Read the program's argv (positional arguments only — no flags),
+join the arguments with single spaces, and print the resulting
+string followed by a single newline to stdout. Exit with status 0.
+If argv is empty, exit with status 1 and write nothing to stdout.
+
+Hint to the agent: implement this in OCaml using dune for the
+build, alcotest for the tests, and ship a small `_verifier.sh`
+wrapper at the project root that runs `dune build && dune test`
+and emits the verifier-protocol JSON per
+`kb/external/verifier-protocol.md`. Tier-C is acceptable for v0
+of this program — propose it explicitly when k4k asks.
+
+## Inputs and outputs
+
+- argv: zero or more positional string arguments. No flags.
+- stdin: ignored.
+- stdout: the joined string + `\n` on success; empty on the
+  empty-argv error path.
+- stderr: empty on success; a single human-readable error line
+  on the empty-argv path.
+- exit codes:
+  - 0: success (≥ 1 argv).
+  - 1: empty argv.
+
+## Error taxonomy
+
+- EEMPTY_ARGV: raised when argv is empty. Exit code 1. Stderr line:
+  `echo-tiny: at least one argument required`.
+
+## File-system contract
+
+The program reads no files and writes no files. (`_verifier.sh`
+itself runs `dune build && dune test` which writes under
+`_build/`; that's the build's concern, not the program's.)
+
+## Concurrency
+
+N/A — single-process CLI.
+
+## Performance bounds
+
+N/A — argv is bounded by the OS argv limit.
+
+## Acceptance examples
+
+1. argv = ["hi"]                 → stdout = "hi\n",        exit = 0
+2. argv = ["a", "b"]             → stdout = "a b\n",       exit = 0
+3. argv = ["one", "two", "three"] → stdout = "one two three\n", exit = 0
+
+## Refusing examples
+
+1. argv = []
+   → stderr = "echo-tiny: at least one argument required\n"
+   → exit = 1
+   → maps to EEMPTY_ARGV
+
+## Out of scope
+
+- Flag parsing (no `--upper`, no `-h`, nothing).
+- Reading from stdin or files.
+- Unicode normalization (assume the OS layer hands us UTF-8 args
+  byte-for-byte).
+- Any networking, persistence, or background work.

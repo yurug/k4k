@@ -582,6 +582,35 @@ let post_rollback_clarification_summary () =
       Alcotest.(check bool) "deferred pid named in clarification" true
         any_pid_in_clar))
 
+(* The bundled echo-tiny scenario file
+   (examples/scenarios/echo-tiny/) must pass structural stability —
+   otherwise the README's first-run smoke is broken. *)
+let bundled_echo_tiny_scenario_is_stable () =
+  with_cotype (fun () ->
+    with_workdir_and_git (fun dir ->
+      let here = Sys.getcwd () in
+      let rec find_scenario d =
+        let cand = Filename.concat d
+          "examples/scenarios/echo-tiny/echo-tiny.k4k" in
+        if Sys.file_exists cand then cand
+        else
+          let p = Filename.dirname d in
+          if p = d then failwith "echo-tiny.k4k not found"
+          else find_scenario p
+      in
+      let scenario = find_scenario here in
+      let f = Filename.concat dir "in.k4k" in
+      copy_file scenario f;
+      let _ = K4k.Git.commit_all ~cwd:dir ~message:"add scenario" in
+      let env = [] in
+      let (_code, so, _se) = run_capture_with_env
+        ~k4k_args:["--exit-on-stable"; "in.k4k"]
+        ~cwd:dir ~env () in
+      Alcotest.(check bool) "stability.pass emitted" true
+        (Astring.String.is_infix ~affix:"stability.pass" so);
+      Alcotest.(check bool) "no clarification appended" false
+        (Astring.String.is_infix ~affix:"clarification.appended" so)))
+
 (* T15 — SIGINT during agent call (axis 1 H2 deferred from batch C).
    Uses K4K_BACKEND_COMMAND pointing at a shell script that sleeps
    long enough for SIGINT to land mid-call. Asserts: exit ≤ 5 s
@@ -1251,6 +1280,11 @@ let () =
         Alcotest.test_case
           "post_rollback_clarification_summary" `Slow
           post_rollback_clarification_summary;
+      ];
+      "Scenarios", [
+        Alcotest.test_case
+          "bundled_echo_tiny_scenario_is_stable" `Slow
+          bundled_echo_tiny_scenario_is_stable;
       ];
       "P11", [
         Alcotest.test_case "P11_stdout_jsonl" `Slow p11_stdout_jsonl;

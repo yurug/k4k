@@ -90,7 +90,19 @@ Test-only knobs (env vars) are documented in [`kb/runbooks/test-environment.md`]
 
 ## Status
 
-v2 batch 4c is in. The watcher drives a stable spec to a real version-1 completion via real formalization, handles trade-off sign-off + Tier-B/C retry, surfaces user edits queued for the next version, finalizes with audit/merge/tag, and supports rollback via in-file directive. Phase tracker at [`kb/INDEX.md`](kb/INDEX.md). Test count: 268 (243 unit + 15 integration + 6 conformance + 4 edge).
+v2 closure pass complete. The watcher drives a stable spec to a real
+version-1 completion via real formalization, handles trade-off
+sign-off + Tier-B/C retry, surfaces user edits queued for the next
+version, finalizes with audit/merge/tag, and supports rollback via
+in-file directive. Ralph-loop feedback: every gap-step retry sees
+the prior failure reason; every rolled-back version splices a
+deferred-property summary; N consecutive rollbacks escalate to a
+stronger user prompt. Phase tracker at [`kb/INDEX.md`](kb/INDEX.md);
+audit closure at [`kb/reports/audit-2026-05-08-summary.md`](kb/reports/audit-2026-05-08-summary.md).
+Test count: 326 (291 unit + 25 integration + 6 conformance + 4 edge).
+
+For a runnable end-to-end smoke against a real backend, see
+[`examples/scenarios/echo-tiny/README.md`](examples/scenarios/echo-tiny/README.md).
 
 ## The methodology
 

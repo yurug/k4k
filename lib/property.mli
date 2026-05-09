@@ -36,6 +36,14 @@ type t = {
   evidence      : artefact_ref list;
   risk_score    : float;
   failure_count : int;
+  last_failure_reason : string option;
+  (** Set by [bump_failure] to the most recent reason string from
+      [Gap_step.bump_and_classify] (e.g. "no diff in response",
+      "verifier did not establish the focus property", "diff did
+      not apply: <details>"). [Gap_prompt.compose] reads it back
+      into the next prompt under a "Previous attempt" section so
+      the agent learns from the prior failure rather than retrying
+      blind. v2 batch 26 (Ralph-loop step 1). *)
   source        : aspect_ref;
 }
 (** v2 batch 11 (audit-axis5 M1): the prior [blocked : bool] field
@@ -60,12 +68,13 @@ val regen_risk : t -> t
     @invariant P17 — selection is deterministic over inputs. *)
 val argmax_lex : t list -> t option
 
-(** [bump_failure p] increments [failure_count]. Reaching 3 is the
-    "three-strikes" signal that [Gap_step] turns into a [Tradeoff]
-    outcome.
+(** [bump_failure ?reason p] increments [failure_count] and, if
+    [reason] is given, records it on [last_failure_reason]. Reaching
+    3 is the "three-strikes" signal that [Gap_step] turns into a
+    [Tradeoff] outcome.
 
     @invariant P6 — three-strikes-then-tradeoff. *)
-val bump_failure : t -> t
+val bump_failure : ?reason:string -> t -> t
 
 (** [with_status p st] sets [p.status] to [st] and zeroes the cached
     risk score (caller usually follows with [regen_risk]). *)
@@ -87,6 +96,7 @@ val make :
   ?status:status ->
   ?evidence:artefact_ref list ->
   ?failure_count:int ->
+  ?last_failure_reason:string option ->
   unit -> t
 
 (** [statement_of_aspect d a] derives a one-sentence claim from an

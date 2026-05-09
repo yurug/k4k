@@ -76,7 +76,9 @@ let log_outcome (lg : Logger.t) ev p extra =
   ] @ extra))
 
 let bump_and_classify ~deps p reason =
-  let p2 = Property.bump_failure p in
+  (* Record the reason on the property so the next gap-step prompt
+     can show it back to the agent (Ralph-loop feedback). *)
+  let p2 = Property.bump_failure ~reason p in
   if p2.Property.failure_count >= 3 then begin
     log_outcome deps.logger "gap-step.tradeoff" p2
       [ "reason", `String reason ];

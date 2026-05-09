@@ -2735,6 +2735,44 @@ module GPT = struct
     Alcotest.(check bool) "shows verifier command" true
       (Astring.String.is_infix ~affix:"./proofs/verify.sh" s)
 
+  (* Ralph-loop step 1 (v2 batch 26): on a retry, the prompt
+     surfaces the prior failure reason and the current strike
+     count so the agent doesn't blindly repeat the same patch. *)
+  let prior_failure_block_collapses_on_first_attempt () =
+    let p = mk_prop () in
+    let s = Gap_prompt.compose p Characterization.empty
+              ~current_summary:"" in
+    Alcotest.(check bool) "first attempt: 'first attempt' shown" true
+      (Astring.String.is_infix ~affix:"first attempt" s)
+
+  let prior_failure_block_carries_reason_after_bump () =
+    let p = mk_prop () in
+    let p1 = Property.bump_failure
+               ~reason:"verifier did not establish the focus property"
+               p in
+    let s = Gap_prompt.compose p1 Characterization.empty
+              ~current_summary:"" in
+    Alcotest.(check bool) "shows strike count" true
+      (Astring.String.is_infix ~affix:"Strike 1/3" s);
+    Alcotest.(check bool) "shows reason verbatim" true
+      (Astring.String.is_infix
+         ~affix:"verifier did not establish" s);
+    Alcotest.(check bool) "tells agent not to repeat" true
+      (Astring.String.is_infix ~affix:"do NOT resubmit" s)
+
+  let prior_failure_block_strike_count_progresses () =
+    let p = mk_prop () in
+    let p1 = Property.bump_failure ~reason:"r1" p in
+    let p2 = Property.bump_failure ~reason:"r2" p1 in
+    let s2 = Gap_prompt.compose p2 Characterization.empty
+              ~current_summary:"" in
+    Alcotest.(check bool) "second strike" true
+      (Astring.String.is_infix ~affix:"Strike 2/3" s2);
+    Alcotest.(check bool) "reason is the most recent" true
+      (Astring.String.is_infix ~affix:"r2" s2);
+    Alcotest.(check bool) "old reason gone" false
+      (Astring.String.is_infix ~affix:"r1" s2)
+
   let tests = [
     Alcotest.test_case "Gap_prompt_includes_property_id" `Quick
       renders_property_id;
@@ -2747,6 +2785,12 @@ module GPT = struct
       tier_c_template_used_when_signed_off;
     Alcotest.test_case "Gap_prompt_renders_language_and_verifier_command"
       `Quick renders_language_and_verifier_command;
+    Alcotest.test_case "Gap_prompt_prior_failure_collapses_on_first_attempt"
+      `Quick prior_failure_block_collapses_on_first_attempt;
+    Alcotest.test_case "Gap_prompt_prior_failure_carries_reason"
+      `Quick prior_failure_block_carries_reason_after_bump;
+    Alcotest.test_case "Gap_prompt_prior_failure_strike_progression"
+      `Quick prior_failure_block_strike_count_progresses;
   ]
 end
 
@@ -4063,7 +4107,7 @@ module VTT = struct
       } in
       let p = { Property.id = "P0"; statement = "x";
                 status = `Required; evidence = []; risk_score = 1.0;
-                failure_count = 0;
+                failure_count = 0; last_failure_reason = None;
                 source = { aspect = "goal"; path = ["goal"] }} in
       let prev_status = ref [] in
       let r = Version_tradeoff.drive_at_tier ~deps
@@ -4089,7 +4133,7 @@ module VTT = struct
       } in
       let p = { Property.id = "P0"; statement = "x";
                 status = `Required; evidence = []; risk_score = 1.0;
-                failure_count = 3;
+                failure_count = 3; last_failure_reason = None;
                 source = { aspect = "goal"; path = ["goal"] }} in
       let prev_status = ref [] in
       match Version_tradeoff.handle ~cfg ~v_number:1
@@ -4101,7 +4145,7 @@ module VTT = struct
   let reset_tier_clears_failure () =
     let p = { Property.id = "P0"; statement = "x";
               status = `Required; evidence = []; risk_score = 0.0;
-              failure_count = 3;
+              failure_count = 3; last_failure_reason = None;
               source = { aspect = "goal"; path = ["goal"] }} in
     let _ = p in
     (* The reset is internal; we exercise via [handle] above. This
@@ -5373,7 +5417,7 @@ module PrefixedT = struct
       } in
       let p = { Property.id = "P0"; statement = "x";
                 status = `Required; evidence = []; risk_score = 1.0;
-                failure_count = 0;
+                failure_count = 0; last_failure_reason = None;
                 source = { aspect = "goal"; path = ["goal"] }} in
       let prev_status = ref [] in
       (* Budget=0 exits before the first agent call → cannot

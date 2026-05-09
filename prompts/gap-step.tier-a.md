@@ -1,5 +1,5 @@
 ---
-vars: [property_id, property_statement, aspect_path, language, verifier_command, current_source_summary]
+vars: [property_id, property_statement, aspect_path, language, verifier_command, prior_failure, current_source_summary]
 ---
 
 You produce ONE unified-diff patch establishing a single property at
@@ -21,6 +21,10 @@ The patch must:
 - ID: `{{property_id}}`
 - Statement: {{property_statement}}
 - Aspect path: {{aspect_path}}
+
+## Previous attempt
+
+{{prior_failure}}
 
 ## Current source summary
 

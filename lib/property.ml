@@ -26,6 +26,7 @@ type t = {
   evidence      : artefact_ref list;
   risk_score    : float;
   failure_count : int;
+  last_failure_reason : string option;
   source        : aspect_ref;
 }
 
@@ -78,11 +79,18 @@ let with_status p st = { p with status = st; risk_score = 0.0 }
 
 let regen_risk p = { p with risk_score = risk_score p }
 
-(** Increment failure count. Three-strikes (fc=3) is the signal
-    [Gap_step] uses to emit the [Tradeoff] outcome; the property
-    record itself stops carrying a redundant [blocked] mirror. *)
-let bump_failure p =
-  { p with failure_count = p.failure_count + 1 }
+(** Increment failure count and (when given) record the reason
+    that pushed us into the failure. Three-strikes (fc=3) is the
+    signal [Gap_step] uses to emit the [Tradeoff] outcome; the
+    property record itself stops carrying a redundant [blocked]
+    mirror.
+
+    [reason] flows from [Gap_step.bump_and_classify] and is read
+    back into the next prompt by [Gap_prompt.compose] (Ralph-loop
+    feedback, v2 batch 26). *)
+let bump_failure ?reason p =
+  { p with failure_count = p.failure_count + 1;
+           last_failure_reason = reason }
 
 (* --- aspect derivation per algorithms.md#gap-construction --- *)
 
@@ -123,10 +131,12 @@ let statement_of_aspect (d : Characterization.t) (s : aspect_ref) : string =
   | _ -> Printf.sprintf "%s/%s" s.aspect (String.concat "/" s.path)
 
 let make ~source ~statement ?(status = `Required)
-    ?(evidence = []) ?(failure_count = 0) () =
+    ?(evidence = []) ?(failure_count = 0)
+    ?(last_failure_reason = None) () =
   let id = Property_id.of_path source.path in
   let p = { id; statement; status; evidence;
-            risk_score = 0.0; failure_count; source } in
+            risk_score = 0.0; failure_count;
+            last_failure_reason; source } in
   regen_risk p
 
 let from_characterization (d : Characterization.t) : t list =

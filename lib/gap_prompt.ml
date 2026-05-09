@@ -28,6 +28,25 @@ let refusing_lines (d : Characterization.t) =
       (String.concat "," r.argv) r.expect_error)
     d.examples_refuse
 
+(* Ralph-loop feedback (v2 batch 26): on a retry, the agent gets a
+   summary of the prior attempt's failure and the current strike
+   count. On the first attempt these collapse to "(none)" so the
+   prompt shape stays uniform. *)
+let prior_failure_block (p : Property.t) =
+  match p.last_failure_reason with
+  | None -> "(none — this is the first attempt)"
+  | Some reason ->
+      Printf.sprintf
+        "Strike %d/3. The previous attempt was rejected because:\n  \
+         %s\n\
+         Diagnose the cause and produce a different patch — do NOT \
+         resubmit the same shape. Common causes: the diff did not \
+         apply (path or context wrong), the verifier did not return \
+         status \"established\" for property %s, the patch \
+         regressed an already-established property, or your response \
+         contained no valid unified-diff block."
+        p.failure_count reason p.id
+
 let compose ?(tier = `A) (p : Property.t) (d : Characterization.t)
     ~current_summary : string =
   let language = if d.language = "" then "(unspecified)" else d.language in
@@ -43,4 +62,5 @@ let compose ?(tier = `A) (p : Property.t) (d : Characterization.t)
       "aspect_path", String.concat "/" p.source.path;
       "language", language;
       "verifier_command", verifier_command;
+      "prior_failure", prior_failure_block p;
       "current_source_summary", current_summary; ]

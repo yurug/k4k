@@ -64,7 +64,12 @@ let aspect_of_yojson : Yojson.Safe.t -> Property.aspect_ref = function
                   (Error.E_state_corrupt "aspect_ref: not an object"))
 
 let to_yojson (p : Property.t) : Yojson.Safe.t =
-  `Assoc [
+  let last_failure : (string * Yojson.Safe.t) list =
+    match p.last_failure_reason with
+    | None -> []
+    | Some s -> [ "last_failure_reason", `String s ]
+  in
+  `Assoc ([
     "id",            `String p.id;
     "statement",     `String p.statement;
     "status",        `String (status_to_string p.status);
@@ -72,7 +77,7 @@ let to_yojson (p : Property.t) : Yojson.Safe.t =
     "risk_score",    `Float p.risk_score;
     "failure_count", `Int p.failure_count;
     "source",        aspect_to_yojson p.source;
-  ]
+  ] @ last_failure)
 
 let of_yojson : Yojson.Safe.t -> Property.t = function
   | `Assoc fs ->
@@ -93,8 +98,11 @@ let of_yojson : Yojson.Safe.t -> Property.t = function
       let source = match assoc "source" with
         | Some v -> aspect_of_yojson v
         | None -> { aspect = ""; path = [] } in
+      let last_failure_reason = match assoc "last_failure_reason" with
+        | Some (`String s) when s <> "" -> Some s
+        | _ -> None in
       { Property.id; statement; status; evidence; risk_score;
-        failure_count; source }
+        failure_count; last_failure_reason; source }
   | _ -> raise (Error.K4k_error
                   (Error.E_state_corrupt "property: not an object"))
 

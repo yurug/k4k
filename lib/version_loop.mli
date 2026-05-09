@@ -47,7 +47,10 @@ type result =
       tag       : string;
       tier_dist : Inline_blocks.tier_distribution;
     }
-  | Rolled_back
+  | Rolled_back of { outcomes : Version_finalize.prop_outcome list }
+  (** Per-property outcomes carried out so the watcher can splice
+      a clarification block summarizing what deferred and why
+      (Ralph-loop step 2, v2 batch 27). *)
 
 (** [run ~cfg ~baseline_sha ~d ?cotype ()] drives one version end to
     end. Emits [version.start], [version.commit] (one per accepted

@@ -2481,7 +2481,7 @@ module VLT = struct
              (List.exists (fun (e,_) -> e = "version.start") !events);
            Alcotest.(check bool) "version.complete emitted" true
              (List.exists (fun (e,_) -> e = "version.complete") !events)
-       | Rolled_back -> Alcotest.fail "expected Done"))
+       | Rolled_back _ -> Alcotest.fail "expected Done"))
 
   let increments_version_number () =
     with_tmpdir (fun dir ->
@@ -2515,7 +2515,7 @@ module VLT = struct
       let cfg = make_config dir k4k_dir events in
       let d = Characterization.empty in
       match Version_loop.run ~cfg ~baseline_sha:baseline ~d () with
-      | Rolled_back ->
+      | Rolled_back _ ->
           Alcotest.(check bool) "version.start_error emitted" true
             (List.exists (fun (e,_) -> e = "version.start_error") !events)
       | Done _ -> Alcotest.fail "expected Rolled_back")
@@ -4891,7 +4891,7 @@ module NFPortsT = struct
       let r = Version_loop.run ~cfg ~baseline_sha:baseline ~d () in
       (match r with
        | Done _ -> ()
-       | Rolled_back -> Alcotest.fail "expected Done");
+       | Rolled_back _ -> Alcotest.fail "expected Done");
       let jsonl_path = Filename.concat k4k_dir "log.jsonl" in
       Alcotest.(check bool) "log.jsonl exists" true
         (Sys.file_exists jsonl_path);
@@ -5288,7 +5288,7 @@ module VFinT = struct
         | Ok v -> v | Error e -> Alcotest.failf "start_new: %s" e in
       let outcomes = [
         { Version_finalize.id = "P1"; status = "established";
-          commit_sha = Some "abc" };
+          commit_sha = Some "abc"; failure_reason = None };
       ] in
       let r = Version_finalize.finalize
                 ~cwd:dir ~k4k_dir:(Filename.concat dir ".k4k")
@@ -5300,7 +5300,7 @@ module VFinT = struct
           Alcotest.(check string) "tag is v1" "v1" tag;
           Alcotest.(check bool) "v1 git tag exists" true
             (Git.tag_exists ~cwd:dir ~name:"v1")
-      | Rolled_back -> Alcotest.fail "expected Done")
+      | Rolled_back _ -> Alcotest.fail "expected Done")
 
   let finalize_with_deferred_yields_rolled_back () =
     with_tmpdir (fun dir ->
@@ -5310,8 +5310,8 @@ module VFinT = struct
         | Ok v -> v | Error e -> Alcotest.failf "start_new: %s" e in
       let outcomes = [
         { Version_finalize.id = "P1"; status = "established";
-          commit_sha = Some "abc" };
-        { id = "P2"; status = "deferred"; commit_sha = None };
+          commit_sha = Some "abc"; failure_reason = None };
+        { id = "P2"; status = "deferred"; commit_sha = None; failure_reason = None };
       ] in
       let r = Version_finalize.finalize
                 ~cwd:dir ~k4k_dir:(Filename.concat dir ".k4k")
@@ -5319,7 +5319,7 @@ module VFinT = struct
                 ~emit:(fun _ _ -> ()) ~v ~outcomes
                 ~started_at:(Unix.gettimeofday ()) () in
       match r with
-      | Rolled_back ->
+      | Rolled_back _ ->
           Alcotest.(check bool) "no v2 tag" false
             (Git.tag_exists ~cwd:dir ~name:"v2");
           (* audit.md must still exist for the rolled-back version. *)

@@ -30,7 +30,7 @@ type config = {
 
 type result =
   | Done of { tag : string; tier_dist : Inline_blocks.tier_distribution }
-  | Rolled_back
+  | Rolled_back of { outcomes : Version_finalize.prop_outcome list }
 
 let to_v_cfg (cfg : config) : Version_tradeoff.cfg_v = {
   cwd = cfg.cwd;
@@ -67,7 +67,8 @@ let on_accepted ~cfg ~prev_status ~prev_outcomes ~tier_assignments
   prev_status := (q.Property.id, `Established) :: !prev_status;
   prev_outcomes := { Version_finalize.id = q.id;
                      status = "established";
-                     commit_sha = Some commit_sha }
+                     commit_sha = Some commit_sha;
+                     failure_reason = None; }
                    :: !prev_outcomes;
   tier_assignments := (q.Property.id, tier) :: !tier_assignments
 
@@ -75,7 +76,8 @@ let on_deferred ~cfg ~prev_outcomes q =
   cfg.emit "version.deferred"
     (`Assoc [ "property_id", `String q.Property.id ]);
   prev_outcomes := { Version_finalize.id = q.id;
-                     status = "deferred"; commit_sha = None }
+                     status = "deferred"; commit_sha = None;
+                     failure_reason = q.Property.last_failure_reason; }
                    :: !prev_outcomes
 
 let drive_property_full ~deps_a ~d ~cfg ~v_number
@@ -152,7 +154,8 @@ let write_developing_status ~cfg ~v ?cotype () =
 
 let to_local_result : Version_finalize.result -> result = function
   | Version_finalize.Done { tag; tier_dist } -> Done { tag; tier_dist }
-  | Version_finalize.Rolled_back -> Rolled_back
+  | Version_finalize.Rolled_back { outcomes } ->
+      Rolled_back { outcomes }
 
 let drive_version ~cfg ~d v ~started_at ?cotype () : result =
   persist_initial ~cfg ~v ~d;
@@ -191,7 +194,7 @@ let run ~cfg ~baseline_sha ~d ?cotype () : result =
           ~baseline_sha ~d_hash:d.hash with
   | Error e ->
       cfg.emit "version.start_error" (`Assoc [ "error", `String e ]);
-      Rolled_back
+      Rolled_back { outcomes = [] }
   | Ok v ->
       let started_at = v.started_at in
       drive_version ~cfg ~d v ~started_at ?cotype ()

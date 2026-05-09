@@ -12,9 +12,10 @@
     git side-effects via [Version.complete]. *)
 
 type prop_outcome = {
-  id          : string;
-  status      : string;     (* "established" | "blocked" | "deferred" *)
-  commit_sha  : string option;
+  id             : string;
+  status         : string;       (* "established" | "blocked" | "deferred" *)
+  commit_sha     : string option;
+  failure_reason : string option;
 }
 
 type emit_fn = string -> Yojson.Safe.t -> unit
@@ -74,20 +75,20 @@ let all_established outcomes =
 
 type result =
   | Done of { tag : string; tier_dist : Inline_blocks.tier_distribution }
-  | Rolled_back
+  | Rolled_back of { outcomes : prop_outcome list }
 
 let finalize ~cwd ~k4k_dir ~default_branch ~delete_branch ~emit
     ~v ~outcomes ~started_at ?cotype () : result =
   if not (all_established outcomes) then begin
     persist_final ~k4k_dir ~v ~tag:None ~outcomes
       ~outcome:"in-flight" ~started_at ?cotype ();
-    Rolled_back
+    Rolled_back { outcomes }
   end else
     match do_complete ~cwd ~default_branch ~delete_branch ~emit v with
     | Error _ ->
         persist_final ~k4k_dir ~v ~tag:None ~outcomes
           ~outcome:"in-flight" ~started_at ?cotype ();
-        Rolled_back
+        Rolled_back { outcomes }
     | Ok tag ->
         persist_final ~k4k_dir ~v ~tag:(Some tag) ~outcomes
           ~outcome:"done" ~started_at ?cotype ();

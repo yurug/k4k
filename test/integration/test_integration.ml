@@ -511,6 +511,77 @@ let nf1_sigint_during_watcher () =
       Alcotest.(check bool) "exited within 5 s" true
         (exited && dt <= 5.0)))
 
+(* Ralph-loop step 2 (v2 batch 27): on a rolled-back version, the
+   watcher splices a clarification block summarizing what deferred
+   and why, instead of silently looping back into formalize.
+
+   Drive the watcher through a version that's guaranteed to roll
+   back (canned agent returns no diffs → every property fails 3×
+   → Tradeoff → no tradeoff sign-off → defer → all deferred →
+   Rolled_back). Assert: clarification.rolled_back_summary event
+   in JSONL stream + a fresh `## k4k:clarification:` block in the
+   .k4k file naming the deferred property ids. *)
+let post_rollback_clarification_summary () =
+  with_cotype (fun () ->
+    with_workdir_and_git (fun dir ->
+      let f = Filename.concat dir "in.k4k" in
+      copy_file (fixture_path "echo-upper.k4k") f;
+      let _ = K4k.Git.commit_all ~cwd:dir ~message:"add in.k4k" in
+      let here = Sys.getcwd () in
+      let rec find_synth d =
+        let cand = Filename.concat d
+          "test/conformance/fixtures/synthetic-verifier.sh" in
+        if Sys.file_exists cand then cand
+        else
+          let p = Filename.dirname d in
+          if p = d then failwith "synthetic-verifier.sh not found"
+          else find_synth p
+      in
+      let synth_src = find_synth here in
+      let verifier_dst = Filename.concat dir "_verifier.sh" in
+      copy_synthetic_verifier ~src:synth_src ~dst:verifier_dst;
+      let d = build_d ~verifier_cmd:["./_verifier.sh"] in
+      let pids = property_ids_of d in
+      let canned_path = Filename.concat dir "canned.json" in
+      (* Two formalize entries (P18) + a flood of "no diff" gap
+         entries that force every property to defer. *)
+      let formalize p = `Assoc [ "purpose", `String "Formalization";
+                                  "text", `String p ] in
+      let bad_gap = `Assoc [
+        "purpose", `String "Gap_step";
+        "text", `String "no diff in this response\n"; ] in
+      let all = `List (
+        [ formalize (formalize_payload d);
+          formalize (formalize_payload d) ]
+        @ List.init 100 (fun _ -> bad_gap)) in
+      let oc = open_out canned_path in
+      output_string oc (Yojson.Safe.to_string all); close_out oc;
+      let _ = K4k.Git.commit_all ~cwd:dir ~message:"test setup" in
+      (* No K4K_SYNTH_ESTABLISHED → verifier reports unknown for
+         every focus → every gap-step rejects → 3-strikes →
+         Tradeoff. No autoapprove → tradeoff times out / defers. *)
+      let env = [
+        ("K4K_STUB_RESPONSES", canned_path);
+        ("K4K_TEST_TRADEOFF_AUTOAPPROVE", "timeout");
+      ] in
+      let (_code, so, _se) = run_capture_with_env
+        ~k4k_args:["--exit-on-done"; "in.k4k"]
+        ~cwd:dir ~env () in
+      Alcotest.(check bool)
+        "clarification.rolled_back_summary emitted" true
+        (Astring.String.is_infix
+           ~affix:"clarification.rolled_back_summary" so);
+      let final = read_file f in
+      Alcotest.(check bool) "clarification block appended" true
+        (Astring.String.is_infix
+           ~affix:"## k4k:clarification:" final);
+      (* At least one deferred property id mentioned. *)
+      let any_pid_in_clar = List.exists (fun pid ->
+        Astring.String.is_infix
+          ~affix:(Printf.sprintf "Property %s deferred" pid) final) pids in
+      Alcotest.(check bool) "deferred pid named in clarification" true
+        any_pid_in_clar))
+
 (* T15 — SIGINT during agent call (axis 1 H2 deferred from batch C).
    Uses K4K_BACKEND_COMMAND pointing at a shell script that sleeps
    long enough for SIGINT to land mid-call. Asserts: exit ≤ 5 s
@@ -1175,6 +1246,11 @@ let () =
         Alcotest.test_case
           "T15_sigint_during_agent_call" `Slow
           t15_sigint_during_agent_call;
+      ];
+      "Rollback_clar", [
+        Alcotest.test_case
+          "post_rollback_clarification_summary" `Slow
+          post_rollback_clarification_summary;
       ];
       "P11", [
         Alcotest.test_case "P11_stdout_jsonl" `Slow p11_stdout_jsonl;

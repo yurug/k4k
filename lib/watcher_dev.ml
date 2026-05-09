@@ -88,12 +88,49 @@ let formalize ~k4k_dir ~ct ~file_path ~emit ~agent_invoke
     [Watcher_loop.on_stable] treats them equally for the
     [exit_on_done] / [max_versions] gates. [`Skipped] is non-terminal:
     the loop sleeps and tries again. *)
+(* Ralph-loop step 2 (v2 batch 27): when a version rolls back,
+   splice a clarification block summarizing the deferred properties
+   + their last failure reasons. The watcher's next stable tick
+   re-formalizes — but the user has been told what just happened
+   and can edit the user-owned sections to refine the spec, or
+   trigger a tradeoff degradation when re-proposed. *)
+let post_rollback_clarification ~ct ~file_path ~emit ~outcomes =
+  let deferred =
+    List.filter (fun (po : Version_finalize.prop_outcome) ->
+      po.status <> "established") outcomes in
+  if deferred = [] then ()
+  else
+    let questions =
+      ("k4k completed a version that was rolled back. Edit the \
+        user-owned sections below to refine the spec, or accept a \
+        degraded tier when proposed.")
+      :: List.map (fun (po : Version_finalize.prop_outcome) ->
+           let r = match po.failure_reason with
+             | Some s -> s
+             | None -> "(no recorded reason)" in
+           Printf.sprintf
+             "Property %s deferred: %s" po.id r) deferred
+    in
+    try
+      Cotype.append_clarification ct ~path:file_path ~questions;
+      emit "clarification.rolled_back_summary"
+        (`Assoc [ "deferred", `Int (List.length deferred);
+                  "property_ids",
+                  `List (List.map (fun (po : Version_finalize.prop_outcome) ->
+                          `String po.id) deferred) ])
+    with Error.K4k_error e ->
+      emit "clarification.write_failed"
+        (`Assoc [ "code", `String (Error.code_id e);
+                  "render", `String (Error.render e); ])
+
 let dispatch_with_typed_errors ~file_path ~k4k_dir ~emit ~ct ~d
     ~agent_invoke =
   try
     (match dispatch_one ~file_path ~k4k_dir ~emit ~ct ~d ~agent_invoke with
-     | Done _ -> `Done
-     | Rolled_back -> `Rolled_back)
+     | Version_loop.Done _ -> `Done
+     | Version_loop.Rolled_back { outcomes } ->
+         post_rollback_clarification ~ct ~file_path ~emit ~outcomes;
+         `Rolled_back)
   with
   | Error.K4k_error e ->
       emit "version.error" (`Assoc [

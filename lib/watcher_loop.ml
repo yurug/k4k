@@ -31,11 +31,8 @@ let questions_of_issues (issues : Error.issue list) : string list =
   List.map (fun (i : Error.issue) ->
     Printf.sprintf "%s: %s" i.section i.details) issues
 
-(* audit-2026-05-08-axis4 L3: do NOT swallow cotype write failures
-   silently. Surface a [clarification.write_failed] JSONL event with
-   the typed error code + render so the operator can diagnose
-   (permission denied, conflict, etc.) instead of the watcher
-   spinning with no clarification block visible. *)
+(* axis-4 L3: surface cotype-write failures via JSONL rather than
+   silently dropping them. *)
 let append_clarification cfg ct ~issues =
   try
     Cotype.append_clarification ct ~path:cfg.file_path
@@ -87,12 +84,9 @@ let process_unstable cfg ct issues =
   cfg.emit "stability.unstable"
     (`Assoc [ "issues", `Int (List.length issues) ])
 
-(* On stable we run the file-pruning rules (ADR-011 §7): archive
-   resolved clarifications + maybe-delete the welcome block.
-   Idempotent post-condition; only mutates when there's something to
-   prune. We do NOT splice a developing-status block here: that
-   happens from inside [Version_loop] after the version branch is
-   created (v2 batch 4b — never mutate working tree before start_new). *)
+(* On stable: file-pruning (ADR-011 §7); idempotent. The
+   developing-status splice happens inside [Version_loop] after
+   start_new (batch 4b). *)
 let process_stable cfg ct =
   Watcher_prune.run ~ct ~file_path:cfg.file_path
     ~k4k_dir:cfg.k4k_dir ~emit:cfg.emit;
@@ -112,38 +106,33 @@ let attempt_version cfg ct ~agent_invoke =
   | `Skipped -> `Skipped
 
 let on_rollback cfg ct =
-  let cwd = Filename.dirname cfg.file_path in
-  let default_branch = Git.default_branch ~cwd in
-  let next_n = Version_persist.next_version_number
-                 ~k4k_dir:cfg.k4k_dir - 1 in
-  let n = max 1 next_n in
-  let branch = Version.branch_name_of n in
-  if Git.branch_exists ~cwd ~name:branch then begin
-    let _ = Git.checkout ~cwd ~name:default_branch in
-    let _ = Git.delete_branch ~cwd ~name:branch in
-    cfg.emit "version.rolled_back"
-      (`Assoc [ "version", `Int n;
-                "branch", `String branch ])
-  end;
-  let s = mk_status ~version_n:n ~state:"rolled-back"
-            ~last_act:(now_iso ()) in
-  render_and_save_status cfg ct
-    ~status_block:(Inline_blocks.render_status s)
+  Watcher_dev.on_user_rollback_directive ~ct
+    ~file_path:cfg.file_path ~k4k_dir:cfg.k4k_dir
+    ~emit:cfg.emit
+    ~render_and_save_status:(render_and_save_status cfg ct)
 
-(* On every stable tick (production OR test), attempt to drive a
-   version. The idempotence gate inside [Watcher_dev.try_run_version]
-   short-circuits when the spec is unchanged from the last completed
-   version, so this is cheap on a fully-developed-and-idle file. The
-   exit gates ([exit_on_done] and [max_versions]) trigger only after
-   a [Done] outcome — a [Pending] tick (rollback, gated, or
-   formalize-error) just sleeps and tries again. *)
-let on_stable cfg ct ~stable_seen ~versions_done ~agent_invoke =
+(* On every stable tick, attempt a version. The idempotence gate
+   inside [Watcher_dev.try_run_version] makes this cheap on idle
+   specs. [rollback_streak] resets on [`Done] and bumps on
+   [`Rolled_back]; crossing [Rollback_feedback.streak_threshold]
+   escalates (Ralph-loop step 3). *)
+let on_stable cfg ct ~stable_seen ~versions_done ~rollback_streak
+    ~agent_invoke =
   if not stable_seen then process_stable cfg ct;
   if cfg.exit_on_stable then `Stop
   else
     let outcome = attempt_version cfg ct ~agent_invoke in
     let terminal = outcome = `Done || outcome = `Rolled_back in
     if terminal then incr versions_done;
+    (match outcome with
+     | `Done -> rollback_streak := 0
+     | `Rolled_back ->
+         incr rollback_streak;
+         if !rollback_streak = Rollback_feedback.streak_threshold then
+           Rollback_feedback.escalate_unsatisfiable_streak
+             ~ct ~file_path:cfg.file_path ~emit:cfg.emit
+             ~streak:!rollback_streak
+     | `Skipped -> ());
     let cap_hit = match cfg.max_versions with
       | Some m -> !versions_done >= m | None -> false
     in
@@ -164,7 +153,8 @@ let process_directives cfg ct directives ~stable_seen =
     sleep_ms cfg.poll_interval_ms; `Continue stable_seen
   end else `No_directive
 
-let one_tick cfg ct ~stable_seen ~versions_done ~agent_invoke =
+let one_tick cfg ct ~stable_seen ~versions_done ~rollback_streak
+    ~agent_invoke =
   if Sigint.should_exit () then `Stop
   else begin
     let directives = user_directives_in_file cfg ct in
@@ -179,7 +169,7 @@ let one_tick cfg ct ~stable_seen ~versions_done ~agent_invoke =
              | `Unstable issues -> on_unstable cfg ct issues ~stable_seen
              | `Stable _ ->
                  on_stable cfg ct ~stable_seen ~versions_done
-                   ~agent_invoke)
+                   ~rollback_streak ~agent_invoke)
   end
 
 let run cfg : int =
@@ -195,12 +185,13 @@ let run cfg : int =
        flush stderr);
   let stable = ref false in
   let versions_done = ref 0 in
+  let rollback_streak = ref 0 in
   (* Resolve once; canned-backend queues must persist across ticks. *)
   let agent_invoke =
     Watcher_dev.resolve_invoke ~emit:cfg.emit ~k4k_dir:cfg.k4k_dir in
   let rec loop () =
     match one_tick cfg ct ~stable_seen:!stable ~versions_done
-            ~agent_invoke with
+            ~rollback_streak ~agent_invoke with
     | `Stop -> ()
     | `Continue s -> stable := s; loop ()
   in

@@ -23,6 +23,17 @@ val resolve_invoke :
   k4k_dir:string ->
   Version_loop.agent_invoke
 
+(** Handle a user-typed [request: rollback] directive: tear down
+    the in-flight version branch and splice a rolled-back status
+    block via the caller's [render_and_save_status] continuation. *)
+val on_user_rollback_directive :
+  ct:Cotype.t ->
+  file_path:string ->
+  k4k_dir:string ->
+  emit:emit_fn ->
+  render_and_save_status:(status_block:string -> unit) ->
+  unit
+
 (** [try_run_version ~file_path ~k4k_dir ~emit ~agent_invoke ct]:
     - [`Done] when the version completed (all properties established,
       merged + tagged);

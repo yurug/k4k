@@ -60,6 +60,34 @@ let read_via_cotype ct ~file_path =
   try Some (Cotype.read_base ct ~file:file_path)
   with Error.K4k_error _ -> None
 
+(* User typed [request: rollback] in the in-file status block.
+   Tear down the in-flight version branch (if any) and splice a
+   rolled-back status block via the caller's [render_and_save_status]
+   continuation. Lives here (next to [try_run_version]) because the
+   branch-lifecycle work is paired. *)
+let on_user_rollback_directive ~ct:_ ~file_path ~k4k_dir ~emit
+    ~render_and_save_status =
+  let cwd = Filename.dirname file_path in
+  let default_branch = Git.default_branch ~cwd in
+  let next_n = Version_persist.next_version_number
+                 ~k4k_dir - 1 in
+  let n = max 1 next_n in
+  let branch = Version.branch_name_of n in
+  if Git.branch_exists ~cwd ~name:branch then begin
+    let _ = Git.checkout ~cwd ~name:default_branch in
+    let _ = Git.delete_branch ~cwd ~name:branch in
+    emit "version.rolled_back"
+      (`Assoc [ "version", `Int n;
+                "branch", `String branch ])
+  end;
+  let s : Inline_blocks.status =
+    { version_n = n; state = "rolled-back";
+      tier_dist = { tier_a = 0; tier_b = 0; tier_c = 0 };
+      pending_user_edits = 0;
+      last_activity = Inline_blocks.timestamp_now ();
+      open_tradeoffs = 0; } in
+  render_and_save_status ~status_block:(Inline_blocks.render_status s)
+
 (* Real formalization: derive D from the user's prose using the same
    agent backend used for gap-steps. Returns [Ok d] on success;
    [Error reason] when D cannot be derived (the watcher will skip the
@@ -88,40 +116,6 @@ let formalize ~k4k_dir ~ct ~file_path ~emit ~agent_invoke
     [Watcher_loop.on_stable] treats them equally for the
     [exit_on_done] / [max_versions] gates. [`Skipped] is non-terminal:
     the loop sleeps and tries again. *)
-(* Ralph-loop step 2 (v2 batch 27): when a version rolls back,
-   splice a clarification block summarizing the deferred properties
-   + their last failure reasons. The watcher's next stable tick
-   re-formalizes — but the user has been told what just happened
-   and can edit the user-owned sections to refine the spec, or
-   trigger a tradeoff degradation when re-proposed. *)
-let post_rollback_clarification ~ct ~file_path ~emit ~outcomes =
-  let deferred =
-    List.filter (fun (po : Version_finalize.prop_outcome) ->
-      po.status <> "established") outcomes in
-  if deferred = [] then ()
-  else
-    let questions =
-      ("k4k completed a version that was rolled back. Edit the \
-        user-owned sections below to refine the spec, or accept a \
-        degraded tier when proposed.")
-      :: List.map (fun (po : Version_finalize.prop_outcome) ->
-           let r = match po.failure_reason with
-             | Some s -> s
-             | None -> "(no recorded reason)" in
-           Printf.sprintf
-             "Property %s deferred: %s" po.id r) deferred
-    in
-    try
-      Cotype.append_clarification ct ~path:file_path ~questions;
-      emit "clarification.rolled_back_summary"
-        (`Assoc [ "deferred", `Int (List.length deferred);
-                  "property_ids",
-                  `List (List.map (fun (po : Version_finalize.prop_outcome) ->
-                          `String po.id) deferred) ])
-    with Error.K4k_error e ->
-      emit "clarification.write_failed"
-        (`Assoc [ "code", `String (Error.code_id e);
-                  "render", `String (Error.render e); ])
 
 let dispatch_with_typed_errors ~file_path ~k4k_dir ~emit ~ct ~d
     ~agent_invoke =
@@ -129,7 +123,8 @@ let dispatch_with_typed_errors ~file_path ~k4k_dir ~emit ~ct ~d
     (match dispatch_one ~file_path ~k4k_dir ~emit ~ct ~d ~agent_invoke with
      | Version_loop.Done _ -> `Done
      | Version_loop.Rolled_back { outcomes } ->
-         post_rollback_clarification ~ct ~file_path ~emit ~outcomes;
+         Rollback_feedback.post_rollback_clarification
+           ~ct ~file_path ~emit ~outcomes;
          `Rolled_back)
   with
   | Error.K4k_error e ->

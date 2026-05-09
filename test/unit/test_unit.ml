@@ -5088,6 +5088,92 @@ module WatcherT = struct
   ]
 end
 
+(* ---------- Rollback_feedback (Ralph-loop steps 2 + 3) ---------- *)
+module RFeedT = struct
+  let cotype_available () =
+    try
+      let r = Subprocess.run ~prog:"cotype" ~args:["--version"]
+                ~timeout_s:5 () in
+      r.exit_code = 0
+    with _ -> false
+
+  let with_fixture f =
+    if not (cotype_available ()) then
+      print_endline "skipped: cotype not on PATH"
+    else with_tmpdir (fun dir ->
+      let path = Filename.concat dir "in.k4k" in
+      let oc = open_out path in
+      output_string oc "## Goal\nfoo\n"; close_out oc;
+      let kdir = Filename.concat dir ".k4k" in
+      Persist.ensure_dir kdir;
+      let ct = Cotype.create Cotype.default_config in
+      f ~ct ~path ~kdir)
+
+  let post_rollback_clarification_no_op_all_established () =
+    with_fixture (fun ~ct ~path ~kdir:_ ->
+      let outcomes = [
+        { Version_finalize.id = "P1"; status = "established";
+          commit_sha = Some "abc"; failure_reason = None };
+      ] in
+      let emitted = ref [] in
+      let emit ev _ = emitted := ev :: !emitted in
+      Rollback_feedback.post_rollback_clarification
+        ~ct ~file_path:path ~emit ~outcomes;
+      Alcotest.(check (list string)) "no events on all-established"
+        [] !emitted)
+
+  let post_rollback_clarification_emits_for_deferred () =
+    with_fixture (fun ~ct ~path ~kdir:_ ->
+      let outcomes = [
+        { Version_finalize.id = "P1"; status = "established";
+          commit_sha = Some "abc"; failure_reason = None };
+        { id = "P2"; status = "deferred"; commit_sha = None;
+          failure_reason = Some "verifier did not establish" };
+      ] in
+      let emitted = ref [] in
+      let emit ev _ = emitted := ev :: !emitted in
+      Rollback_feedback.post_rollback_clarification
+        ~ct ~file_path:path ~emit ~outcomes;
+      Alcotest.(check bool) "rolled_back_summary emitted" true
+        (List.mem "clarification.rolled_back_summary" !emitted);
+      let after = Persist.read_file path in
+      Alcotest.(check bool) "P2 named in clarification" true
+        (Astring.String.is_infix
+           ~affix:"Property P2 deferred" after);
+      Alcotest.(check bool) "established P1 NOT named" false
+        (Astring.String.is_infix
+           ~affix:"Property P1 deferred" after))
+
+  let escalate_unsatisfiable_streak_emits_event () =
+    with_fixture (fun ~ct ~path ~kdir:_ ->
+      let emitted = ref [] in
+      let emit ev d = emitted := (ev, d) :: !emitted in
+      Rollback_feedback.escalate_unsatisfiable_streak
+        ~ct ~file_path:path ~emit ~streak:3;
+      let has_streak_event = List.exists (fun (e, _) ->
+        e = "version.unsatisfiable_streak") !emitted in
+      Alcotest.(check bool) "unsatisfiable_streak emitted" true
+        has_streak_event;
+      let after = Persist.read_file path in
+      Alcotest.(check bool) "names streak count" true
+        (Astring.String.is_infix ~affix:"3 versions in a row" after))
+
+  let streak_threshold_is_three () =
+    Alcotest.(check int) "threshold" 3
+      Rollback_feedback.streak_threshold
+
+  let tests = [
+    Alcotest.test_case "Rollback_feedback_post_rb_no_op_all_established"
+      `Quick post_rollback_clarification_no_op_all_established;
+    Alcotest.test_case "Rollback_feedback_post_rb_emits_for_deferred"
+      `Quick post_rollback_clarification_emits_for_deferred;
+    Alcotest.test_case "Rollback_feedback_escalate_emits_event"
+      `Quick escalate_unsatisfiable_streak_emits_event;
+    Alcotest.test_case "Rollback_feedback_streak_threshold_is_three"
+      `Quick streak_threshold_is_three;
+  ]
+end
+
 (* ------- Tradeoff_flow.propose_and_wait runtime (axis 1 M4) ------- *)
 module TFRunT = struct
   let cotype_available () =
@@ -5631,6 +5717,7 @@ let () =
       "Backend_resolve", BRT.tests;
       "Manifest_acc", ManifestT.tests;
       "Tradeoff_flow_runtime", TFRunT.tests;
+      "Rollback_feedback", RFeedT.tests;
       "Watcher_startup", WatcherT.tests;
       "NF_ports", NFPortsT.tests;
       "Renderers", RenderersT.tests;

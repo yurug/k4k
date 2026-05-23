@@ -35,7 +35,7 @@ let canned_invoke ~emit ~path : Version_loop.agent_invoke =
         `Tool_error ("canned load: " ^ msg)
   | Ok t -> Backend_canned.invoke t
 
-let external_invoke ~emit ~cmd : Version_loop.agent_invoke =
+let external_invoke ~emit ~k4k_dir ~cmd : Version_loop.agent_invoke =
   let argv = split_command cmd in
   match argv with
   | [] ->
@@ -45,8 +45,15 @@ let external_invoke ~emit ~cmd : Version_loop.agent_invoke =
       fun ~purpose:_ ~prompt:_ ~budget:_ ->
         `Tool_error "K4K_BACKEND_COMMAND empty"
   | _ ->
+      (* k4k_dir MUST be threaded through so [Backend_external] can
+         allocate its scratch dir under <k4k_dir>/scratch/<id>/.
+         Leaving it [None] (the default) raises [E_state_corrupt] on
+         the first [make_scratch_dir] call — which previously surfaced
+         as a confusing "remove .k4k/manifest.json" hint during the
+         formalize pass. *)
       let cfg = { Backend_external.default_config with
-                  command = argv } in
+                  command = argv;
+                  k4k_dir = Some k4k_dir; } in
       let t = Backend_external.create cfg in
       emit "agent.external_configured"
         (`Assoc [ "command",
@@ -69,9 +76,9 @@ let resolve ~emit ~k4k_dir : Version_loop.agent_invoke =
   | Some path when path <> "" -> canned_invoke ~emit ~path
   | _ ->
       (match Sys.getenv_opt "K4K_BACKEND_COMMAND" with
-       | Some cmd when cmd <> "" -> external_invoke ~emit ~cmd
+       | Some cmd when cmd <> "" -> external_invoke ~emit ~k4k_dir ~cmd
        | _ ->
            let cfg = Config.read_or_create ~k4k_dir in
            (match cfg.backend_command with
-            | Some cmd -> external_invoke ~emit ~cmd
+            | Some cmd -> external_invoke ~emit ~k4k_dir ~cmd
             | None -> unconfigured ~emit ~k4k_dir))

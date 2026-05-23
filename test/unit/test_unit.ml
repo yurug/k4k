@@ -2691,6 +2691,37 @@ module SigT = struct
     Alcotest.(check bool) "exited within 5 s" true (dt <= 5.0);
     Alcotest.(check int) "exit 130 (interrupted)" 130 r.exit_code
 
+  (* Regression: when the spawned backend is a shell wrapper that
+     [exec]s a longer-lived grandchild, killing only the immediate
+     child orphans the grandchild — which keeps the stdout/stderr
+     pipes open and wedges [Subprocess.run]'s [read_all] forever. The
+     fix puts the child in its own session (setsid) and signals the
+     whole process group on kill. This test reproduces the exact wedge
+     (sh → sleep) and asserts the subprocess wrapper returns within
+     5 s of the SIGINT flag firing. *)
+  let t16b_subprocess_sigint_kills_grandchild_through_sh () =
+    Sigint.reset_for_test ();
+    with_tmpdir (fun dir ->
+      let script = Filename.concat dir "wrapper.sh" in
+      let oc = open_out script in
+      output_string oc "#!/bin/sh\nsleep 30\n";
+      close_out oc;
+      Unix.chmod script 0o755;
+      let t0 = Unix.gettimeofday () in
+      let prev =
+        Sys.signal Sys.sigalrm (Sys.Signal_handle (fun _ ->
+          Sigint.set_for_test ())) in
+      let _ = Unix.setitimer Unix.ITIMER_REAL
+        { Unix.it_interval = 0.0; it_value = 0.5 } in
+      let r = Subprocess.run ~prog:script ~args:[] ~timeout_s:30 () in
+      let dt = Unix.gettimeofday () -. t0 in
+      Sys.set_signal Sys.sigalrm prev;
+      Sigint.reset_for_test ();
+      Alcotest.(check bool)
+        "subprocess.run returns within 5 s even with sh→sleep wrapper"
+        true (dt <= 5.0);
+      Alcotest.(check int) "exit 130 (interrupted)" 130 r.exit_code)
+
   let tests = [
     Alcotest.test_case "Sigint_install_idempotent" `Quick install_idempotent;
     Alcotest.test_case "Sigint_reset_clears" `Quick reset_clears_flag;
@@ -2698,6 +2729,9 @@ module SigT = struct
       raise_if_needed_quiet;
     Alcotest.test_case "T16_sigint_during_verifier_exits_within_5s" `Slow
       t16_subprocess_sigint_kills_child;
+    Alcotest.test_case
+      "T16b_sigint_kills_grandchild_through_sh_wrapper" `Slow
+      t16b_subprocess_sigint_kills_grandchild_through_sh;
     (* L2 — P8 (bounded responsiveness to signals) is exercised by
        T16 above; expose it under its own P-named entry so the
        Axis-1 P-ID coverage check is satisfied. *)
@@ -4473,6 +4507,60 @@ module BRT = struct
        | Some v -> Unix.putenv "K4K_BACKEND_COMMAND" v
        | None -> Unix.putenv "K4K_BACKEND_COMMAND" ""))
 
+  (* Regression: production-bug repro. [resolve] previously built the
+     [Backend_external] config without threading [k4k_dir] through, so
+     the FIRST live invocation raised [E_state_corrupt] from
+     [Backend_external.make_scratch_dir]. The watcher surfaced this
+     as a misleading "remove .k4k/manifest.json" hint during the
+     formalize pass. *)
+  let resolve_with_external_command_threads_k4k_dir () =
+    with_tmpdir (fun dir ->
+      let kdir = Filename.concat dir ".k4k" in
+      Persist.ensure_dir kdir;
+      (* A backend that ALWAYS prints a well-formed envelope: we don't
+         care about the response, only that the scratch dir was
+         allocated under kdir without raising. *)
+      let fake = Filename.concat dir "fake_backend.sh" in
+      let oc = open_out fake in
+      output_string oc
+        "#!/bin/sh\necho '{\"ok\":{\"text\":\"x\"}}'\n";
+      close_out oc;
+      Unix.chmod fake 0o755;
+      let saved_stub = Sys.getenv_opt "K4K_STUB_RESPONSES" in
+      let saved_cmd  = Sys.getenv_opt "K4K_BACKEND_COMMAND" in
+      Unix.putenv "K4K_STUB_RESPONSES" "";
+      Unix.putenv "K4K_BACKEND_COMMAND" fake;
+      let emit _ _ = () in
+      let restore () =
+        (match saved_stub with
+         | Some v -> Unix.putenv "K4K_STUB_RESPONSES" v
+         | None -> Unix.putenv "K4K_STUB_RESPONSES" "");
+        (match saved_cmd with
+         | Some v -> Unix.putenv "K4K_BACKEND_COMMAND" v
+         | None -> Unix.putenv "K4K_BACKEND_COMMAND" "")
+      in
+      let invoke =
+        try Backend_resolve.resolve ~emit ~k4k_dir:kdir
+        with exn -> restore (); raise exn
+      in
+      let r =
+        try invoke ~purpose:`Formalization ~prompt:"x" ~budget:100
+        with
+        | Error.K4k_error (Error.E_state_corrupt msg) ->
+            restore ();
+            Alcotest.failf
+              "regression: external_invoke did not thread k4k_dir to \
+               Backend_external (scratch-dir state_corrupt: %s)" msg
+        | exn -> restore (); raise exn
+      in
+      restore ();
+      let _ = (r : Agent_backend.result) in
+      (* The scratch dir must now exist under <kdir>/scratch/. *)
+      let scratch = Filename.concat kdir "scratch" in
+      Alcotest.(check bool)
+        "Backend_external scratch dir was allocated under kdir"
+        true (Sys.file_exists scratch))
+
   let tests = [
     Alcotest.test_case "split_command_simple" `Quick split_simple;
     Alcotest.test_case "split_command_quoted" `Quick split_quoted;
@@ -4482,6 +4570,8 @@ module BRT = struct
       split_collapses_whitespace;
     Alcotest.test_case "resolve_unconfigured_returns_tool_error" `Quick
       resolve_unconfigured_returns_tool_error;
+    Alcotest.test_case "resolve_external_command_threads_k4k_dir" `Quick
+      resolve_with_external_command_threads_k4k_dir;
   ]
 end
 

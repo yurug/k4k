@@ -9,10 +9,14 @@ surface — it lives here as a reference implementation.
 For each invocation the binary:
 
 1. Reads the rendered prompt from `--prompt-file`.
-2. Selects a permission mode based on `--purpose`:
-   - `formalization` and `kb-regen` → `readOnly`
-   - `gap-step` → `acceptEdits`
-3. Spawns `claude -p <prompt> --output-format json --max-turns 1 --permission-mode <mode>`.
+2. Passes `--permission-mode acceptEdits` to `claude`. The k4k wire
+   protocol's prompts never ask claude to invoke Edit/Write tools
+   (formalize returns JSON text, gap-step returns a `<patch>` text
+   block), so the permission mode is just a safety policy. (The older
+   `readOnly` value was removed from claude's allowed set; `plan` is
+   the closest semantic match but it makes claude call `exit_plan_mode`,
+   which adds noise under `--max-turns 1`.)
+3. Spawns `claude -p <prompt> --output-format json --max-turns 1 --permission-mode acceptEdits`.
 4. Parses the JSON wrapper for `result.text` and `usage.input_tokens + usage.output_tokens`.
 5. If the token total exceeds `--budget`, emits `outcome: "budget_exhausted"`.
 6. On `claude` exit 0 with valid JSON: emits `outcome: "ok"` with the text and

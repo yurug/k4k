@@ -10,7 +10,14 @@
 
     Behavior:
       - Reads the prompt file.
-      - Selects --permission-mode by purpose (readOnly / acceptEdits).
+      - Passes --permission-mode acceptEdits. The k4k wire protocol's
+        prompts never ask claude to invoke Edit/Write tools (formalize
+        returns JSON text, gap-step returns a <patch> text block), so
+        permission mode is just a safety policy and the value that
+        works under --max-turns 1 + -p is the right one. The earlier
+        "readOnly" choice was removed from the claude CLI's allowed
+        set; "plan" is the closest semantic match but it makes claude
+        call exit_plan_mode which adds noise under single-turn use.
       - Invokes [claude -p <prompt> --output-format json --max-turns 1].
       - Parses the JSON wrapper for result.text, usage.{input,output}_tokens.
       - Refuses with budget_exhausted if input+output > --budget.
@@ -75,9 +82,10 @@ let parse_args argv =
 
 (* ---------- claude invocation ---------- *)
 
-let permission_mode_for = function
-  | `Formalization | `Kb_regen -> "readOnly"
-  | `Gap_step -> "acceptEdits"
+(* Allowed values in the current claude CLI: acceptEdits, auto,
+   bypassPermissions, default, dontAsk, plan. See the file-header
+   comment for why we settle on acceptEdits for every purpose. *)
+let permission_mode_for (_ : purpose) = "acceptEdits"
 
 let claude_args ~prompt ~purpose =
   ["-p"; prompt;

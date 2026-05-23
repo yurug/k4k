@@ -25,6 +25,20 @@ type error =
   | E_budget               of { used : int; cap : int }
   | E_max_steps            of int
   | E_agent_unavailable    of string
+  | E_toolchain_unavailable of {
+      binary    : string;
+      reason    : string;
+      suggested : string list option;
+    }
+    (** A non-agent runtime dependency probed via [Toolchain_install.ensure]
+        — currently [cotype] (ADR-010) or [git] (ADR-013) — is missing
+        and the user-scoped package manager declined to install it
+        without consent (or itself was not found). Distinct from
+        [E_agent_unavailable] because the remediation is different
+        ([ANTHROPIC_API_KEY] / backend wiring is irrelevant): the user
+        installs the named binary themselves. Exit 5 per the spec's
+        environment/state class — matches [kb/external/cotype.md]'s
+        documented expectation. *)
   | E_verifier_unavailable of string
   | E_verifier_tool_error  of string
   | E_disk_full            of string

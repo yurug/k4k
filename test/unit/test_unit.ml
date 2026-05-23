@@ -64,6 +64,8 @@ module ET = struct
     Error.E_budget { used = 1; cap = 1 };
     Error.E_max_steps 1;
     Error.E_agent_unavailable "x";
+    Error.E_toolchain_unavailable
+      { binary = "cotype"; reason = "missing"; suggested = None };
     Error.E_verifier_unavailable "x";
     Error.E_verifier_tool_error "x";
     Error.E_disk_full "x";
@@ -117,6 +119,9 @@ module ET = struct
   let p7_external_errors_carry_remediation () =
     let externals = [
       Error.E_agent_unavailable "x";
+      Error.E_toolchain_unavailable
+        { binary = "cotype"; reason = "missing";
+          suggested = Some ["pipx"; "install"; "cotype"] };
       Error.E_verifier_unavailable "x";
       Error.E_verifier_tool_error "x";
     ] in
@@ -132,6 +137,28 @@ module ET = struct
            (Error.code_id e))
         true has_verb
     ) externals
+
+  (* Regression: cotype-missing must not surface as an agent-backend
+     issue or suggest ANTHROPIC_API_KEY (that boilerplate belongs to
+     [E_agent_unavailable]). The message names the binary and the
+     suggested install command. *)
+  let p7_toolchain_unavailable_distinct_from_agent () =
+    let e = Error.E_toolchain_unavailable
+      { binary = "cotype"; reason = "package manager requires sudo";
+        suggested = Some ["pipx"; "install"; "cotype"] } in
+    let s = Error.render e in
+    Alcotest.(check bool) "names the missing binary" true
+      (Astring.String.is_infix ~affix:"cotype" s);
+    Alcotest.(check bool) "surfaces the suggested command" true
+      (Astring.String.is_infix ~affix:"pipx install cotype" s);
+    Alcotest.(check bool) "does NOT mention ANTHROPIC_API_KEY" false
+      (Astring.String.is_infix ~affix:"ANTHROPIC_API_KEY" s);
+    Alcotest.(check bool) "does NOT call it an agent backend" false
+      (Astring.String.is_infix ~affix:"agent backend" s);
+    Alcotest.(check string) "ETOOLCHAIN_UNAVAILABLE id"
+      "ETOOLCHAIN_UNAVAILABLE" (Error.code_id e);
+    Alcotest.(check int) "exit 5 per kb/external/cotype.md"
+      5 (Error.exit_code_of e)
 
   let p7_panic_variants_render () =
     let s_own = Error.render (Error.E_ownership_violation "x") in
@@ -153,6 +180,8 @@ module ET = struct
       p7_render_no_phantom_flags;
     Alcotest.test_case "P7_external_errors_carry_remediation" `Quick
       p7_external_errors_carry_remediation;
+    Alcotest.test_case "P7_toolchain_unavailable_distinct_from_agent"
+      `Quick p7_toolchain_unavailable_distinct_from_agent;
     Alcotest.test_case "P7_panic_variants_render" `Quick
       p7_panic_variants_render;
   ]
@@ -5014,7 +5043,8 @@ module WatcherT = struct
             Watcher_pid.release ~k4k_dir:kdir
         | Already_running pid ->
             Alcotest.failf "expected Started, got Already_running %d" pid
-        | Aborted msg -> Alcotest.failf "expected Started, got Aborted: %s" msg))
+        | Aborted { message; _ } ->
+            Alcotest.failf "expected Started, got Aborted: %s" message))
 
   let startup_returns_already_running_when_pid_held () =
     with_toolchain_stubs (fun () ->
@@ -5041,7 +5071,8 @@ module WatcherT = struct
             Alcotest.(check int) "reports the foreign PID"
               (Unix.getppid ()) pid
         | Started -> Alcotest.fail "expected Already_running"
-        | Aborted msg -> Alcotest.failf "expected Already_running, got Aborted: %s" msg))
+        | Aborted { message; _ } ->
+            Alcotest.failf "expected Already_running, got Aborted: %s" message))
 
   let startup_aborted_when_cotype_missing () =
     with_tmpdir (fun dir ->
@@ -5069,11 +5100,16 @@ module WatcherT = struct
        | Some v -> Unix.putenv "K4K_TOOLCHAIN_INSTALL_STUB" v
        | None -> Unix.putenv "K4K_TOOLCHAIN_INSTALL_STUB" "");
       match r with
-      | Aborted msg ->
-          Alcotest.(check bool) "msg names cotype or unavailable" true
-            (Astring.String.is_infix ~affix:"cotype" msg
-             || Astring.String.is_infix ~affix:"unavailable" msg
-             || Astring.String.is_infix ~affix:"agent" msg)
+      | Aborted { message; exit_code } ->
+          Alcotest.(check bool) "msg names cotype" true
+            (Astring.String.is_infix ~affix:"cotype" message);
+          Alcotest.(check int) "exit 5 (env/state) for missing runtime dep"
+            5 exit_code;
+          Alcotest.(check bool)
+            "does NOT mislead the user about agent backend / API key"
+            false
+            (Astring.String.is_infix ~affix:"ANTHROPIC_API_KEY" message
+             || Astring.String.is_infix ~affix:"agent backend" message)
       | Started -> Alcotest.fail "expected Aborted"
       | Already_running pid ->
           Alcotest.failf "expected Aborted, got Already_running %d" pid)

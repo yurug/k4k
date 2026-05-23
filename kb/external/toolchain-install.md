@@ -56,7 +56,7 @@ The current registry (≤ 30 entries) is the literal value of `Toolchain_install
 | `rustup` | `Other_user_install` | bootstraps cargo |
 | `cargo` | `Other_user_install` (`rustup`) | |
 | `tsc` | `npm` (`typescript`) | TypeScript compiler |
-| `cotype` | `Other_user_install` | k4k's interaction-file concurrency dep (ADR-010) |
+| `cotype` | `pipx` (`cotype`) | k4k's interaction-file concurrency dep (ADR-010). Falls back to a `Needs_user_consent` hint of `pipx install cotype` when pipx itself is missing. |
 
 Entries are illustrative. Read `Toolchain_install.mapping` in `lib/toolchain_install.ml` for the source of truth.
 

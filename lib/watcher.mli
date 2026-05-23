@@ -32,7 +32,10 @@ type config = {
 type startup_outcome =
   | Started
   | Already_running of int (** PID of the live watcher *)
-  | Aborted of string
+  | Aborted of { message : string; exit_code : int }
+    (** [message] is the [Error.render] output (no leading [k4k:] prefix —
+        [run] adds it). [exit_code] is the closed-taxonomy mapping for
+        the underlying typed error; callers exit with this directly. *)
 
 (** [startup ~config] performs ADR-011 §3 setup:
     - resolve the absolute file path

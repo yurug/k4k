@@ -49,8 +49,12 @@ let mapping : (string * package_manager) list = [
   "cargo",           Other_user_install "rustup";
   (* npm-side TS verifiers *)
   "tsc",             Npm "typescript";
-  (* k4k's own dev sidecars *)
-  "cotype",          Other_user_install "cotype";
+  (* k4k's own dev sidecars. cotype ships on PyPI (kb/external/cotype.md);
+     [Pipx "cotype"] lets the install pipeline run [pipx install cotype]
+     automatically. When pipx itself isn't on PATH we still emit a
+     Needs_user_consent with the suggested command, which the
+     E_toolchain_unavailable renderer surfaces verbatim. *)
+  "cotype",          Pipx "cotype";
 ]
 
 (* --- test-only stub table --- *)
@@ -147,7 +151,13 @@ let suggest_for binary pm =
                "(opam install -y %s) || curl -fsSL \
                 https://raw.githubusercontent.com/ocaml/opam/master/shell/install.sh | sh"
                pkg ]
-  | _ -> None
+  (* User-scoped managers: surface the install command verbatim so the
+     E_toolchain_unavailable renderer can show the user a runnable hint
+     even when the package manager itself isn't on PATH. *)
+  | Pipx pkg    -> Some [ "pipx"; "install"; pkg ]
+  | Uv_tool pkg -> Some [ "uv"; "tool"; "install"; pkg ]
+  | Cargo pkg   -> Some [ "cargo"; "install"; "--locked"; pkg ]
+  | Npm pkg     -> Some [ "npm"; "install"; "-g"; pkg ]
 
 let run_install binary pm =
   match pkg_manager_command pm with

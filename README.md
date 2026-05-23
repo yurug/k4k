@@ -12,10 +12,17 @@ You never run flags. You never configure tooling. You never see the verifier or 
 
 ```bash
 pipx install cotype                  # ADR-010 — file-concurrency primitive
+                                     # (or: pip install --user cotype)
 dune build && dune install           # builds k4k + the reference backends
                                      # and puts them on $PATH
 k4k myproject.k4k                    # one-shot launch
 ```
+
+`cotype` ships on PyPI; k4k requires it (and `git`) on `$PATH`. If
+`pipx` itself is missing, k4k aborts with exit 5 and a hint of the
+exact install command — there is no silent fallback. Cotype needs
+Python ≥ 3.11 and POSIX `diff3` (the latter is part of `diffutils`,
+almost always pre-installed).
 
 On first run k4k creates `myproject/.k4k/config.json` and
 **autodetects** an agent backend on `$PATH` —

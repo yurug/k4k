@@ -15,7 +15,7 @@ type config = {
 type startup_outcome =
   | Started
   | Already_running of int
-  | Aborted of string
+  | Aborted of { message : string; exit_code : int }
 
 let stem path =
   let b = Filename.basename path in
@@ -50,16 +50,26 @@ let ensure_git_repo ~cwd =
 
 (* ADR-012 §4-§5: ensure cotype + git are on $PATH. We tolerate the
    stub-table being active in tests; in production we attempt a
-   user-scoped install. Failure is fatal at startup. *)
+   user-scoped install. Failure is fatal at startup.
+
+   These tools are runtime *dependencies* (ADR-010 / ADR-013), not
+   agent backends, so missing-or-unconsented surfaces as
+   [E_toolchain_unavailable] (exit 5). Wrapping under
+   [E_agent_unavailable] historically produced a misleading
+   "check $PATH and ANTHROPIC_API_KEY" remediation. *)
 let ensure_toolchain ~binary =
   match Toolchain_install.ensure ~binary with
   | Already_present _ | Installed _ -> ()
-  | Needs_user_consent { reason; _ } ->
-      raise (Error.K4k_error (Error.E_agent_unavailable
-        (Printf.sprintf "%s needs user consent: %s" binary reason)))
+  | Needs_user_consent { reason; suggested_command; _ } ->
+      raise (Error.K4k_error
+        (Error.E_toolchain_unavailable
+          { binary; reason; suggested = suggested_command }))
   | Failed msg ->
-      raise (Error.K4k_error (Error.E_agent_unavailable
-        (Printf.sprintf "%s install failed: %s" binary msg)))
+      raise (Error.K4k_error
+        (Error.E_toolchain_unavailable
+          { binary;
+            reason = Printf.sprintf "auto-install failed: %s" msg;
+            suggested = None; }))
 
 let resolve_abs path =
   if Filename.is_relative path then
@@ -94,7 +104,9 @@ let startup ~config : startup_outcome =
     match Watcher_pid.acquire ~k4k_dir:config.k4k_dir with
     | Error pid -> Already_running pid
     | Ok () -> Started
-  with exn -> Aborted (Error.render (typify_startup_exception exn))
+  with exn ->
+    let e = typify_startup_exception exn in
+    Aborted { message = Error.render e; exit_code = Error.exit_code_of e }
 
 let emit_event ~verbosity event details =
   let json = `Assoc [
@@ -121,9 +133,9 @@ let run ~config : int =
       output_string stderr
         (Printf.sprintf "k4k: another watcher is running (pid %d)\n" pid);
       flush stderr; 5
-  | Aborted msg ->
-      output_string stderr (Printf.sprintf "k4k: %s\n" msg);
-      flush stderr; 1
+  | Aborted { message; exit_code } ->
+      output_string stderr (Printf.sprintf "k4k: %s\n" message);
+      flush stderr; exit_code
   | Started ->
       Sigint.register_cleanup
         (fun () -> Watcher_pid.release ~k4k_dir:config.k4k_dir);

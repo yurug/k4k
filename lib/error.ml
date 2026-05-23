@@ -8,6 +8,11 @@ type error =
   | E_budget               of { used : int; cap : int }
   | E_max_steps            of int
   | E_agent_unavailable    of string
+  | E_toolchain_unavailable of {
+      binary    : string;
+      reason    : string;
+      suggested : string list option;
+    }
   | E_verifier_unavailable of string
   | E_verifier_tool_error  of string
   | E_disk_full            of string
@@ -40,6 +45,7 @@ let code_id = function
   | E_budget _               -> "EBUDGET"
   | E_max_steps _            -> "EMAXSTEPS"
   | E_agent_unavailable _    -> "EAGENT_UNAVAILABLE"
+  | E_toolchain_unavailable _ -> "ETOOLCHAIN_UNAVAILABLE"
   | E_verifier_unavailable _ -> "EVERIFIER_UNAVAILABLE"
   | E_verifier_tool_error _  -> "EVERIFIER_TOOL_ERROR"
   | E_disk_full _            -> "EDISK_FULL"
@@ -62,7 +68,7 @@ let exit_code_of = function
   (* Resource exhaustion (4). *)
   | E_budget _ | E_max_steps _ | E_disk_full _ -> 4
   (* Environment / state (5). *)
-  | E_state_corrupt _ -> 5
+  | E_state_corrupt _ | E_toolchain_unavailable _ -> 5
   (* Ownership / invariant (64+) — out-of-band, audited. *)
   | E_ownership_violation _ | E_internal_panic _ -> 64
 
@@ -132,6 +138,16 @@ let render_external_errors = function
          is on $PATH and that any required credentials \
          (e.g. ANTHROPIC_API_KEY) are set in the environment"
         d
+  | E_toolchain_unavailable { binary; reason; suggested } ->
+      let hint = match suggested with
+        | Some cmd when cmd <> [] ->
+            Printf.sprintf "; try: %s" (String.concat " " cmd)
+        | _ -> ""
+      in
+      Printf.sprintf
+        "required tool %S not available: %s%s; install %s on $PATH and \
+         re-run (see kb/external/toolchain-install.md)"
+        binary reason hint binary
   | E_verifier_unavailable d ->
       Printf.sprintf
         "verifier unavailable: %s; check that the verifier executable \
@@ -170,8 +186,9 @@ let render = function
       render_input_errors e
   | E_budget _ | E_max_steps _ | E_disk_full _ as e ->
       render_resource_errors e
-  | E_agent_unavailable _ | E_verifier_unavailable _
-  | E_verifier_tool_error _ | E_state_corrupt _ as e ->
+  | E_agent_unavailable _ | E_toolchain_unavailable _
+  | E_verifier_unavailable _ | E_verifier_tool_error _
+  | E_state_corrupt _ as e ->
       render_external_errors e
   | E_ownership_violation _ | E_internal_panic _ as e ->
       render_panic e

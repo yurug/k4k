@@ -41,7 +41,7 @@ The watcher's exit codes split into two regimes:
 | 2    | verifier                 | `EVERIFIER_UNAVAILABLE`, `EVERIFIER_TOOL_ERROR` — both phases (fatal after retries). |
 | 3    | agent                    | `EAGENT_UNAVAILABLE` — both phases (fatal after retries). |
 | 4    | resource exhaustion      | `EDISK_FULL` — both phases. (`EBUDGET` / `EMAXSTEPS` no longer surface as exit codes; see "Internal-only events" below.) |
-| 5    | environment / state      | `ESTATE_CORRUPT`, plus PID-collision (another live watcher already owns `.k4k/watcher.pid`). |
+| 5    | environment / state      | `ESTATE_CORRUPT`, `ETOOLCHAIN_UNAVAILABLE`, plus PID-collision (another live watcher already owns `.k4k/watcher.pid`). |
 | 64   | ownership / invariant    | `EOWNERSHIP_VIOLATION`, `EINVARIANT` — panic path; full trace appended to `.k4k/log.jsonl` plus a "please report" message. |
 
 **Internal-only events** (no longer exit codes, surface in-file once the watcher is running):
@@ -101,6 +101,12 @@ Budget and step bookkeeping are no longer user-visible exit codes. Budget exhaus
 - **When:** Agent backend cannot be reached (binary missing, network down, auth failure). All retries exhausted.
 - **stderr:** `k4k: agent backend unavailable: <details>; check that the backend binary is on $PATH and that any required credentials (e.g. ANTHROPIC_API_KEY) are set in the environment`
 - **Recovery:** Above hint covers the common cases; see `.k4k/log.jsonl` for diagnostics.
+
+### ETOOLCHAIN_UNAVAILABLE
+- **Exit:** 5
+- **When:** A non-agent runtime dependency probed via `Toolchain_install.ensure` (currently `cotype` per ADR-010, or `git` per ADR-013) is missing AND the user-scoped package manager either (a) requires `sudo` / manual install, (b) is itself not on `$PATH`, or (c) returned a non-zero exit. Distinct from `EAGENT_UNAVAILABLE` so the rendered remediation does not mislead with `ANTHROPIC_API_KEY` / backend-wiring guidance.
+- **stderr:** `k4k: required tool "<binary>" not available: <reason>; try: <suggested-cmd>; install <binary> on $PATH and re-run (see kb/external/toolchain-install.md)`
+- **Recovery:** Run the suggested install command (e.g. `pipx install cotype`) and re-launch k4k. The `suggested_command` is sourced from `Toolchain_install.suggest_for` and shown verbatim.
 
 ### EVERIFIER_UNAVAILABLE
 - **Exit:** 2

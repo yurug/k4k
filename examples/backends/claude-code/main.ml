@@ -87,12 +87,15 @@ let parse_args argv =
    comment for why we settle on acceptEdits for every purpose. *)
 let permission_mode_for (_ : purpose) = "acceptEdits"
 
+(* No --no-color: the claude CLI dropped that flag (2.1.x onwards) —
+   --print mode is already plain text by default. We don't probe for
+   it at runtime since the flag's absence is the documented behavior
+   now, not an environment quirk. *)
 let claude_args ~prompt ~purpose =
   ["-p"; prompt;
    "--output-format"; "json";
    "--max-turns"; "1";
-   "--permission-mode"; permission_mode_for purpose;
-   "--no-color"]
+   "--permission-mode"; permission_mode_for purpose]
 
 (* ---------- result parsing ---------- *)
 

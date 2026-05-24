@@ -88,13 +88,24 @@ let on_user_rollback_directive ~ct:_ ~file_path ~k4k_dir ~emit
       open_tradeoffs = 0; } in
   render_and_save_status ~status_block:(Inline_blocks.render_status s)
 
-(* Negative-cache file. When formalize fails, we persist the content
-   hash here so the next watcher tick can skip the call until the
-   user edits the spec — without this gate, the watcher re-runs
-   formalize on every stable snapshot (≤500ms), burning API credits
-   for nothing. Cleared on the first successful formalize. *)
+(* Negative-cache file. When formalize fails, we persist a hash of
+   the USER-OWNED sections here so the next watcher tick can skip
+   the call until the user edits the spec.
+
+   Critical: we hash USER sections only, not the whole file. The
+   failure path appends a [## k4k:clarification:<ts>] block, which
+   mutates the file but is k4k-owned content. If we hashed the whole
+   file, the neg-cache would never match (every clarification splice
+   would shift the hash) and the watcher would re-run formalize on
+   every tick, burning API credits and stacking clarifications. *)
 let neg_cache_path ~k4k_dir =
   Filename.concat k4k_dir "last_failed_formalize_hash"
+
+let hash_user_sections content =
+  match Parser.parse content with
+  | exception _ -> Persist.sha256_hex content
+  | parsed ->
+      Persist.sha256_hex (Stability.render_user_sections parsed)
 
 let read_neg_cache ~k4k_dir =
   let p = neg_cache_path ~k4k_dir in
@@ -139,7 +150,7 @@ let formalize ~k4k_dir ~ct ~file_path ~emit ~agent_invoke
   match read_via_cotype ct ~file_path with
   | None -> Error "could not read interaction file via cotype"
   | Some content ->
-      let h = Persist.sha256_hex content in
+      let h = hash_user_sections content in
       (match read_neg_cache ~k4k_dir with
        | Some prev when prev = h ->
            emit "formalize.skip"

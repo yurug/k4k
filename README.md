@@ -111,6 +111,18 @@ Test count: 326 (291 unit + 25 integration + 6 conformance + 4 edge).
 For a runnable end-to-end smoke against a real backend, see
 [`examples/scenarios/echo-tiny/README.md`](examples/scenarios/echo-tiny/README.md).
 
+## Editor integration
+
+A reference Emacs major mode lives at
+[`editors/emacs/k4k-mode.el`](editors/emacs/README.md). It derives
+from `markdown-mode` (fallback `text-mode`), delegates save
+coordination to [`cotype-mode`](https://github.com/yurug/cotype/tree/main/editors/emacs),
+adds font-lock for the k4k-managed headings, and ships snippet
+commands for the three reply patterns (`Approved: Tier <B|C>`,
+`Rejected: <reason>`, `- request: rollback`) plus navigation between
+pending tradeoff / clarification blocks. See the directory README for
+keybindings.
+
 ## The methodology
 
 This project is built using **spec-driven agentic development** ([`agentic-dev-kit/`](agentic-dev-kit/)). The KB at [`kb/`](kb/) is the source of truth. Two UX corrections from the user (ADR-008/009/010 + the v2 reorientation in ADR-011/012/013) reshaped the framing while leaving the architectural primitives intact.

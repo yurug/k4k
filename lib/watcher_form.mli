@@ -20,8 +20,18 @@ type agent_invoke =
   budget:int ->
   Agent_backend.result
 
+(** [Error] carries the human reason AND the structured issue list so
+    the caller can splice an actionable [## k4k:clarification:] block
+    into the interaction file. Without the issues, the user only sees
+    [formalize.unstable {count: 1}] on stdout and has no way to know
+    what claude disagreed about. *)
+type failure = {
+  reason : string;
+  issues : Error.issue list;
+}
+
 (** [run ~k4k_dir ~content ~agent_invoke ~emit] returns [Ok d] on
-    success; [Error reason] when the spec is semantically unstable
+    success; [Error fail] when the spec is semantically unstable
     (formalization runs disagree, agent errors, coverage failures,
     etc). Side effects on success: writes
     [.k4k/characterization/desired/spec.{json,md}],
@@ -32,4 +42,4 @@ val run :
   content:string ->
   agent_invoke:agent_invoke ->
   emit:emit_fn ->
-  (Characterization.t, string) result
+  (Characterization.t, failure) result

@@ -153,6 +153,29 @@ let read_prompt path =
   try Ok (Persist.read_file path)
   with _ -> Error ("could not read prompt file: " ^ path)
 
+(* Compose a tool_error message for a non-zero exit. claude can emit
+   diagnostics on EITHER stream (rate-limit notes have appeared on
+   stdout in 2.1.x; quota / auth errors usually go to stderr). When
+   only one stream is non-empty, prefer it; when both have content,
+   include both (truncated) so the operator doesn't see "exit 1: "
+   with no clue what went wrong. *)
+let cap n s =
+  let s = String.trim s in
+  if String.length s <= n then s
+  else String.sub s 0 n ^ "…"
+
+let compose_exit_error ~exit_code ~stdout ~stderr =
+  let so = cap 400 stdout in
+  let se = cap 400 stderr in
+  let parts = List.filter (fun (_, v) -> v <> "")
+    [ "stderr", se; "stdout", so ] in
+  let trailer = match parts with
+    | [] -> "(no output on either stream)"
+    | xs -> String.concat " | "
+              (List.map (fun (k, v) -> Printf.sprintf "%s=%s" k v) xs)
+  in
+  Printf.sprintf "claude exit %d: %s" exit_code trailer
+
 let interpret_claude ~budget ~duration_ms (sub : Subprocess.result) =
   if sub.timed_out then
     result_json_tool_error ~duration_ms ~error:"claude timed out"
@@ -160,8 +183,9 @@ let interpret_claude ~budget ~duration_ms (sub : Subprocess.result) =
     result_json_tool_error ~duration_ms ~error:"claude interrupted"
   else if sub.exit_code <> 0 then
     result_json_tool_error ~duration_ms
-      ~error:(Printf.sprintf "claude exit %d: %s" sub.exit_code
-                (String.trim sub.stderr))
+      ~error:(compose_exit_error
+                ~exit_code:sub.exit_code
+                ~stdout:sub.stdout ~stderr:sub.stderr)
   else
     match parse_claude_json sub.stdout with
     | Error msg -> result_json_tool_error ~duration_ms ~error:msg

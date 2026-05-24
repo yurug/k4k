@@ -75,20 +75,31 @@ let invoker_of_invoke (f : agent_invoke) : unit Stability.backend_invoker =
     when the spec semantically diverges or any other recoverable issue
     surfaces. Structural stability is assumed already-checked by the
     caller. *)
+type failure = {
+  reason : string;
+  issues : Error.issue list;
+}
+
 let invoke_semantic ~k4k_dir ~prompt ~prev_h ~user_h ~cached inv =
   try
     `Ok (Stability.semantic_check_with_backend
            ~k4k_dir ~prompt ~budget:Budget.default_per_call
            ~prev_hashes:prev_h ~current_hashes:user_h
            ~cached_desired:cached inv)
-  with Error.K4k_error e -> `Err (Error.render e)
+  with Error.K4k_error e ->
+    `Err { reason = Error.render e;
+           issues = [ Error.issue ~section:"formalization"
+                        (Error.render e) ] }
 
 let on_stable ~k4k_dir ~content ~user_h ~emit d =
   let cov = Coverage.check d in
   if cov <> [] then begin
     emit "formalize.coverage_unstable"
-      (`Assoc [ "issue_count", `Int (List.length cov) ]);
-    Error "coverage-unstable"
+      (`Assoc [ "issue_count", `Int (List.length cov);
+                "issues",
+                  `List (List.map (fun (i : Error.issue) ->
+                    `String (i.details)) cov) ]);
+    Error { reason = "coverage-unstable"; issues = cov }
   end else begin
     persist_desired ~k4k_dir d;
     persist_manifest ~k4k_dir ~file_path:"" ~content ~user_h ~d;
@@ -96,22 +107,34 @@ let on_stable ~k4k_dir ~content ~user_h ~emit d =
     Ok d
   end
 
+let issues_to_json issues =
+  `List (List.map (fun (i : Error.issue) ->
+    `String (Printf.sprintf "%s: %s" i.section i.details)) issues)
+
 let dispatch_outcome ~k4k_dir ~content ~user_h ~emit = function
-  | `Err reason ->
-      emit "formalize.error" (`Assoc [ "reason", `String reason ]);
-      Error reason
+  | `Err fail ->
+      emit "formalize.error"
+        (`Assoc [ "reason", `String fail.reason;
+                  "issues", issues_to_json fail.issues ]);
+      Error fail
   | `Ok (Stability.Sem_cached d) ->
       emit "formalize.cached" (`Assoc [ "hash", `String d.hash ]);
       Ok d
   | `Ok (Stability.Sem_stable (d, _runs)) ->
       on_stable ~k4k_dir ~content ~user_h ~emit d
   | `Ok (Stability.Sem_unstable (issues, _)) ->
+      (* Issues used to be dropped here. Surface the FULL list in the
+         emitted event AND propagate it up so [Watcher_dev.formalize]
+         can splice a [## k4k:clarification:] block — without that, the
+         operator sees only [count: N] on stdout and has no way to know
+         what claude disagreed about. *)
       emit "formalize.unstable"
-        (`Assoc [ "issue_count", `Int (List.length issues) ]);
-      Error "formalization-unstable"
+        (`Assoc [ "issue_count", `Int (List.length issues);
+                  "issues", issues_to_json issues ]);
+      Error { reason = "formalization-unstable"; issues }
 
 let run ~k4k_dir ~content ~agent_invoke ~emit
-    : (Characterization.t, string) result =
+    : (Characterization.t, failure) result =
   let parsed = Parser.parse content in
   Persist.ensure_dir k4k_dir;
   let manifest = Manifest.read_or_init ~k4k_dir in

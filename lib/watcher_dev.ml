@@ -88,16 +88,72 @@ let on_user_rollback_directive ~ct:_ ~file_path ~k4k_dir ~emit
       open_tradeoffs = 0; } in
   render_and_save_status ~status_block:(Inline_blocks.render_status s)
 
+(* Negative-cache file. When formalize fails, we persist the content
+   hash here so the next watcher tick can skip the call until the
+   user edits the spec — without this gate, the watcher re-runs
+   formalize on every stable snapshot (≤500ms), burning API credits
+   for nothing. Cleared on the first successful formalize. *)
+let neg_cache_path ~k4k_dir =
+  Filename.concat k4k_dir "last_failed_formalize_hash"
+
+let read_neg_cache ~k4k_dir =
+  let p = neg_cache_path ~k4k_dir in
+  if not (Sys.file_exists p) then None
+  else try Some (String.trim (Persist.read_file p)) with _ -> None
+
+let write_neg_cache ~k4k_dir ~hash =
+  let p = neg_cache_path ~k4k_dir in
+  try Persist.ensure_dir k4k_dir;
+      Persist.atomic_write ~path:p hash
+  with _ -> ()
+
+let clear_neg_cache ~k4k_dir =
+  let p = neg_cache_path ~k4k_dir in
+  if Sys.file_exists p then try Sys.remove p with _ -> ()
+
+let splice_formalize_clarification ~ct ~file_path ~emit
+    (fail : Watcher_form.failure) =
+  let issues = fail.issues in
+  let questions =
+    List.map (fun (i : Error.issue) ->
+      Printf.sprintf "[formalize] %s: %s" i.section i.details) issues
+  in
+  try
+    Cotype.append_clarification ct ~path:file_path ~questions;
+    emit "clarification.appended"
+      (`Assoc [ "count", `Int (List.length issues);
+                "source", `String "formalize" ])
+  with Error.K4k_error e ->
+    emit "clarification.write_failed"
+      (`Assoc [ "code", `String (Error.code_id e);
+                "render", `String (Error.render e) ])
+
 (* Real formalization: derive D from the user's prose using the same
    agent backend used for gap-steps. Returns [Ok d] on success;
-   [Error reason] when D cannot be derived (the watcher will skip the
-   version this tick and retry on the next stability snapshot). *)
+   [Error fail] (carrying issues) when D cannot be derived. On
+   failure we splice a [## k4k:clarification:] block listing the
+   issues AND record the content hash so the next tick skips the
+   call until the user actually edits the spec. *)
 let formalize ~k4k_dir ~ct ~file_path ~emit ~agent_invoke
     : (Characterization.t, string) result =
   match read_via_cotype ct ~file_path with
   | None -> Error "could not read interaction file via cotype"
   | Some content ->
-      Watcher_form.run ~k4k_dir ~content ~agent_invoke ~emit
+      let h = Persist.sha256_hex content in
+      (match read_neg_cache ~k4k_dir with
+       | Some prev when prev = h ->
+           emit "formalize.skip"
+             (`Assoc [ "reason",
+                       `String "no spec change since last failure";
+                       "hash", `String h ]);
+           Error "no spec change since last failure"
+       | _ ->
+           (match Watcher_form.run ~k4k_dir ~content ~agent_invoke ~emit with
+            | Ok d -> clear_neg_cache ~k4k_dir; Ok d
+            | Error fail ->
+                splice_formalize_clarification ~ct ~file_path ~emit fail;
+                write_neg_cache ~k4k_dir ~hash:h;
+                Error fail.reason))
 
 (** Try to drive the development half of the watcher loop. The
     [agent_invoke] closure must be allocated ONCE per watcher run and

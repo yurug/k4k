@@ -4086,7 +4086,7 @@ module WFT = struct
                 ~agent_invoke:invoke
                 ~emit:(fun _ _ -> ()) in
       match r with
-      | Error msg -> Alcotest.failf "expected Ok, got %s" msg
+      | Error fail -> Alcotest.failf "expected Ok, got %s" fail.reason
       | Ok d' ->
           Alcotest.(check bool) "hash present" true
             (String.length d'.hash > 0);
@@ -4135,11 +4135,40 @@ module WFT = struct
       | Error _ -> ()
       | Ok _ -> Alcotest.fail "expected Error")
 
+  (* Regression: when formalize fails (Sem_unstable / Tool_error /
+     coverage gap), the issue list MUST surface in the Error payload.
+     Without this, the watcher emits formalize.unstable {count: 1}
+     with no detail and the operator is blind. Earlier code dropped
+     [issues] on the floor. *)
+  let failure_carries_issues () =
+    with_tmpdir (fun dir ->
+      let k4k_dir = Filename.concat dir ".k4k" in
+      Persist.ensure_dir k4k_dir;
+      let invoke ~purpose:_ ~prompt:_ ~budget:_ : Agent_backend.result =
+        `Tool_error "claude rate-limited; try again later" in
+      let content =
+        "---\nk4k:\n  version: 1\n  class: cli\n---\n# t\n\n\
+         ## Goal\necho\n\n## Inputs and outputs\nargv only\n\n\
+         ## Error taxonomy\nN/A\n\n## File-system contract\nN/A\n\n\
+         ## Concurrency\nN/A\n\n## Performance bounds\nN/A\n\n\
+         ## Acceptance examples\n1. ok\n\n\
+         ## Refusing examples\n1. fail\n\n\
+         ## Out of scope\nx\n" in
+      match Watcher_form.run ~k4k_dir ~content ~agent_invoke:invoke
+              ~emit:(fun _ _ -> ()) with
+      | Ok _ -> Alcotest.fail "expected Error"
+      | Error fail ->
+          Alcotest.(check bool) "issues list is non-empty" true
+            (fail.issues <> []);
+          Alcotest.(check bool) "reason mentions failure mode" true
+            (String.length fail.reason > 0))
+
   let tests = [
     Alcotest.test_case "stable_minimal_spec" `Quick stable_minimal_spec;
     Alcotest.test_case "cache_short_circuits_two_calls" `Quick
       cache_short_circuits_two_calls;
     Alcotest.test_case "tool_error_propagates" `Quick tool_error_propagates;
+    Alcotest.test_case "failure_carries_issues" `Quick failure_carries_issues;
   ]
 end
 
@@ -4965,7 +4994,7 @@ module NFPortsT = struct
       let r1 = Watcher_form.run ~k4k_dir ~content:stable_fixture
         ~agent_invoke:invoke ~emit:(fun _ _ -> ()) in
       let d1 = match r1 with
-        | Ok d -> d | Error msg -> Alcotest.failf "run1: %s" msg in
+        | Ok d -> d | Error f -> Alcotest.failf "run1: %s" f.reason in
       let spec_path = Filename.concat k4k_dir
         "characterization/desired/spec.json" in
       let bytes1 = Persist.read_file spec_path in
@@ -4976,7 +5005,7 @@ module NFPortsT = struct
       let r2 = Watcher_form.run ~k4k_dir ~content:stable_fixture
         ~agent_invoke:invoke2 ~emit:(fun _ _ -> ()) in
       let d2 = match r2 with
-        | Ok d -> d | Error msg -> Alcotest.failf "run2: %s" msg in
+        | Ok d -> d | Error f -> Alcotest.failf "run2: %s" f.reason in
       let bytes2 = Persist.read_file spec_path in
       Alcotest.(check string) "NF6: D-hash byte-identical"
         d1.hash d2.hash;

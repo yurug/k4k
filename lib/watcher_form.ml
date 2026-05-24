@@ -78,7 +78,7 @@ let invoker_of_invoke (f : agent_invoke) : unit Stability.backend_invoker =
 let invoke_semantic ~k4k_dir ~prompt ~prev_h ~user_h ~cached inv =
   try
     `Ok (Stability.semantic_check_with_backend
-           ~k4k_dir ~prompt ~budget:1000
+           ~k4k_dir ~prompt ~budget:Budget.default_per_call
            ~prev_hashes:prev_h ~current_hashes:user_h
            ~cached_desired:cached inv)
   with Error.K4k_error e -> `Err (Error.render e)

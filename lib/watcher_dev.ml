@@ -50,7 +50,7 @@ let dispatch_one ~file_path ~k4k_dir ~emit ~ct ~d ~agent_invoke =
     delete_branch_on_done = true;
     agent_invoke;
     verifier_run = verifier_invoke ~k4k_dir ~d;
-    budget = 1000;
+    budget = Budget.default_per_call;
     tier = `A;
     file_path = Some file_path;
   } in

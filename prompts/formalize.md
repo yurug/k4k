@@ -1,5 +1,5 @@
 ---
-vars: [user_sections, example_input, example_output]
+vars: [user_sections]
 ---
 
 You convert a user's CLI program specification into a STRICT JSON
@@ -76,10 +76,96 @@ Rules:
   k4k carries no toolchain knowledge — you pick the verifier per
   project and emit the wrapper.
 
-Example input:
+Worked example
+==============
 
-{{example_input}}
+Given these user-owned sections:
 
-Example output:
+```
+## Goal
+A program named `lower` that takes one positional argument and prints
+it in lowercase to stdout, followed by a trailing newline.
 
-{{example_output}}
+## Inputs and outputs
+- argv: one positional STRING (required).
+- stdin: not read.
+- stdout: argv[1] with ASCII letters lowercased; trailing LF.
+- stderr: empty on success; one-line message on error.
+- exit codes: 0 success, 1 EBADARG.
+
+## Error taxonomy
+- EBADARG: when argv count is not exactly 1.
+
+## File-system contract
+N/A
+
+## Concurrency
+N/A
+
+## Performance bounds
+N/A
+
+## Acceptance examples
+1. lower HELLO  → stdout "hello\n", exit 0
+2. lower x      → stdout "x\n", exit 0
+3. lower ""     → stdout "\n", exit 0
+
+## Refusing examples
+1. lower        → EBADARG, exit 1
+
+## Out of scope
+- Reading from stdin or files.
+```
+
+The expected output is exactly:
+
+```json
+{
+  "class": "cli",
+  "goal": "Lowercase the single argv argument and write it to stdout with a trailing LF.",
+  "language": "ocaml",
+  "verifier_command": ["./_verifier.sh"],
+  "inputs_outputs": {
+    "argv": [
+      {"name": "input", "kind": "positional", "type": "string",
+       "required": true, "repeats": false, "doc": "string to lowercase"}
+    ],
+    "stdin":  {"type": "none", "encoding": null,   "doc": ""},
+    "stdout": {"type": "text", "encoding": "utf-8", "doc": "lowercased argument + LF"},
+    "stderr": {"type": "text", "encoding": "utf-8", "doc": "error message on failure"},
+    "exit_codes": [
+      {"code": 0, "condition": "ok"},
+      {"code": 1, "condition": "EBADARG"}
+    ]
+  },
+  "errors": [
+    {"id": "EBADARG", "when": "argv count is not exactly 1",
+     "message_template": "EBADARG: expected 1 arg", "exit_code": 1}
+  ],
+  "fs_contract": {"reads": [], "writes": [], "creates": []},
+  "concurrency": "N/A",
+  "perf": "N/A",
+  "examples_accept": [
+    {"name": "uppercase", "argv": ["HELLO"], "stdin": null,
+     "expect": {"stdout": "hello\n", "stderr": "", "exit_code": 0, "fs_after": null}},
+    {"name": "single_char", "argv": ["x"], "stdin": null,
+     "expect": {"stdout": "x\n", "stderr": "", "exit_code": 0, "fs_after": null}},
+    {"name": "empty_string", "argv": [""], "stdin": null,
+     "expect": {"stdout": "\n", "stderr": "", "exit_code": 0, "fs_after": null}}
+  ],
+  "examples_refuse": [
+    {"name": "no_args", "argv": [], "stdin": null, "expect_error": "EBADARG"}
+  ],
+  "out_of_scope": ["Reading from stdin or files."],
+  "verifier_pref": null,
+  "hash": ""
+}
+```
+
+If the user's spec is missing fields (e.g., fewer than three acceptance
+examples, no refusing examples, ambiguous I/O contract), STILL emit
+the JSON with your best inference — use "N/A" for unknown free-form
+strings and `[]` for unknown lists. Do NOT respond in prose asking
+for clarification: k4k has a separate coverage-check phase that
+reports gaps to the user via clarification blocks. Your job is to
+emit a typed characterization, even an under-specified one.

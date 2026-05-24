@@ -21,9 +21,7 @@ type agent_invoke =
 let render_prompt parsed =
   let user_sections = Stability.render_user_sections parsed in
   Prompts.render "formalize.md"
-    [ "user_sections", user_sections;
-      "example_input", "";
-      "example_output", "" ]
+    [ "user_sections", user_sections ]
 
 let mirror_md (d : Characterization.t) =
   Printf.sprintf

@@ -144,24 +144,40 @@ and combine ~k4k_dir id_a id_b r_a r_b =
   | Ok ca, Ok cb ->
       write_divergence ~k4k_dir id_a id_b ca cb;
       let msg = Printf.sprintf
-        "two formalization runs produced different ASTs (%s vs %s); see %s/divergence.json"
+        "two formalization runs produced different ASTs (%s vs %s); \
+         see .k4k/agent-runs/%s/divergence.json"
         (String.sub ca.hash 0 7) (String.sub cb.hash 0 7) id_a in
       Sem_unstable ([Error.issue ~section:"formalization" msg],
                     [id_a; id_b])
   | Error msg_a, Error msg_b ->
       Sem_unstable
         ([Error.issue ~section:"formalization"
-            (Printf.sprintf "both runs invalid: a=%s; b=%s" msg_a msg_b)],
+            (Printf.sprintf
+               "both formalize runs failed to produce parseable JSON \
+                (a=%s; b=%s). Inspect the raw agent responses at \
+                .k4k/agent-runs/%s/response.txt and \
+                .k4k/agent-runs/%s/response.txt. Common causes: \
+                ambiguous I/O contract; missing acceptance examples \
+                (the spec needs at least three); the agent responded \
+                in prose instead of JSON — strengthen the spec so the \
+                agent has less to infer."
+               msg_a msg_b id_a id_b)],
          [id_a; id_b])
   | Error msg, Ok _ ->
       Sem_unstable
         ([Error.issue ~section:"formalization"
-            (Printf.sprintf "first run invalid: %s" msg)],
+            (Printf.sprintf
+               "first formalize run failed: %s. Inspect \
+                .k4k/agent-runs/%s/response.txt."
+               msg id_a)],
          [id_a; id_b])
   | Ok _, Error msg ->
       Sem_unstable
         ([Error.issue ~section:"formalization"
-            (Printf.sprintf "second run invalid: %s" msg)],
+            (Printf.sprintf
+               "second formalize run failed: %s. Inspect \
+                .k4k/agent-runs/%s/response.txt."
+               msg id_b)],
          [id_a; id_b])
 
 and run_two ~k4k_dir ~prompt ~budget inv =

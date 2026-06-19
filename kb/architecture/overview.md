@@ -11,6 +11,8 @@ related: [architecture.decisions.index, conventions.code-style, conventions.erro
 
 # Architecture Overview
 
+> **v2 — partially superseded (2026-06-19).** This describes the v2 watcher-daemon + cotype wiring. The v3 reorientation (ADR-014/015/016) keeps the **harness core** documented here — `Gap_step` propose/accept-or-reject, the verifier/backend wire protocols, branch-per-version (ADR-013), extraction — but removes the cotype layer and the in-file orchestration (`Watcher_loop` polling, `Status_splice`, `Watcher_prune`, `Version_user_edits`) and replaces the prose→formal two-run formalization with a static stability check on k4kspec. Read alongside the v3 ADRs; this file will be re-synced when the v3 surface is built.
+
 ## One-liner
 
 k4k is a small OCaml CLI organized as a deterministic watcher daemon

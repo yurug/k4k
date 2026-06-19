@@ -23,15 +23,18 @@ ADR format: Status, Context, Decision, Consequences, What this means for impleme
 | ADR-002 | Markdown interaction file with HTML-comment ownership tags             | Defines the user's contract format                                    |
 | ADR-003 | Pluggable agent backend; design for the weakest supported model        | Locks in the Ollama-friendly architecture per round-2 user-added      |
 | ADR-004 | Pluggable verifier; v0 ships dune-ocaml only                           | Sets the verifier extension point and v0 narrowing                    |
-| ADR-005 | Determinism on canonical AST; two-run formalization                    | Resolves the agent-stochasticity / harness-determinism tension        |
+| ADR-005 | Determinism on canonical AST; two-run formalization · **DEMOTED→ADR-015** | Resolves the agent-stochasticity / harness-determinism tension; stability is now a static check on k4kspec |
 | ADR-006 | Two-layer KB — meta (`kb/`) and target (`.k4k/`)                       | Pins down round-2 user-edit on KB layout                              |
 | ADR-007 | Deterministic in-process kb-regen for v0                                | v0 deviates from `algorithms.md#kb-regen`'s agent-driven model        |
 | ADR-008 | Wire-protocol verifier; k4k ships no verifier-specific code             | Supersedes the v0-only narrowing in ADR-004; verifier moves to a JSON wire protocol |
 | ADR-009 | Wire-protocol backend; k4k ships no backend-specific code               | Supersedes the v0-only narrowing in ADR-003; symmetric to ADR-008                  |
-| ADR-010 | Delegate user-agent interaction-file concurrency to cotype              | Partially supersedes ADR-002 (ownership tags removed); cotype is a hardcoded dep   |
-| ADR-011 | Autonomous-agent UX + verification-tier hierarchy (v2 reorientation)    | The v0/v1 developer-CLI framing is replaced; user only writes prose in `.k4k`; full formal verification is the default; testing tiers require sign-off |
-| ADR-012 | Agent-driven toolchain selection + auto-installation                    | Refines ADR-008/009; the agent picks toolchains per project and writes a wrapper script; k4k auto-installs via user-scoped package managers |
+| ADR-010 | Delegate concurrency to cotype · **SUPERSEDED→ADR-014**                | cotype removed; spec has one writer, agent proposes but never commits — no merge problem |
+| ADR-011 | Autonomous-agent single-file UX · **SUPERSEDED→ADR-014**               | Daemon + concurrently-edited single file replaced by propose/review two-artifact UX; tier hierarchy survives (refined by ADR-016) |
+| ADR-012 | Agent-driven toolchain selection · **REVISED→ADR-016 (deferred v1)**   | v1 pins one prover (Rocq+extraction); pluggability stands, autonomous per-project selection deferred |
 | ADR-013 | Versions are git branches                                                | Each version lives on `k4k/version/<n>`; merges to default branch + tags `v<n>` on completion; `.k4k/version/<n>/` is audit-only |
+| ADR-014 | Certification thesis + propose/review two-artifact UX (v3)              | Supersedes ADR-010/011; agent never commits the spec; certifier is a software engineer; cotype + in-file orchestration removed |
+| ADR-015 | k4kspec — observational spec language                                    | Demotes ADR-005; spec denotes a relation R over observable I/O; frame/footprint fs; closed total value algebra; static stability; two-stage elaboration; pluggable artifact-class dimension |
+| ADR-016 | v1 verification model + assurance refinements                           | Pin Rocq+extraction; defer toolchain self-selection; qualify "certified" + TCB manifest; executable spec-validation; anti-vacuity; statement-preserving elaborator; from the 2026-06-19 expert panel |
 
 ## How to add a new ADR
 

@@ -11,6 +11,8 @@ related: [adr-010, adr-002]
 
 # External: cotype
 
+> **SUPERSEDED in v3 (2026-06-19, ADR-014).** k4k no longer depends on cotype. The v3 propose/review model gives the spec a single writer (the human), so there is no concurrent-edit problem to delegate. `lib/cotype*` and the runtime dependency are dropped. This contract is retained only for history. See ADR-014 and `domain/prd.md`.
+
 ## One-liner
 
 A small CLI that provides 3-way-merge concurrency on a single text file (`<https://pypi.org/project/cotype/>`). k4k uses it to coordinate user + agent edits to the interaction file without lost updates, replacing k4k's hand-rolled ownership-tag scheme. **Like git, cotype is a hardcoded runtime dependency** — not a pluggable wire protocol.

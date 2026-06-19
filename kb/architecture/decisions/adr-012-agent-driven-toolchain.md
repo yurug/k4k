@@ -12,7 +12,7 @@ related: [adr-011, adr-013]
 # ADR-012: Agent-driven toolchain selection + auto-installation
 
 ## Status
-Accepted (2026-05-08). Refines ADR-008/009: where ADR-008/009 made the verifier and backend pluggable from k4k's perspective, ADR-012 takes the further step of making the toolchain choice itself the agent's decision, not a k4k-side selection rule. Pairs with ADR-011 (autonomous-agent UX) — the user does not see toolchain decisions, the agent makes them per project.
+**REVISED by ADR-016 (2026-06-19): deferred for v1.** The 2026-06-19 expert panel showed agent toolchain self-selection makes the TCB the union of N kernels + N shims + N extraction paths. v1 therefore **pins one prover (Rocq + extraction to OCaml)**; additional toolchains return later as *audited plugins* (prover backend + I/O shim + statement-preserving elaborator lowering), not stochastic per-project picks. The general principle — k4k carries no built-in selection logic, toolchains are pluggable — stands; the *autonomous per-project selection* is what is deferred. — *Originally:* Accepted (2026-05-08). Refines ADR-008/009: where ADR-008/009 made the verifier and backend pluggable from k4k's perspective, ADR-012 takes the further step of making the toolchain choice itself the agent's decision, not a k4k-side selection rule. Pairs with ADR-011 (autonomous-agent UX) — the user does not see toolchain decisions, the agent makes them per project.
 
 ## Context
 

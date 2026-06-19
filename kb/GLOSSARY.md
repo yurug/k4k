@@ -21,6 +21,63 @@ Terms only. Mechanisms and contracts live in `spec/`. Decisions live in `archite
 
 ## Terms
 
+> **v3 note (2026-06-19).** ADR-014/015/016 reorient k4k to a certification tool. The **v3 terms** below are canonical. Terms under *"v2/earlier terms"* describe the prior single-file / cotype / two-run-formalization design and are retained for history. See `domain/prd.md` and the three ADRs.
+
+## v3 terms (canonical — ADR-014/015/016)
+
+### k4kspec
+The dedicated, verifier-independent, software-engineer-readable **observational** specification language (ADR-015). The signed k4kspec document is **Artifact 1**, the certification anchor. An *elaborator* compiles it to a prover **statement** (never proofs).
+
+### Observational spec
+A specification phrased only in the program's *observable* vocabulary — argv, stdin, env, file-reads → stdout, stderr, exit code, file-writes — never in a prover's vocabulary. Avoids the model/reality gap.
+
+### Spec relation (R)
+The denotation of a k4kspec document: `R ⊆ Input × Output`, the set of *acceptable* outputs per input. Correctness theorem: `∀ i. R i (run i)`. In v3 the **desired characterization `D`** *is* the signed k4kspec and its elaboration to `R` (replacing the v2 "AST extracted by a formalization pass"). `S`, `Gap`, and `gap-step` are retained from the harness core.
+
+### CASES / LAWS / EXAMPLES
+The three k4kspec surface forms; their **conjunction** is `R`. CASES = guarded decision table on input (guards must be computable booleans; exhaustive ⇒ total). LAWS = relational ∀/∃ properties (may be arbitrary propositions). EXAMPLES = concrete rows, statically checked against the denotation.
+
+### Frame / footprint
+The declared set of paths a program may read/write (argv-parametric allowed, e.g. *reads file at argv[1]*). Everything outside the footprint is **framed** — provably unchanged — yielding a free "touches nothing else" property. Directory traversal/globbing is out-of-fragment in v1.
+
+### Blessed value algebra
+The closed, prover-realized library of **total**, byte-first primitives that k4kspec authors compose. No inline new primitives; `let` is abbreviation only. In the TCB (audited once per prover).
+
+### Stability (v3)
+A **static, deterministic** check on a k4kspec document (replaces the v2 two-run formalization): parses + type-checks + guards exhaustive + consistent (no input forced to an empty acceptable set) + examples agree + footprint in-fragment (ADR-015), plus the **anti-vacuity obligation** (ADR-016).
+
+### Anti-vacuity obligation
+Stability's dual: require a satisfiability witness and at least one **rejected** output per case (negative witness); dead guards and never-satisfied law-hypotheses are stability **errors**. Forbids a silently over-permissive `R`.
+
+### Spec validation
+Testing `R` against *intent* — compile k4kspec to an executable oracle and run differential/adversarial/property-based tests, surfacing counterexamples for the engineer to adjudicate — **before** any proof. Distinct from *verification* (does the impl satisfy `R`). The defense against autoformalization error.
+
+### Elaborator
+The trusted tool compiling k4kspec → a prover statement (never proofs), through a prover-independent IR. In the TCB; must be **statement-preserving** (emit adequacy evidence that the statement denotes the same `R` as the surface — ADR-016).
+
+### Two-stage elaboration
+Surface k4kspec → a prover-independent semantic **IR** (shaped by the class plugin) → a concrete prover. Classes × provers compose additively in code.
+
+### Artifact class / class plugin
+The pluggable dimension (like verifier and backend) supplying **P1** signature schema (operations, optional abstract state + invariants, trace shape), **P2** class vocabulary, **P3** semantic target + theorem template + coverage/example-discharge, **P4** I/O shim. v1 ships one plugin: `cli` (one-shot, no abstract state).
+
+### I/O shim
+The trusted real-world ↔ model bridge (plugin obligation P4), audited once per class×prover, **frame-enforcing**. Marshals real argv/stdin/env/footprint-files into `Input`, effects `Output`, and physically touches only the declared footprint.
+
+### TCB manifest
+The per-certificate list of every trusted component — Rocq kernel, extraction, OCaml runtime, blessed value algebra, I/O shim, elaborator — with versions and audit dates. **"Certified" is always qualified by it** (ADR-016).
+
+### Propose/review
+The interaction model (ADR-014): the agent *proposes* spec edits; the **human is the sole committer** of the spec. One writer per artifact; no concurrent-edit machinery.
+
+### Certification anchor
+The signed k4kspec document — the artifact the software engineer reviews and vouches for. Leg (a) of the trust argument.
+
+### Spec-simplicity budget
+The measured reviewability bound on a spec (size, case/law count, in-fragment footprint, blessed-vocabulary-only). Exceeding it trips a decompose-or-drop-tier response — KISS made an enforced gate, not an assumption.
+
+## v2/earlier terms
+
 ### Interaction file
 A user-authored file (extension `.k4k`) that captures the desired program's specification in Markdown + YAML frontmatter. Contains user-owned sections (immutable for k4k) and k4k-owned sections (machine-managed). The CLI invocation is `k4k <file.k4k>`. See `spec/config-and-formats.md` for the format.
 
@@ -85,7 +142,7 @@ The shell script the agent emits alongside the project source that translates be
 A `## k4k:tradeoff:proposal:<ts>` section appended to the `.k4k` file when the agent could not establish a property at Tier A within the formalization budget. Contains: the affected property, why Tier A failed, the proposed degraded tier, what's lost, what's gained. The user replies inline with `Approved: Tier B` / `Rejected: <guidance>`. See ADR-011.
 
 ### cotype
-A small CLI (`pipx install cotype`) that provides safe-save concurrency on a single text file via 3-way merge over POSIX `diff3`. k4k delegates the user-agent interaction-file protocol to it (per ADR-010). Hardcoded runtime dependency, like `git`. Six commands: `init`, `open`, `save`, `status`, `resolve`, `cat-base`. The contract k4k depends on is in `external/cotype.md`.
+**Removed in v3 (ADR-014).** k4k no longer depends on cotype: the spec has one writer (the human), the agent proposes but never commits, so there is no concurrent-edit problem to merge. Definition retained for history. — A small CLI (`pipx install cotype`) that provides safe-save concurrency on a single text file via 3-way merge over POSIX `diff3`. k4k delegates the user-agent interaction-file protocol to it (per ADR-010). Hardcoded runtime dependency, like `git`. Six commands: `init`, `open`, `save`, `status`, `resolve`, `cat-base`. The contract k4k depends on is in `external/cotype.md`.
 
 ### KB (knowledge base)
 Used in two senses, never conflate:

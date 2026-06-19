@@ -12,7 +12,7 @@ related: [adr-008, adr-009]
 # ADR-010: Delegate user-agent interaction-file concurrency to cotype
 
 ## Status
-Accepted (2026-05-03). Partially supersedes ADR-002 (the interaction-file format simplifies — ownership tags removed).
+**SUPERSEDED by ADR-014 (2026-06-19).** The v3 reorientation removes cotype entirely: the spec has one writer (the human); the agent proposes edits it never commits, so there is no concurrent-edit problem to merge. `lib/cotype*` and the cotype runtime dependency are dropped. Retained for history. — *Originally:* Accepted (2026-05-03). Partially supersedes ADR-002 (the interaction-file format simplifies — ownership tags removed).
 
 ## Context
 

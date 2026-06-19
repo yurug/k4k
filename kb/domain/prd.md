@@ -1,149 +1,121 @@
 ---
 id: domain.prd
 type: spec
-summary: v2 product scope. k4k is an autonomous coding agent that builds fully verified POSIX-like programs from a user-edited interaction file. The user only writes free-form text in the file; k4k does everything else.
+summary: v3 product scope. k4k produces CERTIFIED POSIX-like programs from a human-signed, formal-but-readable specification (k4kspec). A software engineer reviews and signs a simple observational spec; k4k proves an implementation against it and ships a certificate with an explicit TCB. The agent proposes; the human commits.
 domain: product
-last-updated: 2026-05-08
-depends-on: [glossary]
+last-updated: 2026-06-19
+depends-on: [glossary, adr-014, adr-015, adr-016]
 refines: []
-related: [spec.api-contracts, spec.algorithms, properties.functional, properties.non-functional, external.cotype]
+related: [spec.api-contracts, spec.algorithms, properties.functional, properties.non-functional]
 ---
 
-# Product Requirements — k4k v2
+# Product Requirements — k4k v3
 
 ## One-liner
 
-**k4k is an autonomous agent that builds formally verified POSIX-like programs from a single user-edited file.** The user writes free-form prose describing what they want; k4k asks clarifying questions in-line, develops + verifies the program with full formal-verification tools when feasible, and documents any verification trade-offs back to the user for sign-off — all through the same `.k4k` file.
+**k4k turns a KISS program into a certified software component.** A software engineer writes and signs a *simple, formal-but-readable* specification (in **k4kspec**); k4k develops an implementation and a machine-checked proof that the implementation satisfies that spec, then ships a certificate naming exactly what is trusted. The engineer never writes Rocq, ACSL, or tactics — but they *do* read and vouch for the spec.
 
-## What the user does (the entire UX)
+## The trust argument (why anyone should believe a k4k certificate)
 
-The user does **one thing**: writes in a `.k4k` file via [cotype](https://pypi.org/project/cotype/). They never run flags, never populate tooling configuration, never select verifiers, never know what `dune` or `coqc` is. All communication with k4k flows through that file.
+Two legs, both required:
 
-```
-$ pipx install k4k cotype
-$ k4k myproject.k4k     # one-shot launch; the agent runs autonomously thereafter
-```
+- **(a) Reviewable anchor.** The spec is simple enough that a competent software engineer — *not* a proof engineer — can read it and vouch that it says what they meant. This is what `k4kspec` (ADR-015) exists to make possible: an *observational* spec phrased only in the program's observable vocabulary (argv, stdin, env, file-reads → stdout, stderr, exit, file-writes), never in a prover's.
+- **(b) Machine-checked link.** The implementation is mechanically proven to satisfy *that* spec, modulo an explicit, named **TCB** (ADR-016). "Certified" is always qualified by the certificate's TCB manifest.
 
-After that single launch the user only edits `myproject.k4k`. The file is the protocol.
+If leg (a) fails, k4k will have flawlessly certified the wrong thing — so the spec is **validated** (tested against intent), not merely **verified against**.
 
-## How k4k responds (everything else)
+## Persona
 
-k4k watches the file. Its visible behavior to the user is entirely in-file:
+A competent **software engineer** on Linux/macOS who:
+- can read a precise, declarative spec (decision tables, relational laws, examples) and judge whether it captures intent;
+- does **not** know — and never needs to write — Rocq, ACSL, Lean, dune internals, or proof tactics;
+- wants the resulting component *certified*, not merely running, and is willing to **review and sign** the spec and to adjudicate the agent's proposed spec edits.
 
-1. **Refining the demand.** While the spec is *unstable* — the user's prose doesn't yet denote a clear theorem — k4k appends `## k4k:clarification:<ts>` blocks with concrete questions. The user answers in place. cotype handles concurrency. k4k re-evaluates stability each round.
+(This corrects the v2 persona, which wrongly assumed a non-technical author who needs no formal-methods literacy at all.)
 
-2. **Versioning.** When the spec stabilizes, k4k snapshots a **version** (a frozen formal characterization `D`) and starts developing it in **full autonomy**. The version's identity is recorded in the file (a `## k4k:version:<n>` block) and in the harness state.
+## What the engineer does (the UX)
 
-3. **Developing + verifying.** Default verification tier is **full formal verification**: implementation extracted from a Rocq development, or Frama-C-verified C, or analogous. **The agent picks the toolchain per project** (per ADR-012) — k4k carries no built-in selection logic. Each version lives on a git branch (`k4k/version/<n>`, per ADR-013); accepted gap-steps commit to the branch; on version completion k4k merges to the default branch and tags `v<n>`. Tier A is the goal on every property.
+The interaction is **propose/review with one writer per artifact** (ADR-014). There is no daemon editing a file under the user, and no concurrent-edit machinery.
 
-4. **Trade-off negotiation.** When Tier A is infeasible for a specific property, k4k pauses development and writes a `## k4k:tradeoff:proposal:<ts>` block: which property, why Tier A failed, what degraded tier is proposed (Tier B = formal model + intensive testing of the implementation against the model; Tier C = testing-only, forfeits formal correctness), what's lost. The user replies inline; k4k waits for sign-off before proceeding at the degraded tier.
+1. **Author / co-author the spec.** The engineer writes a `k4kspec` document (or starts from a draft the agent proposes from a prose intent). The engineer is the **sole committer** of the spec — the certification anchor.
+2. **Review proposals.** The agent never commits the spec; it *proposes* edits — resolve a contradiction, fill a gap, offer a formalization, flag an out-of-fragment construct. The engineer accepts or rejects each.
+3. **Sign a spec version.** When the spec is *stable* (a static, deterministic check — ADR-015) and *non-vacuous* (anti-vacuity obligation — ADR-016) and *validated* (the executable-spec oracle agrees with the engineer's examples and surfaced counterexamples), the engineer signs it. The signature is the certification act.
+4. **k4k develops autonomously** against the frozen, signed spec: it proves an implementation at **Tier A** and extracts a runnable binary. The engineer is not in this loop.
+5. **Receive a certificate.** k4k delivers the implementation, the proof development, and a **TCB manifest** naming exactly what the certificate trusts.
 
-5. **Status.** k4k continuously updates a `## k4k:status` block with the current version's progress (per-property statuses, ETA, current activity). The user can read this without interrupting development.
+## The two artifacts
 
-## States the system can be in
-
-While the user is typing or refining the spec:
-- **Unstable** — `## k4k:clarification:*` blocks are open; k4k waits for answers.
-
-Once stable:
-- **Developing** — k4k is autonomously building version *N*. User edits to user-owned sections of the file are noted but **do not interrupt** the in-flight version; they queue for version *N+1*.
-- **Paused / unstable** — k4k discovered an unknown-unknown during development and could not proceed. It pauses, marks the file unstable with a fresh clarification block, and waits.
-- **Awaiting trade-off sign-off** — Tier A failed on a property; k4k has proposed a degraded tier and waits for the user's reply.
-- **Done** — version *N*'s gap is empty; all properties verified at the recorded tier. If the user has accumulated edits queued for version *N+1*, k4k re-runs stability and (if stable) starts version *N+1*.
-
-The user can request **rollback** by writing `request: rollback` (or similar agreed-on directive — exact convention pinned in the v2 ADR) inside the `## k4k:status` block. k4k aborts the in-flight version and reverts.
+- **Artifact 1 — the signed k4kspec spec.** Human-exposed, human-committed, the anchor. Nothing *observable* about the program's behavior is hidden from it.
+- **Artifact 2 — the proof development.** Prover encoding, lemmas, tactics, implementation, extraction config. Agent-authored, hidden from the reviewer. What is hidden is *proof effort*, never *specification*.
 
 ## Verification tiers
 
-| Tier | What it means | When it applies | Sign-off |
-|---|---|---|---|
-| **A — Full formal verification** | Implementation is *extracted from* or *machine-checked against* a formal artifact (Rocq+Extraction, Frama-C/ACSL+WP, Lean, Verus, F*…). The verifier runs `coqc` / `frama-c -wp` / etc. and maps theorem/contract statuses to property statuses. | **Default. The goal.** | Implicit — this is what k4k aims for on every property. |
-| **B — Formal model + intensive testing** | A formal model exists (e.g. a Rocq specification of expected behavior); the implementation is hand-written in another language; conformance is established by property-based testing + fuzzing of the implementation against the model. | When Tier A is too hard for a specific property and k4k can construct a model. | Required, in-file, with k4k's written rationale. |
-| **C — Testing-only** | No formal artifact at all. Tests + alcotest. | Last-resort for when Tier B is also infeasible. | Required, in-file, with explicit acknowledgment that the formal-correctness goal is forfeited for the relevant property. |
+| Tier | What it means | Sign-off |
+|---|---|---|
+| **A — Full formal verification** | Implementation machine-checked against the spec's elaboration (v1: Rocq proof + extraction to OCaml). Default and the goal. | Implicit — what k4k aims for on every property. |
+| **B — Formal model + intensive testing** | A formal model exists; the implementation is conformance-tested (property-based + fuzzing) against it. | Required, in writing, with rationale. |
+| **C — Testing only** | No formal artifact; tests only. | Required, with explicit acknowledgment that formal correctness is forfeited for the property. |
 
-Tiers are **per-property**, not per-program. A program may have 12 properties of which 10 are Tier A and 2 dropped to Tier B; the file's `## k4k:status` block reflects that distribution.
+Tiers are **per-property**. v1 additionally extends the rigor knob to the *perimeter* (ADR-016): a certificate declares how its elaborator and I/O shim are assured (proof-producing vs property-tested-against-reference-semantics). "Tier A" therefore means *proven modulo the named TCB*, not unconditional certainty.
 
-## Users
+## v1 verification model (ADR-016)
 
-A single developer (or domain-expert author) on Linux/macOS who:
-- Writes prose to describe what they want a program to do.
-- Wants the resulting program *certified*, not just running.
-- Is willing to engage with k4k's clarification questions and trade-off proposals through the same file they're authoring.
-- Does **not** need to know OCaml, Rocq, dune, Frama-C, alcotest, cotype, git internals, or any tooling specifics.
+- **One pinned prover: Rocq (Coq) + extraction to OCaml.** Agent toolchain self-selection is **deferred**; more provers arrive later as audited plugins. One auditable stack.
+- **Extraction is named in every TCB manifest** as an unverified trusted step, and the **extracted binary is differentially tested** against the executable spec oracle.
+- **Executable spec-vs-intent validation** runs *before* any proof: k4k compiles the spec to an oracle and tests `R` adversarially/differentially; counterexamples outside the engineer's examples are surfaced for adjudication.
+- **Non-observable obligations** (secret-erasure, constant-time, resource bounds) are a per-certificate checklist the engineer must discharge or explicitly waive — the observational functional spec cannot state them.
+
+## States the system can be in
+
+- **Drafting / refining** — the engineer and the agent are converging the spec via propose/review; the spec is not yet stable, non-vacuous, and validated.
+- **Signed** — the engineer has committed a spec version; the formal characterization `D` is frozen.
+- **Developing** — k4k is proving version *N* autonomously against the frozen `D`. Spec edits the engineer makes meanwhile are a *new draft* for version *N+1*; they do not disturb the in-flight version.
+- **Paused / blocked** — k4k hit an unknown-unknown (e.g. the signed spec is provably unsatisfiable in a way validation missed). It stops and *proposes* a spec change for the engineer to review.
+- **Done** — version *N*'s gap is empty; all properties verified at their recorded tiers; certificate + TCB manifest delivered.
+
+Rollback aborts an in-flight version and reverts to the previous completed version (per ADR-013, versions are git branches).
 
 ## User stories
 
-### S1 — First spec
-> *I write `myproject.k4k` describing a CLI that uppercases its arguments. I run `k4k myproject.k4k` once and never touch the shell again. k4k appends three clarifying questions to the file (about argument parsing edge cases). I answer them. k4k snapshots version 1, starts developing it in Rocq with extraction to OCaml, and updates a status block as it progresses. After ~10 minutes the status reads "version 1: done, 12/12 properties verified at Tier A". I run the resulting binary; it works.*
+- **S1 — First spec.** *I write a k4kspec for a CLI that uppercases its argv. k4k's validator runs my spec as an oracle, agrees with my examples, and surfaces one counterexample I hadn't considered (empty argv); it proposes a CASE to cover it, I accept and sign. k4k proves it in Rocq, extracts an OCaml binary, and hands me a certificate whose TCB manifest lists the Rocq kernel, extraction, the runtime, the value algebra, the shim, and the elaborator. The binary works.*
+- **S2 — Proposal review.** *The agent notices my two examples contradict a law and proposes a spec edit naming the contradiction. I adjudicate (the law was wrong), accept the fix, re-sign.*
+- **S3 — Trade-off.** *A property is too hard at Tier A within budget. k4k proposes Tier B with a written rationale; I sign off; it proceeds for that property only.*
+- **S4 — Out-of-fragment.** *My spec needs to walk a directory tree. k4k's stability check flags it as out-of-fragment (spec-simplicity budget) and proposes a decomposition; I accept a narrower scope.*
+- **S5 — Audit.** *A reviewer reproduces the proof: they read my signed k4kspec, run the prover over the proof development, check the TCB manifest, and re-run the differential tests of the extracted binary against the spec oracle.*
 
-### S2 — Iterative refinement
-> *I add a new acceptance example to my `.k4k` file describing whitespace handling. k4k notes the change but does not interrupt the in-flight version 1. After version 1 finishes, k4k re-runs stability against my new example, snapshots version 2, and develops it.*
+## Out of scope (v1)
 
-### S3 — Trade-off negotiation
-> *k4k cannot prove a complex termination property at Tier A within the formalization budget. It writes a `## k4k:tradeoff:proposal:<ts>` block: "Property `P_terminates_on_well_founded_input` cannot be proven in Rocq under the time budget; specifically, the proof requires an induction on a measure I cannot synthesize. Proposed Tier B: formalize the termination predicate as a Rocq specification, hand-write the OCaml implementation, and verify conformance against random inputs (10 000 iterations) plus a fuzzing campaign (1 hour). What's lost: a proof of universal termination; in exchange we gain confidence on the tested distribution." I read it, write `Approved: Tier B` in the block, and re-save. k4k resumes development under Tier B for that property.*
-
-### S4 — Stuck
-> *During development, k4k discovers that my spec is internally contradictory in a way the formalization pass didn't catch (e.g. two refusing examples imply mutually exclusive error behaviors). k4k pauses development, marks the file unstable with a fresh `## k4k:clarification:<ts>` block naming the contradiction, and waits. I edit the file to resolve the contradiction; k4k resumes.*
-
-### S5 — Rollback
-> *I realize half-way through version 2's development that my whitespace-handling example was wrong. I write `request: rollback` in the status block. k4k aborts version 2's development, reverts to the version-1 implementation, and re-runs stability — now treating my updated examples as version 3 input.*
-
-### S6 — Audit
-> *A reviewer asks me to demonstrate the program is correct. I show them the `.k4k` file (the spec), and the project's `.k4k/` directory (the formal artifacts: Rocq sources, extraction config, machine-checked proofs, manifest mapping each property to the proof witness). The audit reproduces by running `coqc` over the bundled `.v` files; every theorem closes. The trade-offs (if any) are recorded with the user's signed-off rationale.*
-
-## Command surface (v2)
-
-```
-k4k <file.k4k>      Start watching <file.k4k>. The agent runs autonomously thereafter.
-                    All further interaction is through the .k4k file.
-```
-
-That's it. No flags exposed to the user. The watcher process may accept `-v`/`-vv` for *operator* debugging (helping someone develop or fix k4k itself), but those are not part of the user UX.
-
-Exit codes: `0` on graceful shutdown (signal received and watcher stopped cleanly); non-zero only if the watcher itself can't start (cotype not installed, file unreadable, etc.). The agent's *work outcomes* (stability, version completion, trade-off proposals) are reported in the file, not via exit codes.
-
-## Verifiable artefacts
-
-For any version *N* k4k completes, the user can audit:
-- The `.k4k` file (the prose spec + the version block + the trade-off history).
-- The `.k4k/` directory (operational state per ADR-006/007: formal characterization, gap properties, agent-runs, verifier-runs, manifest, JSONL log).
-- The implementation source tree (e.g. Rocq `.v` files + extraction config + extracted OCaml).
-- Re-running the verifier (`coqc <file.v>` etc.) reproduces every claimed theorem closure.
-
-## Constraints inherited from `kb/NOTES.md`
-
-- The harness is **deterministic** (same observable behavior ⇒ same evaluation), **efficient** (each evaluation modifies the agent context to *reduce* the gap), **complete** (every aspect that matters is covered).
-- Verifiable artefacts: the `.k4k/` directory + the source tree are sufficient to reconstruct the state of any decision k4k made.
-- Model-agnostic: no agent's *judgment* validates anything. The verifier (`coqc`, `frama-c`, etc.) and the human are the only judges.
-- Class scope: POSIX-like CLIs and libraries with well-specified I/O whose behavior is fully determined by argv + filesystem.
-
-## Out of scope
-
-- GUI / TUI dashboards. The status block in the file is the only display surface.
-- Multi-user / team / SaaS modes. Single-developer single-file.
-- Programs whose behavior is not fully determined by argv + filesystem (interactive applications, distributed systems, GPU/numerics-with-floats, ML model training, …). Recognized as out-of-scope at first stability check; k4k declines to start a version for them.
-- Hand-managed verification: the user does not write Rocq, ACSL, Lean, etc. directly — k4k generates the formal artifacts. (The user *can* edit them if they want; cotype handles the concurrency. But the default flow is fully synthetic.)
-- Non-Linux / non-macOS hosts. Windows out.
+- Artifact classes beyond `cli`: pure library, stateful ADT, server/daemon, UI are on the roadmap (ADR-015) but not built; UI needs a temporal/concurrency layer.
+- Directory traversal / globbing / streaming-stdin / unbounded-env programs — out-of-fragment; they trip the spec-simplicity budget.
+- Agent-selected toolchains and provers other than Rocq+extraction (deferred, ADR-016).
+- GUI/TUI dashboards; multi-user/SaaS; non-Linux/macOS hosts; float-heavy numerics; ML.
 
 ## Success criteria
 
-k4k v2 is considered complete when:
-1. A user with no Rocq experience can write a free-form `.k4k` describing the canonical "echo with `--upper`" CLI, run `k4k <file>` once, answer the in-file clarifications, and end up with: (a) a working OCaml binary extracted from a Rocq development, (b) a `.k4k/` directory containing every artefact required to reproduce the proofs, (c) a status block reading `version 1: done, N/N properties verified at Tier A`.
-2. The same flow on a more demanding program (e.g. a small filter — `cat` or `grep -F` — selected during the v2 plan) succeeds at Tier A.
-3. A trade-off-requiring program (one property genuinely too hard for Tier A) reaches Tier B with appropriate user sign-off in the file.
-4. All P-properties in `properties/functional.md` are tested green; all NF-properties are measured within budget; the conformance suite + drift-watch run cleanly.
+1. A software engineer with no Rocq experience writes and signs a k4kspec for "echo with `--upper`", reviews k4k's proposed edits, and ends with: a working OCaml binary extracted from a Rocq proof, a proof development that re-checks, and a **TCB manifest** that honestly names every trusted component.
+2. The same flow succeeds at Tier A on a more demanding in-fragment filter (e.g. `grep -F`-class).
+3. A property genuinely too hard for Tier A reaches Tier B with written sign-off.
+4. The executable spec-validation phase catches at least one injected wrong-but-well-formed spec before any proof is attempted (the autoformalization defense works).
+5. All P-properties green; NF-properties within budget; the conformance suite runs cleanly.
+
+## Constraints inherited from `kb/NOTES.md`
+
+- **Deterministic** harness (same observable behavior ⇒ same evaluation) — now realized by k4kspec being the formal object, with stability a static check (ADR-015).
+- **Efficient** — each agent-context update reduces the gap; *earned* by counterexample/diagnostic feedback and the incorrectness pre-gate (ADR-016).
+- **Complete** — every observable aspect that matters is covered; under-specification is explicit, and the anti-vacuity obligation forbids a silently over-permissive spec.
+- **Model-agnostic** — only the human and the verifier judge validity; the agent proposes, the harness accepts or rejects.
 
 ## Agent notes
 
-> **The recursive nature is intentional.** We are using a coding agent (Claude Code) to build a coding agent (k4k). The agentic-dev-kit methodology applies to building k4k itself; k4k embeds its own (smaller, more rigorous, formal-verification-grounded) methodology for building target programs. Don't conflate the two — `kb/` is for the meta level, `.k4k/` is for the object level.
+> **The recursive nature is intentional.** We use a coding agent (Claude Code) to build a coding agent (k4k). The agentic-dev-kit methodology applies to building k4k itself; k4k embeds its own, more rigorous methodology for building target programs. `kb/` is the meta level; `.k4k/` is the object level.
 >
-> **The user does not see the engine.** Anything that surfaces tooling concepts (verifier choice, backend choice, budget caps, retention, file paths, build commands) to the user is a UX bug. Engine pluggability stays internal to `lib/`; the user's contract is the `.k4k` file shape, nothing more.
+> **The engineer reviews the spec, not the engine.** Surfacing prover choice, extraction, build commands, or git internals into the spec surface is a UX bug. But the certificate's **TCB manifest** must surface, honestly and in full, exactly what the certificate transitively trusts — that disclosure *is* part of the product.
 
 ## Related files
 
-- `external/cotype.md` — the runtime contract for the user-agent file protocol
-- `spec/algorithms.md` — the harness algorithm (stability, formalization, gap-step, version transitions, trade-off negotiation)
-- `spec/api-contracts.md` — the OCaml-internal interfaces (the public CLI contract is one row)
-- `properties/functional.md` — P-invariants this PRD implies
-- `architecture/overview.md` — module structure realizing the autonomous-watcher loop
-- `architecture/decisions/` — ADRs capturing the architectural commitments (especially ADR-008/009/010, plus the forthcoming ADR-011 codifying the autonomous-agent UX + tier hierarchy)
+- `architecture/decisions/adr-014-certification-propose-review.md` — UX + two-artifact model
+- `architecture/decisions/adr-015-k4kspec-language.md` — the spec language
+- `architecture/decisions/adr-016-v1-verification-model.md` — pinned prover + assurance refinements
+- `reports/expert-panel-2026-06-19.md` — the 10-expert review grounding the v3 refinements
+- `spec/algorithms.md` — the harness algorithm (to be synced to the v3 surface)
+- `properties/functional.md`, `properties/non-functional.md` — invariants this PRD implies

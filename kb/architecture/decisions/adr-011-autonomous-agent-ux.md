@@ -12,7 +12,7 @@ related: [adr-012, adr-013]
 # ADR-011: Autonomous-agent UX + verification-tier hierarchy
 
 ## Status
-Accepted (2026-05-08). Supersedes the v0/v1 developer-CLI framing wholesale (archived in `kb/archive/v0-drifted/`). The architectural commitments from ADR-005/006/008/009/010 stand unchanged; ADR-002's HTML-tag mechanism stays superseded; ADR-007's deterministic kb-regen stays the v0/v2 default with the agent-driven path still wired-but-inactive. Two follow-on ADRs (ADR-012, ADR-013) handle the toolchain and git-branch concerns introduced by this reorientation.
+**SUPERSEDED by ADR-014 (2026-06-19).** The certification reorientation keeps the "user does not see the engine" spirit but replaces the always-on daemon + single-file-edited-by-both UX with a propose/review, one-writer-per-artifact model (the agent never commits the spec) and a two-artifact split (human-signed k4kspec + hidden proof development). The verification-tier hierarchy survives, refined by ADR-016 (Tier-A qualified by a TCB manifest). The autonomous-development spirit (once the spec is signed, k4k develops in full autonomy) is retained. Retained for history. — *Originally:* Accepted (2026-05-08). Supersedes the v0/v1 developer-CLI framing wholesale (archived in `kb/archive/v0-drifted/`). The architectural commitments from ADR-005/006/008/009/010 stand unchanged; ADR-002's HTML-tag mechanism stays superseded; ADR-007's deterministic kb-regen stays the v0/v2 default with the agent-driven path still wired-but-inactive. Two follow-on ADRs (ADR-012, ADR-013) handle the toolchain and git-branch concerns introduced by this reorientation.
 
 ## Context
 

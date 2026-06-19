@@ -12,7 +12,7 @@ related: [adr-003, properties.functional]
 # ADR-005: Determinism on canonical AST; two-run formalization
 
 ## Status
-Accepted (2026-05-02).
+**DEMOTED by ADR-015 (2026-06-19).** With k4kspec (ADR-015) the *spec language itself* is the formal object, so the determinism boundary no longer sits on canonicalized agent output, and **stability is now a static, deterministic check on the k4kspec document** (parses + type-checks + guards exhaustive + consistent + examples agree + footprint in-fragment) rather than two-run agent formalization + canonical-hash comparison. Canonicalization may still serve internal hashing, but it is no longer the determinism contract. Retained for history. — *Originally:* Accepted (2026-05-02).
 
 ## Context
 NOTES.md demands a deterministic harness. The harness calls a stochastic agent backend during the formalization pass (translating the user's spec into a typed AST). Two runs of the same agent on the same input may produce *syntactically* different AST representations even when they are *semantically* equivalent (e.g. fields in different order, identifiers paraphrased).

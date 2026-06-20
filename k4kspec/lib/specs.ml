@@ -157,5 +157,25 @@ let bsort : spec =
     examples = [ ex ~exit:2 []; ex ~exit:2 [ "a"; "b" ] ];   (* success path is under-determined *)
   }
 
-let all = [ grepf; cutf; catf; kvget; bsort ]
+(* ---- partition ARG  (RELATIONAL, NON-SORT: a custom-preorder proof obligation) ------------- *)
+(* stdout is a PERMUTATION of ARG's bytes, PARTITIONED around 'm' (109): every byte < 'm' precedes
+   every byte >= 'm'. "partitioned" = `Sorted part_le` for the implication-preorder part_le (in
+   Kalgebra). The agent cannot reuse a stdlib byte order — it must discover that part_le is a
+   transitive total preorder and prove its chosen impl correct against it. Not the sort canon. *)
+let partition : spec =
+  {
+    name = "partition"; reads = NoFiles;
+    cases =
+      [
+        case ~guard:(ne (len ArgvAll) (i 1)) err2;
+        case
+          ~laws:
+            [ App ("partitioned", [ App ("list_of", [ OStdout ]) ]);
+              App ("permutation", [ App ("list_of", [ OStdout ]); App ("list_of", [ Argv 0 ]) ]) ]
+          [ (Stdout, P Any); (Stderr, Eq (s "")); (Exit, Eq (i 0)) ];
+      ];
+    examples = [ ex ~exit:2 []; ex ~exit:2 [ "a"; "b" ] ];   (* success path is under-determined *)
+  }
+
+let all = [ grepf; cutf; catf; kvget; bsort; partition ]
 let by_name = List.map (fun s -> (s.name, s)) all

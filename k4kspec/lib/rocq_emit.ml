@@ -130,6 +130,7 @@ and re_app env f args =
   (* relational law predicates (Prop-valued; appear only in case `laws`) *)
   | "list_of", [ e ] -> Printf.sprintf "(list_ascii_of_string %s)" (re env e)
   | "sorted", [ e ] -> Printf.sprintf "(Sorted ascii_le %s)" (re env e)
+  | "partitioned", [ e ] -> Printf.sprintf "(Sorted part_le %s)" (re env e)
   | "permutation", [ a; b ] -> Printf.sprintf "(Permutation %s %s)" (re env a) (re env b)
   | "absent_footprint", [] -> "(match (file1 i) with None => true | Some _ => false end)"
   | "present_footprint", [] -> "(match (file1 i) with None => false | Some _ => true end)"

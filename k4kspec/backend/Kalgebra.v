@@ -12,6 +12,11 @@ Definition bytes := string.
 
 (* byte order, for relational laws (e.g. sorting) *)
 Definition ascii_le (a b : ascii) : Prop := nat_of_ascii a <= nat_of_ascii b.
+
+(* partition preorder around the threshold 109 ('m'): "if b is in the small group, so is a".
+   Sorted part_le l  <->  l is partitioned (all bytes < 'm' precede all bytes >= 'm'). It is a
+   transitive total preorder — the agent must discover and prove that to use it. *)
+Definition part_le (a b : ascii) : Prop := nat_of_ascii b < 109 -> nat_of_ascii a < 109.
 Record Output := { stdout : bytes ; stderr : bytes ; exit : nat }.
 
 Definition up_ascii (c : ascii) : ascii :=

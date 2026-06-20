@@ -150,10 +150,20 @@ cases on argv, files:
 
 **Finding from the exercise:** faithful CLI specs are dominated by **input-validation cases** (the argv→behavior map *is* the program; totality forces every error path explicit). "Simple spec" = a short core transformation + an exhaustive, boring error decision-table — reviewable, but *wide*. The recurring argv-parsing boilerplate is the pressure that will later justify a blessed **argv-grammar sugar** (declare positionals/flags/types → desugars to guard cases) — a v1.x ergonomic layer, **not** v1; raw argv stays the semantic core.
 
-## 8. Open (not yet pinned)
+## 8. Status (REALIZED v1 — see ADR-018)
 
-- Precise **blessed-def semantics** for the opinionated-but-standard primitives (`lines`/`unlines`/`split`/`contains`/`ascii_*`/`int_of`/`is_decimal`) — the audited-once TCB core.
-- The **I/O shim** (P4) concrete template for `cli × Rocq` (real-world ↔ `Input`/`Output`, footprint resolution, frame enforcement).
-- The **prover-independent IR** (two-stage elaboration, ADR-015 §8) and the **statement-preserving elaborator** (ADR-016 §5).
-- The **spec-validation oracle** (compile k4kspec → executable; differential testing; clone-as-oracle, ADR-016).
-- The **argv-grammar sugar** (deferred).
+**Built and fresh-agent audited** for the v1 fragment (`k4kspec/`, commits `0f9eb9d..63ee151`):
+- **Blessed-def semantics** — `lines`/`unlines`/`split`/`contains`/`ascii_*`/`int_of`/`is_decimal`
+  etc. are pinned in Rocq as **`backend/Kalgebra.v`** (audited once), matching `lib/algebra.ml`.
+- **The I/O shim** (`cli × Rocq`) — realized per footprint (no-file / single-file / variadic),
+  reading exactly the declared paths (frame by construction), in `lib/certify.ml`.
+- **The elaborator** (`lib/rocq_emit.ml`) — `Ast.spec → .v` (`Input`/`spec_rel`/`run`/generic
+  proof/extraction). For v1 (one prover) the prover-independent IR is collapsed (ADR-018).
+- **The spec-validation oracle** — the front-end `Eval` oracle (`lib/eval.ml`) is built and is
+  used by `certify` to cross-check the certified binary; differential clone-mode is the optional
+  `Refdiff` plug.
+
+**Still open:** the **statement-preserving** check on the elaborator (ADR-016 §5); **verified
+extraction** / TCB shrinking; the **agent proof backend** (ADR-019) for hard proofs where `run`
+differs from the spec; the deferred **argv-grammar sugar**; reinstating the prover-independent IR
+when a 2nd prover (ACSL/Lean) is added.

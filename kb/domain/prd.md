@@ -92,6 +92,15 @@ Rollback aborts an in-flight version and reverts to the previous completed versi
 
 ## Success criteria
 
+> **Realized status (2026-06-20, ADR-018).** The certifying back-end is built end-to-end:
+> `k4kspec certify <file>` elaborates a spec to Rocq, coqc CHECKS the proof, extracts to OCaml,
+> compiles with an I/O shim, runs, cross-checks vs the oracle, and writes a TCB manifest. All six
+> v1-fragment example specs certify (upper/greet/grepf/kvget/cutf/catf), each independently
+> fresh-agent audited with tamper tests (non-vacuous). This substantially meets criteria 1–2 *for
+> the example fragment* — with the honest caveat that v1 generates `run` to match the spec (easy
+> proofs); the agent proof backend (ADR-019, criterion 3-adjacent) and the propose/review intent
+> UX remain.
+
 1. A software engineer with no Rocq experience writes and signs a k4kspec for "echo with `--upper`", reviews k4k's proposed edits, and ends with: a working OCaml binary extracted from a Rocq proof, a proof development that re-checks, and a **TCB manifest** that honestly names every trusted component.
 2. The same flow succeeds at Tier A on a more demanding in-fragment filter (e.g. `grep -F`-class).
 3. A property genuinely too hard for Tier A reaches Tier B with written sign-off.

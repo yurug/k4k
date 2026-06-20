@@ -1,0 +1,17 @@
+# Rocq + extraction + OCaml build artifacts (generated, not source)
+*.vo
+*.vok
+*.vos
+*.glob
+*.cmi
+*.cmo
+*.cmx
+*.o
+*.a
+.*.aux
+.lia.cache
+.coqdeps.d
+# extraction outputs and compiled binaries
+poc/upper
+poc/upper_ext.ml
+poc/upper_ext.mli

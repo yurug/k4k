@@ -1,5 +1,22 @@
 # SESSION_STATE — 2026-06-20 (autonomous build)
 
+## ACTIVE: end-to-end CERTIFY back-end (ralph loop)  ← current focus
+
+Driving toward the end-to-end v1 run: `k4kspec certify <file.k4kspec>` -> coqc-checked,
+extracted, runnable **certified** binary. Plan + audit criteria + done-bar: `k4kspec/backend/PLAN.md`.
+**Feasibility PROVEN** by a hand-written PoC (`k4kspec/backend/poc/`): coqc checks the proof
+(no Admitted/Axiom), extraction works, the `upper` binary runs (`upper hello -> HELLO`, exit 0).
+Rocq 9.1.1 + Z3 are installed. Ralph-loop protocol: each iteration do the next milestone,
+commit, then a FRESH agent audits (criteria in PLAN.md §Audit); fix until a fresh-agent audit is
+GREEN, then emit the completion promise. **Loop state below is updated each iteration:**
+
+### Certify-pipeline progress log (newest first)
+- 2026-06-20: PoC proven (upper.v coqc-green + extracted binary runs). Plan written. Loop armed.
+  Next: M1 — automate via the elaborator (`lib/rocq_emit.ml`) + `certify` driver so the .v is
+  GENERATED from the parsed AST (not hand-written), green-audited.
+
+---
+
 ## What I built (and why this, not "v1 of k4k")
 
 A **reference-free spec-validation core** for k4kspec — the panel's #1 highest-leverage,

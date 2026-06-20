@@ -1,0 +1,15 @@
+# upper ARG — print the ASCII-uppercased argument. The first end-to-end CERTIFY target
+# (no filesystem footprint; pure argv -> stdout).
+interface cli "upper":
+  writes: nothing
+cases on argv:
+  when len(argv) != 1: exit 2 ; stderr: one nonempty line ; stdout: ""
+  otherwise:
+    stdout: ascii_upper(argv[0]) ++ "\n"
+    stderr: ""
+    exit:   0
+examples:
+  argv=["hello"] -> stdout="HELLO\n" exit=0
+  argv=["aB3z!"] -> stdout="AB3Z!\n" exit=0
+  argv=[] -> exit=2
+  argv=["a","b"] -> exit=2

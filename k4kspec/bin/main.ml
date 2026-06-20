@@ -72,6 +72,12 @@ let do_run arg args =
 let () =
   match Array.to_list Sys.argv with
   | _ :: "list" :: _ -> List.iter (fun (n, _) -> print_endline n) Specs.by_name
+  | _ :: "emit" :: arg :: _ -> print_string (Rocq_emit.emit (load arg))   (* generated Rocq .v *)
+  | _ :: "certify" :: arg :: _ ->
+      let r = Certify.certify (load arg) in
+      List.iter print_endline r.Certify.log;
+      print_endline (if r.Certify.ok then "CERTIFY: OK" else "CERTIFY: FAILED");
+      exit (if r.Certify.ok then 0 else 1)
   | _ :: "check" :: name :: rest -> do_check name rest
   | _ :: "run" :: name :: "--" :: args -> do_run name args
   | _ -> print_string usage; exit 2

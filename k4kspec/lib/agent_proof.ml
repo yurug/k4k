@@ -34,24 +34,35 @@ let external_backend (cmd : string) : backend =
 let stub_backend (sp : spec) : backend =
   { name = "stub"; invoke = (fun _ -> Rocq_emit.emit_impl sp) }
 
-(* ---- response cleaning: strip ``` fences / stray prose around the Coq -------- *)
+(* ---- response cleaning: extract the Coq from fenced OR prose-wrapped output ---- *)
 let clean (resp : string) : string =
   let s = String.trim resp in
-  match String.index_opt s '`' with
-  | None -> s
-  | Some _ ->
-      (* take the text between the first and last triple-backtick fence, if any *)
-      let lines = String.split_on_char '\n' s in
-      let is_fence l = let t = String.trim l in String.length t >= 3 && String.sub t 0 3 = "```" in
-      let rec collect acc inside = function
-        | [] -> List.rev acc
-        | l :: rest ->
-            if is_fence l then collect acc (not inside) rest
-            else if inside then collect (l :: acc) inside rest
-            else collect acc inside rest
-      in
-      let body = collect [] false lines in
-      if body = [] then s else String.concat "\n" body
+  let lines = String.split_on_char '\n' s in
+  let is_fence l = let t = String.trim l in String.length t >= 3 && String.sub t 0 3 = "```" in
+  if List.exists is_fence lines then begin
+    (* fenced: keep the text inside ``` fences *)
+    let rec collect acc inside = function
+      | [] -> List.rev acc
+      | l :: rest ->
+          if is_fence l then collect acc (not inside) rest
+          else if inside then collect (l :: acc) inside rest
+          else collect acc inside rest
+    in
+    let body = collect [] false lines in
+    if body = [] then s else String.concat "\n" body
+  end
+  else begin
+    (* unfenced: drop leading prose up to the first Coq vernac, and trailing prose after the last Qed/Defined *)
+    let starts_with t k = String.length t >= String.length k && String.sub t 0 (String.length k) = k in
+    let starts_coq l =
+      let t = String.trim l in
+      List.exists (starts_with t) [ "Require"; "Definition"; "Fixpoint"; "Lemma"; "Theorem"; "Inductive"; "Notation"; "Import"; "Section"; "Local"; "Hint"; "Instance" ]
+    in
+    let ends_proof l = let t = String.trim l in t = "Qed." || t = "Defined." in
+    let rec drop_lead = function l :: rest when not (starts_coq l) -> drop_lead rest | ls -> ls in
+    let rec drop_tail = function l :: rest when not (ends_proof l) -> drop_tail rest | ls -> ls in
+    String.concat "\n" (List.rev (drop_tail (List.rev (drop_lead lines))))
+  end
 
 (* ---- the prompt ----------------------------------------------------------- *)
 let base_prompt (stmt : string) : string =

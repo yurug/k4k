@@ -42,6 +42,7 @@ let rec describe_expr (e : expr) : string =
   | ArgvAll -> "argv"
   | Stdin -> "stdin"
   | FileBytes -> "file.bytes"
+  | OStdout -> "stdout" | OStderr -> "stderr" | OExit -> "exit"
   | Var x -> x
   | If (c, a, b) -> Printf.sprintf "if %s then %s else %s" (describe_expr c) (describe_expr a) (describe_expr b)
   | Lam (x, b) -> Printf.sprintf "\\%s -> %s" x (describe_expr b)

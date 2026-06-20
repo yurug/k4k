@@ -5,9 +5,13 @@
    rather than re-emitting these defs, so the per-spec .v carries only Input/spec_rel/run/proof. *)
 
 Require Import Coq.Strings.String Coq.Strings.Ascii Coq.Lists.List Coq.Arith.PeanoNat Coq.Bool.Bool.
+Require Export Coq.Sorting.Permutation Coq.Sorting.Sorted.
 Import ListNotations.
 
 Definition bytes := string.
+
+(* byte order, for relational laws (e.g. sorting) *)
+Definition ascii_le (a b : ascii) : Prop := nat_of_ascii a <= nat_of_ascii b.
 Record Output := { stdout : bytes ; stderr : bytes ; exit : nat }.
 
 Definition up_ascii (c : ascii) : ascii :=

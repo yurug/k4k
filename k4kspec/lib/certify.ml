@@ -79,7 +79,7 @@ let certify_v ?(workdir = "/tmp/k4k_certify") (sp : spec) (v : string) : report 
                  (* 4. cross-check binary vs the Eval oracle on examples + sweep *)
                  let bin = path name in
                  let inputs = List.map (fun e -> (e.ex_argv, e.ex_files)) sp.examples @ Check.scenarios sp in
-                 let mism = ref 0 and prev = ref [] in
+                 let mism = ref 0 and prev = ref [] and checked = ref 0 in
                  List.iter
                    (fun (argv, files) ->
                      (* materialise exactly this input's files on disk; the binary reads them *)
@@ -88,8 +88,9 @@ let certify_v ?(workdir = "/tmp/k4k_certify") (sp : spec) (v : string) : report 
                      prev := files;
                      let oracle = try Some (Eval.run sp (Eval.input_of argv files)) with Eval.Spec_error _ -> None in
                      match oracle with
-                     | None -> ()
+                     | None -> ()   (* under-determined input (e.g. relational-law output): proof-guaranteed, not cross-checked *)
                      | Some o ->
+                         incr checked;
                          let bc, bout, _ = Refdiff.run_cmd (bin :: argv) ~cwd:workdir in
                          if bout <> o.Eval.rstdout || bc <> o.Eval.rexit then begin
                            incr mism;
@@ -101,7 +102,9 @@ let certify_v ?(workdir = "/tmp/k4k_certify") (sp : spec) (v : string) : report 
                  List.iter (fun (p, _) -> (try Sys.remove (path p) with _ -> ())) !prev;
                  if !mism > 0 then (say (Printf.sprintf "FAIL: %d binary/spec mismatch(es)" !mism); done_ false)
                  else begin
-                   say (Printf.sprintf "binary MATCHES spec on %d inputs" (List.length inputs));
+                   let skipped = List.length inputs - !checked in
+                   say (Printf.sprintf "binary MATCHES spec on %d/%d inputs%s" !checked (List.length inputs)
+                          (if skipped > 0 then Printf.sprintf " (%d under-determined: output is proof-guaranteed, not cross-checked)" skipped else ""));
                    (* 5. TCB manifest *)
                    let _, coqv, _ = Refdiff.run_cmd [ coqc; "--version" ] ~cwd:workdir in
                    let manifest =

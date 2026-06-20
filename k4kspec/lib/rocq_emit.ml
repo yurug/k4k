@@ -31,6 +31,8 @@ let rec typ (env : env) (e : expr) : ty =
   | Argv _ | Stdin | FileBytes -> TBytes
   | ArgvAll -> TList
   | If (_, a, _) -> typ env a
+  | OStdout | OStderr -> TBytes
+  | OExit -> TInt
   | Var x -> (try List.assoc x env with Not_found -> TBytes)
   | Lam _ -> TBytes
   | App (f, _) ->
@@ -65,6 +67,9 @@ let rec re (env : env) (e : expr) : string =
   | ArgvAll -> "(argv i)"
   | Stdin -> fail_unsupported "stdin"
   | FileBytes -> "(fbytes (file1 i))"
+  | OStdout -> "(stdout o)"
+  | OStderr -> "(stderr o)"
+  | OExit -> "(exit o)"
   | Var x -> x
   | If (c, a, b) -> Printf.sprintf "(if %s then %s else %s)" (re env c) (re env a) (re env b)
   | Lam (x, body) -> Printf.sprintf "(fun %s => %s)" x (re ((x, TBytes) :: env) body)
@@ -122,16 +127,24 @@ and re_app env f args =
   | "add", [ a; b ] -> Printf.sprintf "(%s + %s)" (re env a) (re env b)
   | "is_decimal", [ e ] -> Printf.sprintf "(is_decimal %s)" (re env e)
   | "int_of", [ e ] -> Printf.sprintf "(int_of %s)" (re env e)
+  (* relational law predicates (Prop-valued; appear only in case `laws`) *)
+  | "list_of", [ e ] -> Printf.sprintf "(list_ascii_of_string %s)" (re env e)
+  | "sorted", [ e ] -> Printf.sprintf "(Sorted ascii_le %s)" (re env e)
+  | "permutation", [ a; b ] -> Printf.sprintf "(Permutation %s %s)" (re env a) (re env b)
   | "absent_footprint", [] -> "(match (file1 i) with None => true | Some _ => false end)"
   | "present_footprint", [] -> "(match (file1 i) with None => false | Some _ => true end)"
   | _ -> fail_unsupported f
 
 (* ---- per-case bodies ------------------------------------------------------ *)
-let stderr_prop env = function
-  | Eq e -> Printf.sprintf "stderr o = %s" (re env e)
-  | P OneNonemptyLine -> "one_nonempty_line (stderr o)"
-  | P Nonempty -> "stderr o <> EmptyString"
-  | P EmptyB -> "stderr o = EmptyString"
+(* one output channel's contribution to spec_rel; `P Any` = under-determined (-> True,
+   typically further constrained by the case's relational `laws`). *)
+let chan_prop env ch rhs =
+  let f = match ch with Stdout -> "stdout" | Stderr -> "stderr" | Exit -> "exit" in
+  match rhs with
+  | Eq e -> Printf.sprintf "%s o = %s" f (re env e)
+  | P OneNonemptyLine -> Printf.sprintf "one_nonempty_line (%s o)" f
+  | P Nonempty -> Printf.sprintf "%s o <> EmptyString" f
+  | P EmptyB -> Printf.sprintf "%s o = EmptyString" f
   | P Any -> "True"
 
 let outc ch (c : case) = List.assoc ch c.outs
@@ -146,9 +159,8 @@ let emit_lets (c : case) (body : env -> string) : string =
 
 let case_prop (c : case) : string =
   emit_lets c (fun env ->
-      let stdout_e = match outc Stdout c with Eq e -> re env e | P _ -> failwith "stdout must be pinned" in
-      let exit_e = match outc Exit c with Eq e -> re env e | P _ -> failwith "exit must be pinned" in
-      Printf.sprintf "(stdout o = %s /\\ %s /\\ exit o = %s)" stdout_e (stderr_prop env (outc Stderr c)) exit_e)
+      let base = [ chan_prop env Stdout (outc Stdout c); chan_prop env Stderr (outc Stderr c); chan_prop env Exit (outc Exit c) ] in
+      "(" ^ String.concat " /\\ " (base @ List.map (re env) c.laws) ^ ")")
 
 let case_run (name : string) (c : case) : string =
   emit_lets c (fun env ->

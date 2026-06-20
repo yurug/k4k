@@ -39,6 +39,7 @@ let rec eval (sp : spec) (inp : input) (env : (string * value) list) (e : expr) 
   | Var x -> (try List.assoc x env with Not_found -> raise (Spec_error ("unbound " ^ x)))
   | If (c, a, b) -> if to_bool (ev c) then ev a else ev b
   | Lam _ -> raise (Spec_error "lambda only valid as a combinator argument")
+  | OStdout | OStderr | OExit -> raise (Spec_error "output reference only valid in a relational law")
   | App (f, args) -> apply sp inp env f args
 
 and apply_lam sp inp env lam v =

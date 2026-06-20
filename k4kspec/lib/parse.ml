@@ -224,7 +224,7 @@ let p_case st : case =
     | Some r -> r
     | None -> err st (Printf.sprintf "case is missing a %s constraint"
         (match ch with Stdout -> "stdout" | Stderr -> "stderr" | Exit -> "exit")) in
-  { guard; lets = List.rev !lets; outs = [ (Stdout, find Stdout); (Stderr, find Stderr); (Exit, find Exit) ] }
+  { guard; lets = List.rev !lets; outs = [ (Stdout, find Stdout); (Stderr, find Stderr); (Exit, find Exit) ]; laws = [] }
 
 (* ---- footprint / examples / spec ------------------------------------------ *)
 let p_footprints st : footprint =

@@ -15,7 +15,7 @@ let eq a b = app "eq" [ a; b ]
 let err2 : (chan * rhs) list =
   [ (Exit, Eq (i 2)); (Stderr, P OneNonemptyLine); (Stdout, Eq (s "")) ]
 
-let case ?guard ?(lets = []) outs = { guard; lets; outs }
+let case ?guard ?(lets = []) ?(laws = []) outs = { guard; lets; outs; laws }
 let ex ?stdout ?exit ?(files = []) argv =
   { ex_argv = argv; ex_files = files; ex_stdout = stdout; ex_exit = exit }
 
@@ -138,5 +138,24 @@ let kvget : spec =
       ];
   }
 
-let all = [ grepf; cutf; catf; kvget ]
+(* ---- bsort ARG  (RELATIONAL: under-determined output, constrained by a sort LAW) ---------- *)
+(* stdout's bytes are a SORTED PERMUTATION of ARG's bytes. The output is NOT pinned — only the
+   law constrains it — so the deterministic generator cannot do it; only the agent-proof path
+   (agent chooses a sort + proves Sorted/Permutation by induction) can. The genuine hard-proof test. *)
+let bsort : spec =
+  {
+    name = "bsort"; reads = NoFiles;
+    cases =
+      [
+        case ~guard:(ne (len ArgvAll) (i 1)) err2;
+        case
+          ~laws:
+            [ App ("sorted", [ App ("list_of", [ OStdout ]) ]);
+              App ("permutation", [ App ("list_of", [ OStdout ]); App ("list_of", [ Argv 0 ]) ]) ]
+          [ (Stdout, P Any); (Stderr, Eq (s "")); (Exit, Eq (i 0)) ];
+      ];
+    examples = [ ex ~exit:2 []; ex ~exit:2 [ "a"; "b" ] ];   (* success path is under-determined *)
+  }
+
+let all = [ grepf; cutf; catf; kvget; bsort ]
 let by_name = List.map (fun s -> (s.name, s)) all

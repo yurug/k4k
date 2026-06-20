@@ -19,6 +19,7 @@ type expr =
   | App of string * expr list   (* blessed primitive / builtin application *)
   | Lam of string * expr        (* \x -> body, only as a combinator argument *)
   | If of expr * expr * expr
+  | OStdout | OStderr | OExit    (* output-channel references — ONLY for relational laws *)
 
 type chan = Stdout | Stderr | Exit
 
@@ -32,6 +33,7 @@ type case = {
   guard : expr option;          (* None = otherwise *)
   lets  : (string * expr) list; (* evaluated in order before outs *)
   outs  : (chan * rhs) list;
+  laws  : expr list;            (* relational Props conjoined into this case's denotation *)
 }
 
 type footprint =

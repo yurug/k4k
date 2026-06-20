@@ -16,6 +16,19 @@ commit, then a FRESH agent audits (criteria in PLAN.md §Audit); fix until a fre
 GREEN, then emit the completion promise. **Loop state below is updated each iteration:**
 
 ### Certify-pipeline progress log (newest first)
+- 2026-06-20: **AGENT PROOF BACKEND realized (ADR-019) — the central bet works.** `certify-agent
+  <file>`: the elaborator fixes the certified statement `spec_rel`; an external agent
+  (`$K4K_PROOF_CMD`, e.g. `cd /tmp && claude -p`) proposes `run` + a Coq proof; **coqc is the only
+  gate** (+ banned-word gate), with error-feedback retries. **claude closed a real proof on
+  `upper`** — a `run` with INVERTED branch structure + its own minimal error message (genuinely
+  different from the spec), accepted by coqc on attempt 1; binary matched on 15 inputs. Gate
+  verified: wrong run / non-closing proof → coqc rejects → FAILED; `Admitted` → banned-gate →
+  FAILED. The agent supplies ONLY run+proof against the FIXED spec_rel (can't weaken what's
+  certified). `lib/agent_proof.ml`; `certify_v` refactor; commit 01ecdb8. **HONEST LIMIT:** `upper`
+  is the easiest spec; whether LLMs close HARD proofs (induction over lines/filter; optimised
+  impls) is the open empirical question — the harness now makes it measurable. **Also (ADR-018):**
+  TCB shrunk — blessed algebra is audited-once `backend/Kalgebra.v` (commit 63ee151); realized-v1
+  captured in the KB (ADR-018, PRD, INDEX).
 - 2026-06-20: **M4 COMPLETE — ALL SIX example specs certify GREEN, fresh-agent audited.** Added
   `kvget`+`cutf` (Rocq `split`/`get`/`first`/`any`/`int_of`/`is_decimal`) and `catf` (VARIADIC:
   `Input.contents:list(option bytes)`, `fold_left`/`existsb` over the pre-read contents). Two more

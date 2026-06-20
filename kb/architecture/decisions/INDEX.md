@@ -37,6 +37,7 @@ ADR format: Status, Context, Decision, Consequences, What this means for impleme
 | ADR-016 | v1 verification model + assurance refinements                           | Pin Rocq+extraction; defer toolchain self-selection; qualify "certified" + TCB manifest; executable spec-validation (clone-as-oracle); anti-vacuity; statement-preserving elaborator; under-spec sign-off; NFR triage; from the 2026-06-19 expert panel |
 | ADR-017 | Guidance document (uncertified, best-effort, certificate-invariant)     | A third artifact for non-contractual desiderata (error wording, formatting, cosmetic NFRs); R is always the gate so guidance can never weaken the certificate; cosmetics-only, never safety |
 | ADR-018 | **REALIZED** v1 certifying back-end (Rocq + extraction)                  | `k4kspec certify` works end-to-end: elaborate → coqc-checked proof → extract → binary + TCB manifest. All 6 v1-fragment specs certified, fresh-agent audited (tamper-tested non-vacuous). Audited-once `Kalgebra.v`. Honest limit: generated `run` matches spec ⇒ easy proofs |
+| ADR-019 | **REALIZED** agent proof backend (the central bet)                       | Elaborator fixes `spec_rel`; an external agent proposes `run`+proof; coqc is the only gate (+ error-feedback retries). `claude` closed a real proof on `upper` (a genuinely different `run`); the gate rejects non-proofs/Admitted. Open question: harder proofs |
 
 ## How to add a new ADR
 

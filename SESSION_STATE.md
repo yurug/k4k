@@ -11,9 +11,36 @@ commit, then a FRESH agent audits (criteria in PLAN.md §Audit); fix until a fre
 GREEN, then emit the completion promise. **Loop state below is updated each iteration:**
 
 ### Certify-pipeline progress log (newest first)
-- 2026-06-20: PoC proven (upper.v coqc-green + extracted binary runs). Plan written. Loop armed.
-  Next: M1 — automate via the elaborator (`lib/rocq_emit.ml`) + `certify` driver so the .v is
-  GENERATED from the parsed AST (not hand-written), green-audited.
+- 2026-06-20: **M1+M2 DONE — fresh-agent audit GREEN.** `k4kspec certify <file.k4kspec>` now
+  automates emit -> coqc -> extract -> compile(+shim) -> run -> cross-check(oracle) -> manifest
+  for the **NO-FILE** fragment. `certify upper.k4kspec` and `certify greet.k4kspec` both green
+  (coqc proof CHECKED, no Admitted/Axiom; binary matches the spec on 15 inputs; the two
+  generated `.v` DIFFER, so the elaborator is general). An independent auditor confirmed
+  **non-vacuity** by tampering `run` 3 ways -> coqc correctly REJECTS each. Files:
+  `lib/rocq_emit.ml` (elaborator), `lib/certify.ml` (driver), `bin/main.ml` (`emit`/`certify`),
+  `examples/{upper,greet}.k4kspec`. (Fixed: `Abort` added to the certify banned-list.)
+  Try: `dune exec k4kspec/bin/main.exe -- certify k4kspec/examples/upper.k4kspec`.
+
+  **NEXT: M3 — the FILE-HANDLING fragment, so `certify grepf.k4kspec` goes green (the done-bar
+  for the V1_E2E_GREEN promise; do NOT emit the promise until a fresh agent confirms grepf).**
+  Design notes for M3 (in `rocq_emit.ml` + `certify.ml`):
+  - Specialise `Input` to the footprint: `FileAt i` adds a field `file1 : option bytes` (the
+    file shim reads `argv[i]` -> `Some content` / `None` if absent). Translate `file absent`
+    -> `(match file1 i with None => true | _ => false)`; `file.bytes` -> a total accessor
+    `(match file1 i with Some c => c | None => EmptyString end)`.
+  - Port the blessed algebra to Rocq: `lines`, `split`, `contains`, `unlines`, `filter`/`map`/
+    `fold` (combinators take a Rocq `fun`), `get`, `first`, `is_decimal`, `int_of`, `file_at`,
+    `opt_bytes`. grepf needs only: `lines`, `filter`+lambda, `contains`, `unlines`, `is_empty`.
+    The Rocq defs MUST match `lib/algebra.ml` (esp. `lines` POSIX trailing-newline rule).
+  - Lambdas: `rocq_emit.re (Lam(x,body))` -> `(fun x => <body>)`; `Var x` already works.
+  - File shim (variant of the no-file one): build `Input` with `file1 = read_opt argv[i]`;
+    open ONLY the footprint paths (frame by construction).
+  - Proof: the generic case-split tactic already destructs inner `if`s (e.g. grepf's
+    `if is_empty matched then 1 else 0`). May need `cbv zeta`/`cbn` to settle `let`s before
+    `reflexivity` — adjust the tactic if coqc complains. Test on grepf iteratively.
+  - Then M4 (kvget/cutf/catf), M5 (manifest/docs). Audit each milestone with a FRESH agent.
+- 2026-06-20: PoC proven (`backend/poc/upper.v` coqc-green + extracted binary runs). Plan
+  (`backend/PLAN.md`) written. Ralph loop armed (max-iterations 40, promise V1_E2E_GREEN).
 
 ---
 

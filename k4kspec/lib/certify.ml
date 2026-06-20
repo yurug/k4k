@@ -46,7 +46,7 @@ let certify_v ?(workdir = "/tmp/k4k_certify") (sp : spec) (v : string) : report 
   let name = sp.name in
   write (name ^ ".v") v;
   (* honesty gate: no escape hatches in the proof *)
-  let banned = List.filter (fun w -> Algebra.contains v w) [ "Admitted"; "Axiom "; " admit"; "Parameter "; "Conjecture"; "Abort" ] in
+  let banned = List.filter (fun w -> Algebra.contains v w) [ "Admitted"; "Axiom "; " admit"; "admit."; "give_up"; "Parameter "; "Conjecture"; "Abort" ] in
        if banned <> [] then (say ("FAIL: generated .v contains banned: " ^ String.concat ", " banned); done_ false)
        else begin
          match Refdiff.which "coqc", Refdiff.which "ocamlfind" with

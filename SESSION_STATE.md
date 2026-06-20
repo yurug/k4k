@@ -16,6 +16,21 @@ commit, then a FRESH agent audits (criteria in PLAN.md §Audit); fix until a fre
 GREEN, then emit the completion promise. **Loop state below is updated each iteration:**
 
 ### Certify-pipeline progress log (newest first)
+- 2026-06-20: **HARD relational proof WORKS — the bet holds on the genuinely-hard case.** Added
+  relational LAWS (AST output-refs `OStdout/OStderr/OExit` + per-case `laws`; `Sorted`/`Permutation`
+  + `ascii_le` in Kalgebra; rocq_emit emits laws into spec_rel + supports under-determined `P Any`
+  channels; certify_v reports checked-vs-under-determined honestly; `agent_proof.clean` strips prose
+  around unfenced Coq). New spec **`bsort`** (NoFiles): stdout's bytes are a SORTED PERMUTATION of
+  argv[0]'s bytes — UNDER-DETERMINED (only a law), so the deterministic generator CANNOT do it
+  (`certify bsort` FAILS, as it must). **`certify-agent bsort` with `claude -p --allowedTools ""`:
+  claude INVENTED insertion sort and PROVED `forall i, spec_rel i (run i)` by induction**
+  (insert_perm/isort_perm/HdRel_insert/insert_sorted/isort_sorted + the roundtrip lemma); coqc
+  CLOSED it on attempt 2 (attempt 1 rejected → error fed back → fixed; the retry loop earning its
+  keep). Certified binary sorts: `bsort dcba -> abcd`, `bsort hello -> ehllo`. Independently
+  re-verified under coqc (no Admitted/Axiom). Commits 2b44787 + the test fix. **Harness fixes that
+  mattered:** run the agent with TOOLS OFF (`--allowedTools ""`, else `claude -p` tried to compile
+  itself and emitted prose) + `clean` strips prose. **This answers the open question: the agent can
+  close a real inductive equivalence proof, not just case-split pinned specs.**
 - 2026-06-20: **AGENT PROOF BACKEND realized (ADR-019) — the central bet works.** `certify-agent
   <file>`: the elaborator fixes the certified statement `spec_rel`; an external agent
   (`$K4K_PROOF_CMD`, e.g. `cd /tmp && claude -p`) proposes `run` + a Coq proof; **coqc is the only

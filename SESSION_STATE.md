@@ -1,0 +1,97 @@
+# SESSION_STATE — 2026-06-20 (autonomous build)
+
+## What I built (and why this, not "v1 of k4k")
+
+A **reference-free spec-validation core** for k4kspec — the panel's #1 highest-leverage,
+lowest-risk, most-tangible piece, and the one with **no formal-methods dependency** to get
+stuck on. It is the *front-end* of v1 (validate a spec against intent), **not** the
+certifying back-end (Rocq proof + extraction + certificate), which is weeks of work and
+rides the project's central unproven bet — I deliberately did not attempt it.
+
+After your interrupt ("cloning X was only an example"), I recalibrated: the spine is the
+**general, reference-free** validation loop where the **human is the oracle of intent**.
+Differential testing against a real binary is an *optional clone plug*, clearly labelled.
+
+Everything is in a fresh `k4kspec/` tree, **stdlib-only**, untouched by the (alcotest-broken)
+v2 build.
+
+## How to test it (start here)
+
+```sh
+cd /mnt/archive/yann/new-home/perso/dev/k4k
+
+# unit tests (stdlib-only, no alcotest):
+dune build @k4kspec/test/runtest        # prints "ALL OK"
+
+# the validation harness on the NON-clone spec (no reference tool involved):
+dune exec k4kspec/bin/main.exe -- check kvget
+
+# the others:
+dune exec k4kspec/bin/main.exe -- check grepf
+dune exec k4kspec/bin/main.exe -- check cutf
+dune exec k4kspec/bin/main.exe -- check catf
+
+# execute a spec as its own model:
+printf 'apple\nbanana\ncherry\n' > /tmp/fruit.txt
+dune exec k4kspec/bin/main.exe -- run grepf -- an /tmp/fruit.txt   # -> banana
+
+# OPTIONAL clone plug (special case): diff a spec vs a real tool
+dune exec k4kspec/bin/main.exe -- check grepf --ref 'grep -F'
+```
+
+`check <name>` reports: **examples** (the author's stated intent), **stability**
+(exhaustiveness, dead-case heuristic, anti-vacuity), **under-specified dimensions**
+(free channels, for explicit sign-off), and an **adversarial sweep** (the spec's behavior
+on boundary inputs — *review these: is this what you meant?*). Exit 0 iff it validates.
+
+## What the run already surfaced (the harness earning its keep)
+
+- **`cutf` flagged case #4 (absent-file) as possibly-dead** — neither the examples nor the
+  sweep exercised "valid args + absent file". I added the missing example; flag cleared.
+  (This is the coverage-gap surfacing working.)
+- **clone diff `grepf` vs `grep -F`** found a real semantic divergence: my `grepf` requires
+  2 args (exit 2 on one), while `grep -F NEEDLE` reads **stdin** (exit 1). Legitimate design
+  difference — exactly what differential testing is for, *when* you're cloning.
+- **`grep` on this machine is ugrep 7.5**, not GNU grep (`cut`/`cat` are GNU coreutils 9.10).
+  A live instance of the "*which* tool are you cloning?" clarification.
+
+## What is intentionally NOT here
+
+- No Rocq / proof / extraction / certified binary (the back-end; out of scope for 2h).
+- No surface **parser** yet — specs are AST values in `k4kspec/lib/specs.ml`. The harness,
+  oracle, and differential testing all run on the AST, so the parser is orthogonal plumbing
+  (next). Surface syntax is documented in `kb/spec/k4kspec.md` §7 and `k4kspec/examples/`.
+- `run`'s stdin is empty (none of the 4 specs read stdin); wire real stdin when a spec needs it.
+
+## Decisions I made autonomously (all reversible; recorded here + in memory)
+
+- Bytes = OCaml `string` (8-bit clean). Algebra is total + byte-first (`k4kspec/lib/algebra.ml`).
+- `lines` = documented POSIX (final `\n` is a terminator, not an empty trailing line);
+  `split` is mechanical (keeps every piece). Tested in `test_k4kspec.ml`.
+- kvget value = field after the FIRST `=` only (so `k=a=b` → `a`); a defined choice for the demo.
+- The adversarial generator is a deterministic heuristic (no randomness); dead-case detection
+  is explicitly labelled "heuristic, over sweep" — it can false-positive (as cutf #4 showed).
+
+## Module map (`k4kspec/`)
+
+| file | role |
+|---|---|
+| `lib/algebra.ml` | the blessed value algebra (total, byte-first) — the audited-once TCB core |
+| `lib/ast.ml`     | spec AST (Input/Output, cases/lets/outs, footprint, examples) |
+| `lib/eval.ml`    | the spec **oracle**: run a spec → determined (stdout, exit) + stderr constraint |
+| `lib/specs.ml`   | grepf / cutf / catf / **kvget** (non-clone) as AST values, with examples |
+| `lib/check.ml`   | the reference-free harness (examples / stability / under-spec / sweep) |
+| `lib/refdiff.ml` | OPTIONAL clone differential vs a reference binary (special case) |
+| `bin/main.ml`    | CLI: `list` / `check` / `run` |
+| `test/test_k4kspec.ml` | stdlib-only tests (algebra + oracle + all examples + exhaustiveness) |
+
+## Next steps (in leverage order)
+
+1. **Surface parser** (`.k4kspec` text → AST) so `check`/`run` take files, not built-in names.
+2. **Pin the blessed-def semantics** precisely (Rocq defs + English contract) — they are the
+   certified vocabulary (ADR-016 / spec/k4kspec.md §8).
+3. Smarter property generation (shrinking, spec-aware boundary mining) for the sweep.
+4. Only then the certifying back-end (elaborate → Rocq `spec_rel` + theorem + shim + extraction).
+
+KB for the design behind all this: `kb/INDEX.md` → ADR-014/015/016/017, `kb/spec/k4kspec.md`,
+`kb/reports/expert-panel-2026-06-19.md`.

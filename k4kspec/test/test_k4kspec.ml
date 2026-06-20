@@ -1,0 +1,73 @@
+(* stdlib-only test runner (no alcotest dependency). Exits 1 on any failure. *)
+open K4kspec
+
+let fails = ref 0
+let check name cond = if not cond then (incr fails; Printf.printf "FAIL  %s\n" name)
+let eqs name got want =
+  if got <> want then (incr fails; Printf.printf "FAIL  %s: got %S want %S\n" name got want)
+let eqi name got want =
+  if got <> want then (incr fails; Printf.printf "FAIL  %s: got %d want %d\n" name got want)
+
+let lst xs = String.concat "," (List.map (fun s -> "<" ^ s ^ ">") xs)
+
+let () =
+  let open Algebra in
+  (* lines: the documented POSIX convention *)
+  eqs "lines empty"       (lst (lines ""))         "";
+  eqs "lines a\\nb\\n"    (lst (lines "a\nb\n"))    "<a>,<b>";
+  eqs "lines a\\nb"       (lst (lines "a\nb"))      "<a>,<b>";
+  eqs "lines a\\n\\nb\\n" (lst (lines "a\n\nb\n"))  "<a>,<>,<b>";
+  eqs "lines \\n"         (lst (lines "\n"))        "<>";
+  (* unlines is the inverse for the common case *)
+  eqs "unlines []"        (unlines [])              "";
+  eqs "unlines [a;b]"     (unlines [ "a"; "b" ])    "a\nb\n";
+  check "lines/unlines roundtrip" (unlines (lines "a\nb\n") = "a\nb\n");
+  (* split is mechanical (keeps every piece) *)
+  eqs "split a,b,"        (lst (split "a,b," ","))  "<a>,<b>,<>";
+  eqs "split empty"       (lst (split "" ","))      "<>";
+  eqs "split nosep"       (lst (split "abc" ","))   "<abc>";
+  (* contains *)
+  check "contains b"      (contains "abc" "b");
+  check "contains empty"  (contains "abc" "");
+  check "contains miss"   (not (contains "abc" "z"));
+  (* parse *)
+  eqi "int_of 12"         (int_of "12")             12;
+  eqi "int_of garbage"    (int_of "x")              0;
+  check "is_decimal 12"   (is_decimal "12");
+  check "is_decimal empty" (not (is_decimal ""));
+  check "is_decimal 1a"   (not (is_decimal "1a"));
+  (* ascii case folding (byte-wise; >=128 untouched) *)
+  eqs "ascii_upper"       (ascii_upper "aZ9!")      "AZ9!";
+  eqs "ascii_upper hi-byte" (ascii_upper "\xe9")    "\xe9";
+
+  (* oracle sanity *)
+  let r = Eval.run Specs.grepf (Eval.input_of [ "b"; "f" ] [ ("f", "a\nbob\ncab\n") ]) in
+  eqs "grepf stdout" r.Eval.rstdout "bob\ncab\n";
+  eqi "grepf exit" r.Eval.rexit 0;
+
+  (* every spec: all author examples must pass *)
+  List.iter
+    (fun (sp : Ast.spec) ->
+      List.iteri
+        (fun k e ->
+          match Check.check_example sp e with
+          | Check.Pass -> ()
+          | Check.Fail xs -> incr fails; Printf.printf "FAIL  example %s#%d: %s\n" sp.name k (String.concat "; " xs)
+          | Check.Err m -> incr fails; Printf.printf "FAIL  example %s#%d: %s\n" sp.name k m)
+        sp.examples)
+    Specs.all;
+
+  (* every spec: the adversarial sweep must be exhaustive (no input matches no case) *)
+  List.iter
+    (fun (sp : Ast.spec) ->
+      List.iter
+        (fun (argv, files) ->
+          match Eval.run_traced sp (Eval.input_of argv files) with
+          | _ -> ()
+          | exception Eval.Spec_error _ ->
+              incr fails; Printf.printf "FAIL  %s non-exhaustive on argv=%s\n" sp.name (lst argv))
+        (Check.scenarios sp))
+    Specs.all;
+
+  if !fails = 0 then print_endline "ALL OK"
+  else (Printf.printf "\n%d FAILURE(S)\n" !fails; exit 1)

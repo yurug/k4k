@@ -1,0 +1,24 @@
+# kvget KEY FILE — print the value of the first "key=value" line whose key is KEY.
+# NON-CLONE example (no standard Unix equivalent): demonstrates reference-free validation.
+# Surface syntax (documentation; the parser is a TODO — the live spec is k4kspec/lib/specs.ml).
+
+interface cli "kvget":
+  reads: file at argv[1]
+  writes: nothing
+
+cases on argv, file:
+  when len(argv) != 2:  exit 2 ; stderr: one nonempty line ; stdout: ""
+  when file absent:     exit 2 ; stderr: one nonempty line ; stdout: ""
+  otherwise:
+    let found = any(lines(file.bytes),   \L -> get(split(L, "="), 0, "") == argv[0])
+    let line  = first(lines(file.bytes), \L -> get(split(L, "="), 0, "") == argv[0], "")
+    let val   = get(split(line, "="), 1, "")        # value = field after the FIRST '='
+    stdout: if found then val ++ "\n" else ""
+    stderr: ""
+    exit:   if found then 0 else 1
+
+examples:
+  argv=["k","f"],   file="a=1\nk=2\nb=3\n"  -> stdout "2\n", exit 0
+  argv=["zzz","f"], file="a=1\n"            -> stdout "",    exit 1
+  argv=["k"]                                 -> exit 2
+  argv=["k","missing"]                       -> exit 2

@@ -16,6 +16,15 @@ commit, then a FRESH agent audits (criteria in PLAN.md §Audit); fix until a fre
 GREEN, then emit the completion promise. **Loop state below is updated each iteration:**
 
 ### Certify-pipeline progress log (newest first)
+- 2026-06-20: **NON-SORT hard proof closed (attempt 1) — bet generalizes beyond memorized proofs.**
+  New spec `partition` (stdout = a permutation of argv[0]'s bytes, PARTITIONED around 'm'=109,
+  expressed as `Sorted part_le` for the implication-preorder `part_le` in Kalgebra — NOT a stdlib
+  order). Deterministic `certify partition` FAILS. `certify-agent partition` (claude, tools off):
+  closed on ATTEMPT 1 with genuine reasoning — impl `filter(<109)++filter(>=109)`; proof via
+  `StronglySorted`, the VACUOUS-TRUTH argument for part_le on the big group, `Permutation_cons_app`
+  for partition-is-a-permutation, the roundtrip lemma; 0 escape hatches; binary `azbymc -> abczym`.
+  Commit fa0a30b. This is proof CONSTRUCTION over an unfamiliar relation, not retrieval — the
+  central bet holds on a second, non-sort, less-canned proof shape.
 - 2026-06-20: **HARD relational proof WORKS — the bet holds on the genuinely-hard case.** Added
   relational LAWS (AST output-refs `OStdout/OStderr/OExit` + per-case `laws`; `Sorted`/`Permutation`
   + `ascii_le` in Kalgebra; rocq_emit emits laws into spec_rel + supports under-determined `P Any`

@@ -39,13 +39,20 @@ let do_run name args =
   | None -> Printf.eprintf "unknown spec: %s\n" name; exit 2
   | Some sp ->
       let inp = { Eval.argv = args; stdin = ""; read_file = read_file_opt } in
-      (match (try `Ok (Eval.run sp inp) with Eval.Spec_error m -> `Err m) with
-       | `Err m -> Printf.eprintf "spec error: %s\n" m; exit 64
-       | `Ok r ->
+      (match (try `Ok (Eval.run_traced sp inp) with Eval.Spec_error m -> `Err m) with
+       | `Err m -> Printf.eprintf "[k4kspec] %s: spec error: %s\n" name m; exit 64
+       | `Ok (r, idx) ->
+           (* the spec's OWN stdout / (pinned) stderr — the program's real output *)
            print_string r.Eval.rstdout;
-           (match r.Eval.rstderr with
-            | Eval.SExact s -> output_string stderr s
-            | Eval.SPred _ -> Printf.eprintf "%s: error\n" name (* stderr is free/uncertified *));
+           (match r.Eval.rstderr with Eval.SExact s -> output_string stderr s | Eval.SPred _ -> ());
+           flush stdout;
+           (* operator diagnostics (NOT the spec's stderr): why this happened + the signal *)
+           let guard = Check.describe_guard (List.nth sp.Ast.cases idx).Ast.guard in
+           let serr = match r.Eval.rstderr with
+             | Eval.SExact _ -> "pinned"
+             | Eval.SPred p -> Printf.sprintf "free/uncertified (%s)" (Check.pred_name p) in
+           Printf.eprintf "[k4kspec] %s: case #%d [%s] -> exit=%d, stdout=%d bytes, stderr=%s\n"
+             name idx guard r.Eval.rexit (String.length r.Eval.rstdout) serr;
            exit r.Eval.rexit)
 
 let () =

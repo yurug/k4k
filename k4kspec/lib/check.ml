@@ -31,6 +31,39 @@ let show_stderr = function Eval.SExact s -> esc s | Eval.SPred p ->
 let argv_str a = "[" ^ String.concat "; " (List.map esc a) ^ "]"
 let files_str fs = "{" ^ String.concat "; " (List.map (fun (p, c) -> p ^ "=" ^ esc c) fs) ^ "}"
 
+(* a compact, human-readable rendering of a guard expression *)
+let rec describe_expr (e : expr) : string =
+  match e with
+  | Lit (B s) -> esc s
+  | Lit (I n) -> string_of_int n
+  | Lit (Bool b) -> string_of_bool b
+  | Lit _ -> "<lit>"
+  | Argv i -> Printf.sprintf "argv[%d]" i
+  | ArgvAll -> "argv"
+  | Stdin -> "stdin"
+  | FileBytes -> "file.bytes"
+  | Var x -> x
+  | If (c, a, b) -> Printf.sprintf "if %s then %s else %s" (describe_expr c) (describe_expr a) (describe_expr b)
+  | Lam (x, b) -> Printf.sprintf "\\%s -> %s" x (describe_expr b)
+  | App (f, args) -> describe_app f args
+and describe_app f args =
+  let bin op a b = Printf.sprintf "%s %s %s" (describe_expr a) op (describe_expr b) in
+  match f, args with
+  | "ne", [ a; b ] -> bin "!=" a b
+  | "eq", [ a; b ] -> bin "==" a b
+  | "lt", [ a; b ] -> bin "<" a b
+  | "le", [ a; b ] -> bin "<=" a b
+  | "gt", [ a; b ] -> bin ">" a b
+  | "ge", [ a; b ] -> bin ">=" a b
+  | "and", [ a; b ] -> bin "and" a b
+  | "or", [ a; b ] -> bin "or" a b
+  | "not", [ a ] -> "not " ^ describe_expr a
+  | "absent_footprint", [] -> "file absent"
+  | "present_footprint", [] -> "file present"
+  | _ -> Printf.sprintf "%s(%s)" f (String.concat ", " (List.map describe_expr args))
+
+let describe_guard = function None -> "otherwise" | Some g -> describe_expr g
+
 (* ---- examples ------------------------------------------------------------- *)
 type ex_result = Pass | Fail of string list | Err of string
 
@@ -53,26 +86,27 @@ let content_pool = [ ""; "a"; "a\n"; "a\nb"; "a\nb\n"; "\n"; "a,b,c\n"; "k=1\nk=
 
 (* mutation-based generation: perturb each author example towards its boundaries.
    These inputs sit NEXT TO the author's stated intent, so the spec's behavior on them
-   is the most useful thing to put in front of the human for adjudication. *)
+   is the most useful thing to put in front of the human for adjudication.
+   [mutate_described] keeps a label per mutation so we can report what changed. *)
+let toggle_nl c =
+  if c <> "" && c.[String.length c - 1] = '\n' then String.sub c 0 (String.length c - 1) else c ^ "x"
+
+let mutate_described (argv, files) : (string * (string list * (string * string) list)) list =
+  let drop_last = match List.rev argv with _ :: r -> [ ("drop last arg", (List.rev r, files)) ] | [] -> [] in
+  let add_arg = [ ("add an arg", (argv @ [ "x" ], files)) ] in
+  let file_muts =
+    List.concat_map
+      (fun (p, c) ->
+        let others = List.filter (fun (q, _) -> q <> p) files in
+        [ (Printf.sprintf "empty %s" p, (argv, (p, "") :: others));
+          (Printf.sprintf "drop trailing-nl in %s" p, (argv, (p, toggle_nl c) :: others));
+          (Printf.sprintf "remove %s" p, (argv, others)) ])
+      files
+  in
+  drop_last @ add_arg @ file_muts
+
 let example_mutations (sp : spec) : (string list * (string * string) list) list =
-  let toggle_nl c =
-    if c <> "" && c.[String.length c - 1] = '\n' then String.sub c 0 (String.length c - 1) else c ^ "x"
-  in
-  let mutate (argv, files) =
-    let drop_last = match List.rev argv with _ :: r -> [ (List.rev r, files) ] | [] -> [] in
-    let add_arg = [ (argv @ [ "x" ], files) ] in
-    let file_muts =
-      List.concat_map
-        (fun (p, c) ->
-          let others = List.filter (fun (q, _) -> q <> p) files in
-          [ (argv, (p, "") :: others);              (* empty the file        *)
-            (argv, (p, toggle_nl c) :: others);     (* toggle trailing newline *)
-            (argv, others) ])                       (* remove file -> absent  *)
-        files
-    in
-    drop_last @ add_arg @ file_muts
-  in
-  List.concat_map (fun e -> mutate (e.ex_argv, e.ex_files)) sp.examples
+  List.concat_map (fun e -> List.map snd (mutate_described (e.ex_argv, e.ex_files))) sp.examples
 
 (* a scenario is (argv, present-files) *)
 let scenarios (sp : spec) : (string list * (string * string) list) list =
@@ -166,15 +200,54 @@ let run_report (sp : spec) : bool =
    | [] -> p "  none — every channel is pinned"
    | ds -> List.iter (fun (idx, ch, pr) -> p "  case #%d  %s : free (%s)" idx (chan_name ch) (pred_name pr)) ds);
 
-  (* adversarial sweep — the human-as-oracle adjudication surface *)
+  (* curated validation surface: per-case representatives + behavior-changing mutations.
+     A flat dump of every swept input defeats human review (rubber-stamping); we surface
+     one representative per distinct behavior, and the mutations that actually changed it. *)
+  let oks = List.filter_map (function ((a, f), `Ok (r, idx)) -> Some (a, f, r, idx) | _ -> None) traced in
   p "";
-  p "[adversarial sweep]  (review: is this what you meant on these inputs?)";
-  List.iter (fun ((argv, files), r) -> match r with
-      | `Err m -> p "  argv=%s files=%s -> ERROR: %s" (argv_str argv) (files_str files) m
-      | `Ok (res, idx) ->
-          p "  argv=%-22s files=%-26s -> stdout=%s exit=%d stderr=%s [case #%d]"
-            (argv_str argv) (files_str files) (esc res.Eval.rstdout) res.Eval.rexit (show_stderr res.Eval.rstderr) idx)
-    traced;
+  p "[validation surface]  (curated; full sweep = %d inputs)" (List.length scen);
+  p "  by case (one representative per distinct behavior):";
+  List.iteri (fun idx (c : case) ->
+      let rows = List.filter (fun (_, _, _, i) -> i = idx) oks in
+      if rows <> [] then begin
+        let seen = Hashtbl.create 8 in
+        let reps = List.filter (fun (_, _, r, _) ->
+            let k = (r.Eval.rexit, r.Eval.rstdout = "", show_stderr r.Eval.rstderr) in
+            if Hashtbl.mem seen k then false else (Hashtbl.add seen k (); true)) rows in
+        p "    case #%d  [%s]  — %d input(s)" idx (describe_guard c.guard) (List.length rows);
+        List.iter (fun (a, f, r, _) ->
+            p "        -> exit=%d stdout=%s stderr=%s   e.g. argv=%s files=%s"
+              r.Eval.rexit (esc r.Eval.rstdout) (show_stderr r.Eval.rstderr) (argv_str a) (files_str f)) reps
+      end)
+    sp.cases;
+
+  (* mutations of the author's examples that CHANGED observable behavior *)
+  let run_opt inp = try Some (Eval.run sp inp) with Eval.Spec_error _ -> None in
+  let surprises =
+    List.concat (List.mapi (fun k e ->
+        match run_opt (Eval.input_of e.ex_argv e.ex_files) with
+        | None -> []
+        | Some base ->
+            List.filter_map (fun (desc, (a, f)) ->
+                match run_opt (Eval.input_of a f) with
+                | Some m when (m.Eval.rstdout, m.Eval.rexit) <> (base.Eval.rstdout, base.Eval.rexit) ->
+                    Some (k, desc, base, m, a, f)
+                | _ -> None)
+              (mutate_described (e.ex_argv, e.ex_files)))
+      sp.examples)
+  in
+  let shown = List.filteri (fun i _ -> i < 8) surprises in
+  p "";
+  if surprises = [] then
+    p "  boundary surprises: none (perturbing your examples changed nothing observable)"
+  else begin
+    p "  boundary surprises  (a mutation of an example CHANGED behavior — review these):";
+    List.iter (fun (k, desc, base, m, a, f) ->
+        p "    ex#%d + [%s]: exit %d->%d  stdout %s->%s   (argv=%s files=%s)"
+          k desc base.Eval.rexit m.Eval.rexit (esc base.Eval.rstdout) (esc m.Eval.rstdout) (argv_str a) (files_str f))
+      shown;
+    if List.length surprises > 8 then p "    ... and %d more" (List.length surprises - 8)
+  end;
 
   (* overall pass = all examples pass, exhaustive, no fully-vacuous channel *)
   passed = List.length results && nonexhaustive = [] && vacuous = []

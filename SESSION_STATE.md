@@ -3,9 +3,10 @@
 ## end-to-end CERTIFY back-end (ralph loop)  ← v1 DONE-BAR ACHIEVED, audited GREEN
 
 **ACHIEVED:** `k4kspec certify <file.k4kspec>` produces a coqc-checked, extracted, runnable
-**certified** binary + TCB manifest, for BOTH the no-file fragment (`upper`, `greet`) and the
-file-handling fragment (`grepf`). Two independent fresh-agent audits returned GREEN, each with a
-tamper test proving the proof is non-vacuous. Try:
+**certified** binary + TCB manifest. **ALL SIX example specs certify green** across the whole
+v1 fragment — no-file (`upper`, `greet`), single-file (`grepf`, `kvget`, `cutf`), and variadic
+(`catf`). FOUR independent fresh-agent audits returned GREEN, each with tamper tests proving the
+proof is non-vacuous (corrupting `run` makes coqc reject it). Try:
 `dune exec k4kspec/bin/main.exe -- certify k4kspec/examples/grepf.k4kspec` then
 `/tmp/k4k_certify/grepf an <some-file>`. Plan + audit criteria + done-bar: `k4kspec/backend/PLAN.md`.
 **Feasibility PROVEN** by a hand-written PoC (`k4kspec/backend/poc/`): coqc checks the proof
@@ -15,6 +16,16 @@ commit, then a FRESH agent audits (criteria in PLAN.md §Audit); fix until a fre
 GREEN, then emit the completion promise. **Loop state below is updated each iteration:**
 
 ### Certify-pipeline progress log (newest first)
+- 2026-06-20: **M4 COMPLETE — ALL SIX example specs certify GREEN, fresh-agent audited.** Added
+  `kvget`+`cutf` (Rocq `split`/`get`/`first`/`any`/`int_of`/`is_decimal`) and `catf` (VARIADIC:
+  `Input.contents:list(option bytes)`, `fold_left`/`existsb` over the pre-read contents). Two more
+  independent audits (kvget+cutf, then catf+full-regression) returned GREEN with tamper tests
+  proving non-vacuity. Commits c7d7536, de9ebb8. Whole fragment certified: no-file (upper,greet),
+  single-file (grepf,kvget,cutf), variadic (catf). **Variadic caveat (documented):** the
+  file_at-over-argv rewrite assumes the argv element is used ONLY via file_at (the canonical
+  variadic pattern). **Remaining big items:** the agent-driven (stochastic) PROOF backend for
+  hard proofs where `run` differs from the spec (the central bet); verified extraction / TCB
+  shrinking (panel actions); fold the certify pipeline into the KB/PRD as realized-v1.
 - 2026-06-20: **M3 DONE — `certify grepf.k4kspec` GREEN, fresh-agent audit GREEN. DONE-BAR MET.**
   Automated `certify` now produces a coqc-checked, extracted, runnable CERTIFIED binary for BOTH
   the no-file fragment (`upper`) AND the file-handling fragment (`grepf`). Independent auditor

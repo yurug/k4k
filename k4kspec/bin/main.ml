@@ -78,8 +78,18 @@ let () =
       List.iter print_endline r.Certify.log;
       print_endline (if r.Certify.ok then "CERTIFY: OK" else "CERTIFY: FAILED");
       exit (if r.Certify.ok then 0 else 1)
+  | _ :: "certify-agent" :: "--structured" :: arg :: _ ->
+      (* STRUCTURED methodology (ADR-020): implement-naive -> skeleton gate -> fill -> assemble. *)
+      let sp = load arg in
+      let backend = match Sys.getenv_opt "K4K_PROOF_CMD" with
+        | Some cmd -> Agent_proof.external_backend cmd
+        | None -> Agent_proof.stub_backend sp in
+      let r = Agent_proof.certify_structured ~backend sp in
+      List.iter print_endline r.Certify.log;
+      print_endline (if r.Certify.ok then "CERTIFY-AGENT: OK" else "CERTIFY-AGENT: FAILED");
+      exit (if r.Certify.ok then 0 else 1)
   | _ :: "certify-agent" :: arg :: _ ->
-      (* agent proposes run + proof; coqc is the gate. Backend from $K4K_PROOF_CMD, else a stub. *)
+      (* one-shot: agent proposes run + proof; coqc is the gate. Backend from $K4K_PROOF_CMD, else a stub. *)
       let sp = load arg in
       let backend = match Sys.getenv_opt "K4K_PROOF_CMD" with
         | Some cmd -> Agent_proof.external_backend cmd

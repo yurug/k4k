@@ -33,6 +33,29 @@ let shim_ml (sp : spec) : string =
 
 type report = { ok : bool; log : string list }
 
+(* lightweight INTERMEDIATE gate for the structured methodology (ADR-020): compile Kalgebra + the
+   given .v, ADMITS ALLOWED (this is scaffolding — typecheck / skeleton / per-lemma checks, NOT a
+   certificate; the certificate is only ever certify_v, which BANS admits). Returns (compiles?, output). *)
+let coqc_check ?(workdir = "/tmp/k4k_coqc_check") (name : string) (v : string) : bool * string =
+  let path f = Filename.concat workdir f in
+  let write f s = let oc = open_out (path f) in output_string oc s; close_out oc in
+  ignore (Sys.command (Printf.sprintf "rm -rf %s && mkdir -p %s" (Filename.quote workdir) (Filename.quote workdir)));
+  match Refdiff.which "coqc" with
+  | None -> (false, "coqc not on PATH")
+  | Some coqc -> (
+      match List.find_opt Sys.file_exists [ "k4kspec/backend/Kalgebra.v"; "backend/Kalgebra.v"; "../backend/Kalgebra.v" ] with
+      | None -> (false, "cannot locate Kalgebra.v")
+      | Some ksrc ->
+          let ic = open_in_bin ksrc in let kn = in_channel_length ic in
+          let ks = really_input_string ic kn in close_in ic; write "Kalgebra.v" ks;
+          let ck, ko, ke = Refdiff.run_cmd [ coqc; "-Q"; "."; ""; "Kalgebra.v" ] ~cwd:workdir in
+          if ck <> 0 then (false, Printf.sprintf "Kalgebra.v failed: %s%s" ko ke)
+          else begin
+            write (name ^ ".v") v;
+            let c, o, e = Refdiff.run_cmd [ coqc; "-Q"; "."; ""; name ^ ".v" ] ~cwd:workdir in
+            (c = 0, o ^ e)
+          end)
+
 (* the pipeline given a final .v source (elaborator- OR agent-produced): write it, gate on no
    escape hatches, coqc (with the audited-once Kalgebra), extract, compile (+ shim), run,
    cross-check vs the oracle, write the manifest. *)

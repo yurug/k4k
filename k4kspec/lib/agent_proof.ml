@@ -104,3 +104,106 @@ let certify ?(workdir = "/tmp/k4k_certify_agent") ?(max_attempts = 4) ~(backend 
     else loop (attempt + 1) (base ^ retry_suffix (String.concat "\n" r.Certify.log)) (acc_log @ [ attempt_log ])
   in
   loop 1 base []
+
+(* ===== STRUCTURED METHODOLOGY (ADR-020): implement-naive -> sketch -> fill -> assemble ======== *)
+
+let kalgebra_blurb =
+  "The module `Kalgebra` is imported and provides: `bytes`(=string), `Output`{stdout;stderr;exit:nat},\n\
+   helpers `ascii_upper` `ascii_lower` `bnth` `fbytes` `one_nonempty_line` `lines` `unlines` `splits`\n\
+   `contains` `lfirst` `is_decimal` `int_of`; order relations `ascii_le` `ascii_lt` `part_le`; and (for\n\
+   relational laws) `Sorted`/`Permutation` (Coq.Sorting), `list_ascii_of_string`/`string_of_list_ascii`\n\
+   (+ the roundtrip lemma `list_ascii_of_string_of_list_ascii`), plus the Coq stdlib (String, List, Nat,\n\
+   Bool, Sorting; `List.filter`, `List.nodup`, `Ascii.ascii_dec`, `StronglySorted`, etc.)."
+
+let impl_prompt stmt =
+  "You are writing a CERTIFIED Coq (Rocq 9.1) implementation by a STRUCTURED method.\n" ^ kalgebra_blurb
+  ^ "\n\nThe Input type and the specification relation are ALREADY defined (do NOT restate them):\n\n"
+  ^ stmt
+  ^ "\n\nSTEP 1 of 3 — IMPLEMENT. Give ONLY the implementation, as the SIMPLEST, most OBVIOUSLY-CORRECT\n\
+     `run` — the one whose correctness proof will be SHORTEST. Favor naive clarity over efficiency\n\
+     (reuse stdlib: insertion sort, `List.filter`, `List.nodup Ascii.ascii_dec`, etc.). Output EXACTLY\n\
+     one item, raw Coq, NO prose, NO Require:\n\n\
+     Definition run (i : Input) : Output := (* naive, obviously correct *)."
+
+let sketch_prompt stmt run =
+  "You are proving a CERTIFIED Coq theorem by a STRUCTURED method.\n" ^ kalgebra_blurb
+  ^ "\n\nAlready defined (do NOT restate `Input`, `spec_rel`, or `run`):\n\n" ^ stmt ^ "\n\n" ^ run
+  ^ "\n\nSTEP 2 of 3 — SKETCH the proof. DECOMPOSE `correct : forall i, spec_rel i (run i)` into named\n\
+     HELPER LEMMAS — one per non-trivial obligation (e.g. for each relational law: a sortedness lemma,\n\
+     a permutation/membership lemma) — and write the TOP-LEVEL proof of `correct` that USES them.\n\
+     You MAY leave any helper lemma you have not yet proved as `Admitted`, BUT THE WHOLE THING MUST\n\
+     COMPILE: the lemma STATEMENTS must be right and `correct` must go through GIVEN the lemmas.\n\
+     Output raw Coq only — the helper `Lemma`s (each `Lemma name : <stmt>. Proof. ... Admitted.`, or a\n\
+     real proof if trivial) then `Theorem correct : forall i, spec_rel i (run i). Proof. ... Qed.` No prose."
+
+let fill_prompt stmt run dev =
+  "You are completing a CERTIFIED Coq proof by a STRUCTURED method.\n" ^ kalgebra_blurb
+  ^ "\n\nAlready defined (do NOT restate `Input`, `spec_rel`, or `run`):\n\n" ^ stmt ^ "\n\n" ^ run
+  ^ "\n\nThe proof so far (helper lemmas + `correct`), which COMPILES but still contains `Admitted`:\n\n"
+  ^ dev
+  ^ "\n\nSTEP 3 of 3 — FILL. Replace EVERY `Admitted`/`admit` with a real proof ending in `Qed.` (you may\n\
+     add more helper lemmas). Return the COMPLETE development — all helper lemmas + `Theorem correct\n\
+     ... Qed.` — raw Coq only, with NO `Admitted`/`admit`/`Axiom` remaining. Do NOT restate run/spec_rel/Input."
+
+let has_admit v = List.exists (Algebra.contains v) [ "Admitted"; " admit"; "admit."; "Abort"; "Axiom" ]
+
+(* the structured harness: each step is coqc-gated (intermediate gates allow admits; the FINAL gate,
+   certify_v, bans them). The skeleton gate (PHASE 2) kernel-checks the decomposition before any
+   hard lemma is proved. *)
+let certify_structured ?(workdir = "/tmp/k4k_certify_agent") ?(max_attempts = 3) ?(max_fill = 4) ~(backend : backend) (sp : spec) : Certify.report =
+  let stmt = (try Rocq_emit.emit_statement sp with Failure m -> failwith ("statement: " ^ m)) in
+  let extr = Rocq_emit.extraction_for sp.Ast.name in
+  let name = sp.Ast.name in
+  let chk = workdir ^ "_chk" in
+  let log = ref [] in
+  let say s = log := s :: !log; Printf.eprintf "%s\n%!" s in   (* live progress + accumulate *)
+  let fail () = { Certify.ok = false; log = List.rev !log } in
+  let check v = Certify.coqc_check ~workdir:chk name v in
+  (* PHASE 1 — IMPLEMENT (naive); gate: run typechecks against the goal *)
+  let rec p1 attempt prompt =
+    say (Printf.sprintf "[impl] attempt %d: requesting a naive implementation..." attempt);
+    let run = clean (backend.invoke prompt) in
+    let ok, out = check (String.concat "\n" [ stmt; run; "Definition _goal : Prop := forall i, spec_rel i (run i)." ]) in
+    if ok then (say (Printf.sprintf "[impl] naive run typechecks (attempt %d)" attempt); Some run)
+    else if attempt >= max_attempts then (say (Printf.sprintf "[impl] FAILED after %d attempts:\n%s" attempt out); None)
+    else p1 (attempt + 1) (impl_prompt stmt ^ "\n\nYour previous `run` did not typecheck. coqc said:\n" ^ out ^ "\nReturn a corrected `Definition run` only.")
+  in
+  (match p1 1 (impl_prompt stmt) with
+   | None -> fail ()
+   | Some run ->
+     (* PHASE 2 — SKETCH (the skeleton gate): admits allowed, must compile and define `correct` *)
+     let rec p2 attempt prompt =
+       say (Printf.sprintf "[sketch] attempt %d: requesting the proof skeleton (lemmas may be Admitted)..." attempt);
+       let dev = clean (backend.invoke prompt) in
+       let ok, out = check (String.concat "\n" [ stmt; run; dev ]) in
+       if ok && Algebra.contains dev "correct" then
+         (say (Printf.sprintf "[sketch] SKELETON GATE passed (attempt %d): decomposition type-correct & sufficient (coqc accepts modulo Admitted)" attempt); Some dev)
+       else if attempt >= max_attempts then (say (Printf.sprintf "[sketch] FAILED after %d attempts:\n%s" attempt out); None)
+       else p2 (attempt + 1) (sketch_prompt stmt run ^ "\n\nYour previous skeleton failed the gate. coqc said:\n" ^ out ^ "\nReturn corrected helper lemmas + `correct` (lemmas may remain Admitted).")
+     in
+     (match p2 1 (sketch_prompt stmt run) with
+      | None -> fail ()
+      | Some dev0 ->
+        (* PHASE 3 — FILL: drive admits -> 0 while staying compiled *)
+        let rec p3 round dev =
+          if not (has_admit dev) then (say (Printf.sprintf "[fill] all lemmas proved (after %d round(s))" (round - 1)); Some dev)
+          else if round > max_fill then (say (Printf.sprintf "[fill] admits REMAIN after %d rounds — final gate will reject honestly" max_fill); Some dev)
+          else
+            let rec one k prompt =
+              say (Printf.sprintf "[fill round %d] sub-attempt %d: proving the Admitted lemmas..." round k);
+              let body = clean (backend.invoke prompt) in
+              let ok, out = check (String.concat "\n" [ stmt; run; body ]) in
+              if ok then Some body
+              else if k >= 2 then (say (Printf.sprintf "[fill round %d] could not get a compiling development; coqc:\n%s" round out); None)
+              else one (k + 1) (fill_prompt stmt run dev ^ "\n\nYour previous fill did NOT compile. coqc said:\n" ^ out ^ "\nReturn the complete development again, corrected.")
+            in
+            (match one 1 (fill_prompt stmt run dev) with
+             | Some body -> say (Printf.sprintf "[fill round %d] compiles (admits left: %b)" round (has_admit body)); p3 (round + 1) body
+             | None -> Some dev)
+        in
+        (match p3 1 dev0 with
+         | None -> fail ()
+         | Some devf ->
+           say "[assemble] FINAL gate: certify_v (bans admits; coqc; extract; compile; cross-check; manifest)";
+           let r = Certify.certify_v ~workdir sp (String.concat "\n" [ stmt; run; devf; extr ]) in
+           { Certify.ok = r.Certify.ok; log = List.rev !log @ r.Certify.log })))

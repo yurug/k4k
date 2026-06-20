@@ -16,6 +16,18 @@ commit, then a FRESH agent audits (criteria in PLAN.md §Audit); fix until a fre
 GREEN, then emit the completion promise. **Loop state below is updated each iteration:**
 
 ### Certify-pipeline progress log (newest first)
+- 2026-06-20: **STRUCTURED PROOF METHODOLOGY (ADR-020) built + validated — unblocks usort.** Yann's
+  redirection: design a methodology before brute-forcing hard proofs. Approved: skeleton-gate + fill,
+  correctness-only. `certify-agent --structured <spec>` (`lib/agent_proof.ml:certify_structured`,
+  `Certify.coqc_check`): PHASE 1 implement-naive (typecheck gate) → PHASE 2 SKETCH (the keystone:
+  coqc checks the lemma decomposition with lemmas Admitted → plan certified type-correct & sufficient
+  before any lemma is proved) → PHASE 3 fill (admits→0, focused feedback) → PHASE 4 certify_v (bans
+  admits; real certificate). Live per-phase stderr progress. **`usort` (multi-invariant; one-shot
+  STALLED, no candidate in 45min) now CERTIFIES**: claude decomposed into ~10 lemmas (insertA/isortA
+  sort+dedup; insertA_sorted/isortA_sorted strict-sort; insertA_in/isortA_in/nat_of_ascii_inj
+  set-equality); 0 escape hatches; binary banana→abn. Commits 93bed17 (ADR-020) + 6e9f3ae (build).
+  One-shot path retained as fallback. NOTE cosmetic: live stderr + final stdout log both show under
+  2>&1 (harmless). Built-in specs: grepf/cutf/catf/kvget/bsort/partition/usort (upper/greet are FILES).
 - 2026-06-20: **NON-SORT hard proof closed (attempt 1) — bet generalizes beyond memorized proofs.**
   New spec `partition` (stdout = a permutation of argv[0]'s bytes, PARTITIONED around 'm'=109,
   expressed as `Sorted part_le` for the implication-preorder `part_le` in Kalgebra — NOT a stdlib

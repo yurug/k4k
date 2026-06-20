@@ -12,8 +12,19 @@ related: [adr-013, notes]
 # ADR-020: Structured proof methodology for the agent backend
 
 ## Status
-Accepted (2026-06-20). Refines ADR-019 (the agent proof backend). Approved scope: the
-skeleton-gate + fill backbone, **correctness-only** (implementation refinement deferred).
+Accepted / **realized & validated** (2026-06-20). Refines ADR-019. Approved scope: the
+skeleton-gate + fill backbone, **correctness-only** (implementation refinement deferred). Built in
+`lib/agent_proof.ml` (`certify_structured`) + `lib/certify.ml` (`coqc_check`), CLI
+`certify-agent --structured <spec>`, commit `6e9f3ae`.
+
+**Result.** `usort` (strict-sort + set-equality — the multi-invariant spec on which **one-shot
+generation stalled with no candidate in 45 min**, ADR-019) now **CERTIFIES** via the structured
+path: the implement gate caught a bad first impl (attempt 2 typechecked), the **skeleton gate
+passed first try**, fill closed all lemmas in one round, final gate green. claude decomposed it into
+~10 lemmas covering both invariants (`insertA`/`isortA` sort+dedup, `insertA_sorted`/`isortA_sorted`
+for strict-sortedness; `insertA_in`/`isortA_in`/`nat_of_ascii_inj` for set-equality); 0 escape
+hatches; binary `banana → abn`, `zzaazz → az`. Also validated end-to-end on `upper`. The
+methodology unblocked a proof one-shot could not even begin.
 
 ## Context
 

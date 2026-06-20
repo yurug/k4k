@@ -40,6 +40,18 @@ The panel's unanimous verdict: **the proof is the easy leg; trust collapses onto
 
 10. **Empirical reviewability study.** Measure the escaped-defect rate of *non-proof-engineers* reviewing wrong-but-well-formed k4kspecs (mutation testing on real specs). Readability of the anchor is a **hypothesis under test**, not an assertion; publish the number.
 
+## Refinements from the spec-language design (2026-06-20)
+
+11. **Clone-as-differential-oracle.** When the intent is "certified clone of `Z`" and `Z` is runnable (GNU `cut`, `grep`, …), `Z` *is* the differential oracle for the spec-validation phase (§3): k4k tests the generated spec-oracle against real `Z` and surfaces divergences before sign-off. The highest-risk authoring case (the agent drafting a complex spec) comes with the strongest validator. Design the validation phase to accept a reference executable as the oracle.
+
+12. **Surface every under-specified observable dimension for sign-off.** The relational `R` lets channels be deliberately free (error prose, formatting). The language cannot distinguish *intended* under-spec from a *forgotten* constraint, so at sign-off k4k reports each free observable dimension ("stderr content is unconstrained on these paths — intended?"). Deliberate under-spec becomes a **reviewed** decision; this is the safety valve against the over-permissive-`R` reward-hacking risk (§4).
+
+13. **Certificate scope discloses certified vs trusted.** The certificate (with the TCB manifest, §2) states which channels are certified and which are agent-authored/uncertified (e.g. "stderr content not part of the certified contract; may change between versions"). The certified part of an error path — *detection* (the case guard) and the *machine signal* (the exit code) — is the part that matters; only human-readable prose is trusted. Keeps "certified" precise.
+
+14. **NFR triage (the guardrail for ADR-017 guidance).** Non-functional requirements are split at generation: **cosmetic** (clear manpage, helpful errors, "reasonable" performance) → the guidance document, best-effort; **contractual/safety** (exit-code compatibility, secret-erasure, constant-time, hard resource bounds) → the certified spec or an **explicit waiver**, *never* best-effort. k4k must refuse to let a guidance entry discharge any obligation, and must surface its spec-vs-guidance triage for review.
+
+15. **Decision-focused review.** k4k presents a generated/adjusted draft as the list of decisions it made + the oracle divergences, not a wall of formal text — so the human reviews decisions, and the clone oracle carries the correctness load. (Realizes the empirical-reviewability concern, panel action #6 / ADR-014.)
+
 ## Consequences
 
 - v1 has **one auditable stack**; the word "certified" is honest (qualified by a manifest); the spec is *validated*, not merely *verified against*.

@@ -76,6 +76,21 @@ The signed k4kspec document — the artifact the software engineer reviews and v
 ### Spec-simplicity budget
 The measured reviewability bound on a spec (size, case/law count, in-fragment footprint, blessed-vocabulary-only). Exceeding it trips a decompose-or-drop-tier response — KISS made an enforced gate, not an assumption.
 
+### Guidance document
+**Artifact 2** (ADR-017): a third, *uncertified*, human-owned document (working name `<project>.hints`; the user's "indications") holding non-contractual desiderata — error wording, formatting, cosmetic NFRs. Best-effort, edited via propose/review, frozen per spec version. Cosmetics only — never safety/security. The three artifacts are: signed k4kspec spec (certified), guidance document (uncertified), proof development (hidden).
+
+### Certificate invariance
+The property that makes the guidance document safe (ADR-017): `R` is *always* the verification gate, so guidance can never weaken or break the certificate — the worst a guidance entry can do is be ignored or surfaced as a `guidance ↔ R` conflict (spec always wins).
+
+### Intent-seeded generation
+The v3 entry point (ADR-014): the user states intent ("certified clone of GNU `cut`"); the agent *drafts* both the spec and the guidance document from domain knowledge, asking clarifying questions only at genuine ambiguities; the human reviews the decisions and signs. Principle #3 holds — the agent proposes (drafts), the human signs, the verifier proves.
+
+### Clone-as-oracle (differential oracle)
+When the intent is "certified clone of `Z`" and `Z` is runnable, `Z` is the differential oracle for the spec-validation phase (ADR-016 §11): k4k tests the generated spec against real `Z` and surfaces divergences before sign-off. The riskiest authoring case comes with the strongest validator.
+
+### Under-specification sign-off
+At sign-off k4k surfaces every deliberately-free observable dimension (e.g. unconstrained stderr prose) for explicit human acknowledgment (ADR-016 §12), distinguishing intended under-spec from a forgotten constraint. The certificate scope then discloses which channels are certified vs agent-authored/uncertified.
+
 ## v2/earlier terms
 
 ### Interaction file

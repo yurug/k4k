@@ -34,7 +34,8 @@ ADR format: Status, Context, Decision, Consequences, What this means for impleme
 | ADR-013 | Versions are git branches                                                | Each version lives on `k4k/version/<n>`; merges to default branch + tags `v<n>` on completion; `.k4k/version/<n>/` is audit-only |
 | ADR-014 | Certification thesis + propose/review two-artifact UX (v3)              | Supersedes ADR-010/011; agent never commits the spec; certifier is a software engineer; cotype + in-file orchestration removed |
 | ADR-015 | k4kspec — observational spec language                                    | Demotes ADR-005; spec denotes a relation R over observable I/O; frame/footprint fs; closed total value algebra; static stability; two-stage elaboration; pluggable artifact-class dimension |
-| ADR-016 | v1 verification model + assurance refinements                           | Pin Rocq+extraction; defer toolchain self-selection; qualify "certified" + TCB manifest; executable spec-validation; anti-vacuity; statement-preserving elaborator; from the 2026-06-19 expert panel |
+| ADR-016 | v1 verification model + assurance refinements                           | Pin Rocq+extraction; defer toolchain self-selection; qualify "certified" + TCB manifest; executable spec-validation (clone-as-oracle); anti-vacuity; statement-preserving elaborator; under-spec sign-off; NFR triage; from the 2026-06-19 expert panel |
+| ADR-017 | Guidance document (uncertified, best-effort, certificate-invariant)     | A third artifact for non-contractual desiderata (error wording, formatting, cosmetic NFRs); R is always the gate so guidance can never weaken the certificate; cosmetics-only, never safety |
 
 ## How to add a new ADR
 

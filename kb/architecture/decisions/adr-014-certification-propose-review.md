@@ -30,10 +30,19 @@ The v2 UX (ADR-011) ran k4k as an always-on daemon editing a single `.k4k` file 
 ## Decision
 
 1. **Co-authorship via propose/review, one writer per artifact.** The agent **never commits** to the canonical spec. It *proposes* edits (resolve a contradiction, fill a gap, offer a formalization); the human accepts or rejects. The human is the sole committer of the certification anchor. This mirrors the engine one layer down: gap-steps are diffs the harness accepts (commit) or rejects (`git reset --hard`), per ADR-013.
-2. **Two artifacts.** (1) The human-exposed, human-signed *formal-but-readable* spec — the certification anchor, written in **k4kspec** (ADR-015). (2) The hidden proof development — prover encoding, lemmas, tactics, implementation, extraction. **Nothing observable is hidden from the certifier**; what is hidden is *proof effort*, never *specification*.
+2. **Two artifacts** (extended to three by ADR-017). (1) The human-exposed, human-signed *formal-but-readable* spec — the certification anchor, written in **k4kspec** (ADR-015). (2) The hidden proof development — prover encoding, lemmas, tactics, implementation, extraction. **Nothing observable is hidden from the certifier**; what is hidden is *proof effort*, never *specification*. A third, *uncertified* artifact — the **guidance document** (ADR-017) — holds non-contractual desiderata; it is best-effort and certificate-invariant.
 3. **cotype is removed.** Concurrency is *designed out* (one writer per artifact), not *merged away*. ADR-010 is superseded; `lib/cotype*`, `lib/clarification` cotype paths, and the cotype runtime dependency go.
 4. **The always-on daemon + in-file status/clarification/tradeoff splicing is dropped.** Interaction is a review cycle: the agent proposes, the human reviews/commits; once a spec version is signed, the agent develops autonomously against the *frozen, signed* spec. ADR-011 §C machinery (much of `inline_blocks`, `status_splice`, `watcher_prune`, the P22 `version_user_edits` queueing) is superseded — it existed only to manage two writers on one file.
 5. **The persona is a software engineer.** The certifier is a competent SWE reviewing a *simple* spec — **not** a proof engineer, but also **not** the non-technical author the v2 PRD imagined. The PRD's "needs no Rocq/OCaml/git" persona is wrong and is revised.
+
+## Intent-seeded generation (the v3 entry point)
+
+The user does not author a formal spec from a blank file — **they commission and review one.** The top-level UX is: *state intent → answer the genuine questions → review the decisions → sign.*
+
+- **Seed from intent.** "Let's build a certified drop-in clone of GNU `cut`" → the agent, using its domain knowledge, drafts *both* the k4kspec spec (Artifact 1) and the guidance document (Artifact 2), and asks clarifying questions **only where genuinely ambiguous** (which GNU version as the oracle; which extensions; behavior POSIX leaves implementation-defined; multibyte `-c` vs C-locale bytes — a real fragment-boundary). The agent's knowledge collapses the clarification load to the actual forks, not the whole spec.
+- **Adjust from intent.** "Also support `--complement`" → the agent proposes a *coordinated changeset* to both docs, re-runs stability + spec-validation, and surfaces anything that broke or diverged.
+- **Still propose/review; principle #3 intact.** The agent *drafts* (proposes); the human *signs* (accepts the characterization); the verifier *proves*. Generating the spec is proposing, never validating — no validity judgment is delegated to the agent.
+- **Decision-focused review (anti-rubber-stamp).** The draft is presented as a short list of the *decisions* the agent made (ambiguity resolutions, the spec/guidance split, fragment-boundary calls) plus the divergences spec-validation found — that is what the human reviews, not a wall of formal text. (Keeps leg (a) real; see ADR-016 for the clone-as-oracle that carries the correctness load.)
 
 ## Consequences
 

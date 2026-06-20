@@ -1,9 +1,13 @@
 # SESSION_STATE — 2026-06-20 (autonomous build)
 
-## ACTIVE: end-to-end CERTIFY back-end (ralph loop)  ← current focus
+## end-to-end CERTIFY back-end (ralph loop)  ← v1 DONE-BAR ACHIEVED, audited GREEN
 
-Driving toward the end-to-end v1 run: `k4kspec certify <file.k4kspec>` -> coqc-checked,
-extracted, runnable **certified** binary. Plan + audit criteria + done-bar: `k4kspec/backend/PLAN.md`.
+**ACHIEVED:** `k4kspec certify <file.k4kspec>` produces a coqc-checked, extracted, runnable
+**certified** binary + TCB manifest, for BOTH the no-file fragment (`upper`, `greet`) and the
+file-handling fragment (`grepf`). Two independent fresh-agent audits returned GREEN, each with a
+tamper test proving the proof is non-vacuous. Try:
+`dune exec k4kspec/bin/main.exe -- certify k4kspec/examples/grepf.k4kspec` then
+`/tmp/k4k_certify/grepf an <some-file>`. Plan + audit criteria + done-bar: `k4kspec/backend/PLAN.md`.
 **Feasibility PROVEN** by a hand-written PoC (`k4kspec/backend/poc/`): coqc checks the proof
 (no Admitted/Axiom), extraction works, the `upper` binary runs (`upper hello -> HELLO`, exit 0).
 Rocq 9.1.1 + Z3 are installed. Ralph-loop protocol: each iteration do the next milestone,
@@ -11,6 +15,17 @@ commit, then a FRESH agent audits (criteria in PLAN.md §Audit); fix until a fre
 GREEN, then emit the completion promise. **Loop state below is updated each iteration:**
 
 ### Certify-pipeline progress log (newest first)
+- 2026-06-20: **M3 DONE — `certify grepf.k4kspec` GREEN, fresh-agent audit GREEN. DONE-BAR MET.**
+  Automated `certify` now produces a coqc-checked, extracted, runnable CERTIFIED binary for BOTH
+  the no-file fragment (`upper`) AND the file-handling fragment (`grepf`). Independent auditor
+  confirmed: 3-way tamper test on grepf's `run` → coqc rejects each (non-vacuous); the binary
+  matches the spec on real files incl. trailing-newline / empty-line edge cases; 0 mismatches
+  over 39 inputs; manifest honest; 3 distinct generated `.v`. **END-TO-END v1 RUN ACHIEVED;
+  promise V1_E2E_GREEN emitted.** rocq_emit.ml now does the file algebra (lines/contains/unlines
+  + lambdas + a type env); certify.ml has the file shim + file-materialising cross-check.
+  Remaining (future, M4+): variadic + `get`/`split`/`int_of`/`fold`/`first`/`any` for
+  kvget/cutf/catf; and the agent-driven (stochastic) backend for HARD proofs where `run` must
+  differ from the spec (v1 generates `run` to match the spec, so proofs are easy — honest limit).
 - 2026-06-20: **M1+M2 DONE — fresh-agent audit GREEN.** `k4kspec certify <file.k4kspec>` now
   automates emit -> coqc -> extract -> compile(+shim) -> run -> cross-check(oracle) -> manifest
   for the **NO-FILE** fragment. `certify upper.k4kspec` and `certify greet.k4kspec` both green

@@ -185,12 +185,32 @@ let extraction name =
      Require Import Coq.extraction.ExtrOcamlNatInt.\n\
      Extraction \"%s_ext.ml\" run.\n" name
 
+let spec_rel_def (sp : spec) : string =
+  Printf.sprintf "Definition spec_rel (i : Input) (o : Output) : Prop :=\n  %s." (chain case_prop sp.cases)
+
+(* the CERTIFIED statement only: preamble + Input + spec_rel. An agent supplies `run` + the
+   `correct` proof; the harness appends the extraction directive. *)
+let emit_statement (sp : spec) : string =
+  cur_reads := sp.reads;
+  String.concat "\n" [ preamble; input_record sp.reads; spec_rel_def sp ]
+
+let extraction_for = extraction   (* the `Extraction "<name>_ext.ml" run.` directive *)
+
+(* the implementation half (run + proof) — what an agent supplies; used by the deterministic
+   stub backend to exercise the agent-proof harness. *)
+let emit_impl (sp : spec) : string =
+  cur_reads := sp.reads;
+  String.concat "\n"
+    [ Printf.sprintf "Definition run (i : Input) : Output :=\n  %s." (chain (case_run sp.name) sp.cases);
+      proof sp.reads ]
+
+(* the deterministic v1 path: elaborator also generates `run` + a generic proof *)
 let emit (sp : spec) : string =
   cur_reads := sp.reads;
   String.concat "\n"
     [ preamble;
       input_record sp.reads;
-      Printf.sprintf "Definition spec_rel (i : Input) (o : Output) : Prop :=\n  %s." (chain case_prop sp.cases);
+      spec_rel_def sp;
       Printf.sprintf "Definition run (i : Input) : Output :=\n  %s." (chain (case_run sp.name) sp.cases);
       proof sp.reads;
       extraction sp.name ]

@@ -33,7 +33,10 @@ let shim_ml (sp : spec) : string =
 
 type report = { ok : bool; log : string list }
 
-let certify ?(workdir = "/tmp/k4k_certify") (sp : spec) : report =
+(* the pipeline given a final .v source (elaborator- OR agent-produced): write it, gate on no
+   escape hatches, coqc (with the audited-once Kalgebra), extract, compile (+ shim), run,
+   cross-check vs the oracle, write the manifest. *)
+let certify_v ?(workdir = "/tmp/k4k_certify") (sp : spec) (v : string) : report =
   let log = ref [] in
   let say s = log := s :: !log in
   let done_ ok = { ok; log = List.rev !log } in
@@ -41,13 +44,9 @@ let certify ?(workdir = "/tmp/k4k_certify") (sp : spec) : report =
   let write f s = let oc = open_out (path f) in output_string oc s; close_out oc in
   ignore (Sys.command (Printf.sprintf "rm -rf %s && mkdir -p %s" (Filename.quote workdir) (Filename.quote workdir)));
   let name = sp.name in
-  (* 1. emit the Rocq .v *)
-  (match (try `Ok (Rocq_emit.emit sp) with Failure m -> `Err m) with
-   | `Err m -> say ("FAIL: elaboration: " ^ m); done_ false
-   | `Ok v ->
-       write (name ^ ".v") v;
-       (* honesty gate: no escape hatches in the generated proof *)
-       let banned = List.filter (fun w -> Algebra.contains v w) [ "Admitted"; "Axiom "; " admit"; "Parameter "; "Conjecture"; "Abort" ] in
+  write (name ^ ".v") v;
+  (* honesty gate: no escape hatches in the proof *)
+  let banned = List.filter (fun w -> Algebra.contains v w) [ "Admitted"; "Axiom "; " admit"; "Parameter "; "Conjecture"; "Abort" ] in
        if banned <> [] then (say ("FAIL: generated .v contains banned: " ^ String.concat ", " banned); done_ false)
        else begin
          match Refdiff.which "coqc", Refdiff.which "ocamlfind" with
@@ -116,4 +115,10 @@ let certify ?(workdir = "/tmp/k4k_certify") (sp : spec) : report =
                  end
                end
              end
-       end)
+       end
+
+(* the deterministic v1 path: the elaborator generates run + a generic proof *)
+let certify ?(workdir = "/tmp/k4k_certify") (sp : spec) : report =
+  match (try `Ok (Rocq_emit.emit sp) with Failure m -> `Err m) with
+  | `Err m -> { ok = false; log = [ "FAIL: elaboration: " ^ m ] }
+  | `Ok v -> certify_v ~workdir sp v

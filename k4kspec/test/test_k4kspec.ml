@@ -45,7 +45,15 @@ let () =
   eqs "grepf stdout" r.Eval.rstdout "bob\ncab\n";
   eqi "grepf exit" r.Eval.rexit 0;
 
-  (* every spec: all author examples must pass *)
+  (* the DETERMINED-output specs only — the Eval oracle can't model under-determined / relational
+     specs (e.g. bsort, whose stdout is constrained only by a sort law); those are guaranteed by
+     the proof and exercised via `certify-agent`, not the oracle. *)
+  let det_specs =
+    List.filter
+      (fun (sp : Ast.spec) -> List.for_all (fun (c : Ast.case) -> List.for_all (fun (_, r) -> r <> Ast.P Ast.Any) c.outs) sp.cases)
+      Specs.all
+  in
+  (* every determined spec: all author examples must pass *)
   List.iter
     (fun (sp : Ast.spec) ->
       List.iteri
@@ -55,7 +63,7 @@ let () =
           | Check.Fail xs -> incr fails; Printf.printf "FAIL  example %s#%d: %s\n" sp.name k (String.concat "; " xs)
           | Check.Err m -> incr fails; Printf.printf "FAIL  example %s#%d: %s\n" sp.name k m)
         sp.examples)
-    Specs.all;
+    det_specs;
 
   (* every spec: the adversarial sweep must be exhaustive (no input matches no case) *)
   List.iter
@@ -67,7 +75,7 @@ let () =
           | exception Eval.Spec_error _ ->
               incr fails; Printf.printf "FAIL  %s non-exhaustive on argv=%s\n" sp.name (lst argv))
         (Check.scenarios sp))
-    Specs.all;
+    det_specs;
 
   (* round-trip: parse each surface .k4kspec and assert it behaves IDENTICALLY to the
      trusted AST spec (a wrong parser would be a wrong validator). *)

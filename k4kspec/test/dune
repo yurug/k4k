@@ -1,3 +1,5 @@
 (test
  (name test_k4kspec)
- (libraries k4kspec))
+ (libraries k4kspec)
+ (deps
+  (glob_files ../examples/*.k4kspec)))

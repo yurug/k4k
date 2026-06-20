@@ -69,5 +69,34 @@ let () =
         (Check.scenarios sp))
     Specs.all;
 
+  (* round-trip: parse each surface .k4kspec and assert it behaves IDENTICALLY to the
+     trusted AST spec (a wrong parser would be a wrong validator). *)
+  let read_surface name =
+    let cands = [ "k4kspec/examples/"; "../examples/"; "examples/" ] in
+    match List.find_opt (fun d -> Sys.file_exists (d ^ name)) cands with
+    | Some d -> let ic = open_in_bin (d ^ name) in
+        let s = really_input_string ic (in_channel_length ic) in close_in ic; s
+    | None -> incr fails; Printf.printf "FAIL  cannot find %s\n" name; ""
+  in
+  List.iter
+    (fun (file, (ast : Ast.spec)) ->
+      match (try `Ok (Parse.parse (read_surface file)) with Parse.Parse_error m -> `Err m) with
+      | `Err m -> incr fails; Printf.printf "FAIL  parse %s: %s\n" file m
+      | `Ok parsed ->
+          if parsed.Ast.examples <> ast.Ast.examples then
+            (incr fails; Printf.printf "FAIL  %s: parsed examples differ from the AST spec\n" file);
+          if List.length parsed.Ast.cases <> List.length ast.Ast.cases then
+            (incr fails; Printf.printf "FAIL  %s: case count differs\n" file);
+          List.iter
+            (fun (argv, files) ->
+              let inp = Eval.input_of argv files in
+              let a = (try Some (Eval.run_traced ast inp) with _ -> None) in
+              let b = (try Some (Eval.run_traced parsed inp) with _ -> None) in
+              if a <> b then
+                (incr fails; Printf.printf "FAIL  %s: round-trip behaviour differs on argv=%s\n" file (lst argv)))
+            (Check.scenarios ast))
+    [ ("grepf.k4kspec", Specs.grepf); ("cutf.k4kspec", Specs.cutf);
+      ("catf.k4kspec", Specs.catf); ("kvget.k4kspec", Specs.kvget) ];
+
   if !fails = 0 then print_endline "ALL OK"
   else (Printf.printf "\n%d FAILURE(S)\n" !fails; exit 1)

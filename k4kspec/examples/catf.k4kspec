@@ -1,0 +1,15 @@
+# catf FILE... — concatenate the named files to stdout (variadic footprint).
+interface cli "catf":
+  reads: file at each of argv[*]
+  writes: nothing
+cases on argv, files:
+  when len(argv) == 0:                      exit 2 ; stderr: one nonempty line ; stdout: ""
+  when any(argv, \a -> absent(file_at(a))): exit 2 ; stderr: one nonempty line ; stdout: ""
+  otherwise:
+    stdout: fold(argv, "", \acc a -> acc ++ (file_at(a)).bytes)
+    stderr: ""
+    exit:   0
+examples:
+  argv=["f1","f2"] files={"f1"="a\n","f2"="b\n"} -> stdout="a\nb\n" exit=0
+  argv=[] -> exit=2
+  argv=["f1","missing"] files={"f1"="a\n"} -> exit=2

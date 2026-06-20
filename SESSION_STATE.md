@@ -31,6 +31,9 @@ dune exec k4kspec/bin/main.exe -- check grepf
 dune exec k4kspec/bin/main.exe -- check cutf
 dune exec k4kspec/bin/main.exe -- check catf
 
+# validate a .k4kspec FILE (write your own — examples in k4kspec/examples/):
+dune exec k4kspec/bin/main.exe -- check k4kspec/examples/kvget.k4kspec
+
 # execute a spec as its own model:
 printf 'apple\nbanana\ncherry\n' > /tmp/fruit.txt
 dune exec k4kspec/bin/main.exe -- run grepf -- an /tmp/fruit.txt   # -> banana
@@ -58,10 +61,8 @@ on boundary inputs — *review these: is this what you meant?*). Exit 0 iff it v
 ## What is intentionally NOT here
 
 - No Rocq / proof / extraction / certified binary (the back-end; out of scope for 2h).
-- No surface **parser** yet — specs are AST values in `k4kspec/lib/specs.ml`. The harness,
-  oracle, and differential testing all run on the AST, so the parser is orthogonal plumbing
-  (next). Surface syntax is documented in `kb/spec/k4kspec.md` §7 and `k4kspec/examples/`.
 - `run`'s stdin is empty (none of the 4 specs read stdin); wire real stdin when a spec needs it.
+- The blessed algebra has no int->bytes rendering or take/drop/slice yet (grow by need).
 
 ## Decisions I made autonomously (all reversible; recorded here + in memory)
 
@@ -81,17 +82,20 @@ on boundary inputs — *review these: is this what you meant?*). Exit 0 iff it v
 | `lib/eval.ml`    | the spec **oracle**: run a spec → determined (stdout, exit) + stderr constraint |
 | `lib/specs.ml`   | grepf / cutf / catf / **kvget** (non-clone) as AST values, with examples |
 | `lib/check.ml`   | the reference-free harness (examples / stability / under-spec / sweep). The sweep includes **mutations of your own examples** (drop/add an arg, empty a file, toggle trailing newline, remove a file) — the most relevant boundaries — plus a generic boundary grid |
+| `lib/parse.ml`   | surface `.k4kspec` text -> AST (lexer + recursive-descent parser; located `line:col` errors). Round-trip tested against the AST specs |
 | `lib/refdiff.ml` | OPTIONAL clone differential vs a reference binary (special case) |
 | `bin/main.ml`    | CLI: `list` / `check` / `run` |
 | `test/test_k4kspec.ml` | stdlib-only tests (algebra + oracle + all examples + exhaustiveness) |
 
 ## Next steps (in leverage order)
 
-1. **Surface parser** (`.k4kspec` text → AST) so `check`/`run` take files, not built-in names.
+1. ~~Surface parser~~ **DONE** (`lib/parse.ml`; `line:col` errors; round-trip tested). `check`/`run`
+   take a `.k4kspec` file or a built-in name.
 2. **Pin the blessed-def semantics** precisely (Rocq defs + English contract) — they are the
    certified vocabulary (ADR-016 / spec/k4kspec.md §8).
-3. Smarter property generation (shrinking, spec-aware boundary mining) for the sweep.
-4. Only then the certifying back-end (elaborate → Rocq `spec_rel` + theorem + shim + extraction).
+3. Grow the algebra as real specs demand it (int->bytes rendering, take/drop/slice, …).
+4. Smarter property generation (shrinking, guard-aware boundary mining) for the sweep.
+5. Then the certifying back-end (elaborate → Rocq `spec_rel` + theorem + shim + extraction).
 
 KB for the design behind all this: `kb/INDEX.md` → ADR-014/015/016/017, `kb/spec/k4kspec.md`,
 `kb/reports/expert-panel-2026-06-19.md`.

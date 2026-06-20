@@ -10,14 +10,16 @@ future work. See `../SESSION_STATE.md` for status and `../kb/spec/k4kspec.md` fo
 ## Try it
 
 ```sh
-dune build @k4kspec/test/runtest                       # unit tests -> "ALL OK"
-dune exec k4kspec/bin/main.exe -- check kvget          # validate the non-clone spec
-dune exec k4kspec/bin/main.exe -- run   grepf -- an FILE
-dune exec k4kspec/bin/main.exe -- check grepf --ref 'grep -F'   # optional clone diff
+dune build @k4kspec/test/runtest                              # unit + round-trip tests -> "ALL OK"
+dune exec k4kspec/bin/main.exe -- check examples/kvget.k4kspec # validate a .k4kspec FILE
+dune exec k4kspec/bin/main.exe -- check kvget                  # ...or a built-in name
+dune exec k4kspec/bin/main.exe -- run   grepf -- an FILE       # execute a spec as its model
+dune exec k4kspec/bin/main.exe -- check grepf --ref 'grep -F'  # optional clone diff
 ```
 
 `check` reports: examples · stability (exhaustiveness / dead-case / anti-vacuity) ·
-under-specified dimensions (free channels, for sign-off) · an adversarial boundary sweep.
+under-specified dimensions (free channels, for sign-off) · a curated boundary surface.
 
-Specs currently live as AST values in `lib/specs.ml` (parser is the next step). Surface
-syntax is documented in `examples/` and `../kb/spec/k4kspec.md` §7.
+`check`/`run` accept a `.k4kspec` FILE (parser: `lib/parse.ml`, with `line:col` errors) or a
+built-in name. The `examples/*.k4kspec` files are round-trip tested against the trusted AST
+specs in `lib/specs.ml`. Surface syntax: `../kb/spec/k4kspec.md` §7.

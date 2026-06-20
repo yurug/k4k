@@ -1,0 +1,24 @@
+# cutf DELIM N FILE — field N (1-based) of each line, split on a single-byte DELIM.
+interface cli "cutf":
+  reads: file at argv[2]
+  writes: nothing
+cases on argv, file:
+  when len(argv) != 3:          exit 2 ; stderr: one nonempty line ; stdout: ""
+  when len(argv[0]) != 1:       exit 2 ; stderr: one nonempty line ; stdout: ""
+  when not is_decimal(argv[1]): exit 2 ; stderr: one nonempty line ; stdout: ""
+  when int_of(argv[1]) < 1:     exit 2 ; stderr: one nonempty line ; stdout: ""
+  when file absent:             exit 2 ; stderr: one nonempty line ; stdout: ""
+  otherwise:
+    let n = int_of(argv[1])
+    stdout: unlines(map(lines(file.bytes), \L -> get(split(L, argv[0]), n - 1, "")))
+    stderr: ""
+    exit:   0
+examples:
+  argv=[",","2","f"] file="a,b,c\nd,e,f\n" -> stdout="b\ne\n" exit=0
+  argv=[",","1","f"] file="x,y\n" -> stdout="x\n" exit=0
+  argv=[",","5","f"] file="a,b\n" -> stdout="\n" exit=0
+  argv=[",","0","f"] -> exit=2
+  argv=["ab","1","f"] -> exit=2
+  argv=[",","q","f"] -> exit=2
+  argv=[",","1"] -> exit=2
+  argv=[",","1","missing"] -> exit=2

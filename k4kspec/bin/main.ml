@@ -2,12 +2,13 @@ open K4kspec
 
 let usage =
   "k4kspec — reference-free spec-validation harness (v1 WIP)\n\n\
+   <spec> below is a path to a .k4kspec FILE, or a built-in spec name.\n\n\
    usage:\n\
-  \  k4kspec list                       list the built-in specs\n\
-  \  k4kspec check <name>               validate a spec (examples + stability +\n\
-  \                                     under-spec report + adversarial sweep)\n\
-  \  k4kspec check <name> --ref '<cmd>' also run the OPTIONAL clone differential\n\
-  \  k4kspec run   <name> -- <args...>  execute the spec as its own model\n\n\
+  \  k4kspec list                        list the built-in specs\n\
+  \  k4kspec check <spec>                validate (examples + stability +\n\
+  \                                      under-spec report + adversarial sweep)\n\
+  \  k4kspec check <spec> --ref '<cmd>'  also run the OPTIONAL clone differential\n\
+  \  k4kspec run   <spec> -- <args...>   execute the spec as its own model\n\n\
    built-in specs: " ^ String.concat ", " (List.map fst Specs.by_name) ^ "\n"
 
 let read_file_opt p =
@@ -15,11 +16,26 @@ let read_file_opt p =
     let s = really_input_string ic n in close_in ic; Some s
   with _ -> None
 
-let do_check name rest =
-  match List.assoc_opt name Specs.by_name with
-  | None -> Printf.eprintf "unknown spec: %s\n" name; exit 2
-  | Some sp ->
-      let ok = Check.run_report sp in
+(* resolve a CLI argument to a spec: an existing file is parsed; otherwise it is a
+   built-in spec name. *)
+let load (arg : string) : Ast.spec =
+  if Sys.file_exists arg then
+    (match read_file_opt arg with
+     | None -> Printf.eprintf "[k4kspec] cannot read %s\n" arg; exit 2
+     | Some src ->
+         (try Parse.parse src
+          with Parse.Parse_error m -> Printf.eprintf "[k4kspec] parse error in %s: %s\n" arg m; exit 2))
+  else
+    match List.assoc_opt arg Specs.by_name with
+    | Some sp -> sp
+    | None ->
+        Printf.eprintf "[k4kspec] no such spec or file: %s  (built-ins: %s)\n"
+          arg (String.concat ", " (List.map fst Specs.by_name));
+        exit 2
+
+let do_check arg rest =
+  let sp = load arg in
+  let ok = Check.run_report sp in
       (match rest with
        | "--ref" :: cmd :: _ ->
            print_newline ();
@@ -34,13 +50,11 @@ let do_check name rest =
        | _ -> ());
       exit (if ok then 0 else 1)
 
-let do_run name args =
-  match List.assoc_opt name Specs.by_name with
-  | None -> Printf.eprintf "unknown spec: %s\n" name; exit 2
-  | Some sp ->
+let do_run arg args =
+  let sp = load arg in
       let inp = { Eval.argv = args; stdin = ""; read_file = read_file_opt } in
       (match (try `Ok (Eval.run_traced sp inp) with Eval.Spec_error m -> `Err m) with
-       | `Err m -> Printf.eprintf "[k4kspec] %s: spec error: %s\n" name m; exit 64
+       | `Err m -> Printf.eprintf "[k4kspec] %s: spec error: %s\n" sp.Ast.name m; exit 64
        | `Ok (r, idx) ->
            (* the spec's OWN stdout / (pinned) stderr — the program's real output *)
            print_string r.Eval.rstdout;
@@ -52,7 +66,7 @@ let do_run name args =
              | Eval.SExact _ -> "pinned"
              | Eval.SPred p -> Printf.sprintf "free/uncertified (%s)" (Check.pred_name p) in
            Printf.eprintf "[k4kspec] %s: case #%d [%s] -> exit=%d, stdout=%d bytes, stderr=%s\n"
-             name idx guard r.Eval.rexit (String.length r.Eval.rstdout) serr;
+             sp.Ast.name idx guard r.Eval.rexit (String.length r.Eval.rstdout) serr;
            exit r.Eval.rexit)
 
 let () =

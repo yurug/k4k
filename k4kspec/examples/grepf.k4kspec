@@ -1,0 +1,17 @@
+# grepf NEEDLE FILE — print the lines of FILE that contain the fixed string NEEDLE.
+interface cli "grepf":
+  reads: file at argv[1]
+  writes: nothing
+cases on argv, file:
+  when len(argv) != 2: exit 2 ; stderr: one nonempty line ; stdout: ""
+  when file absent:    exit 2 ; stderr: one nonempty line ; stdout: ""
+  otherwise:
+    let matched = filter(lines(file.bytes), \L -> contains(L, argv[0]))
+    stdout: unlines(matched)
+    stderr: ""
+    exit:   if is_empty(matched) then 1 else 0
+examples:
+  argv=["b","f"] file="alpha\nbob\ncab\n" -> stdout="bob\ncab\n" exit=0
+  argv=["zz","f"] file="a\nb\n" -> stdout="" exit=1
+  argv=["x"] -> exit=2
+  argv=["x","nope"] -> exit=2

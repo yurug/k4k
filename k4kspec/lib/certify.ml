@@ -25,7 +25,11 @@ let shim_ml (sp : spec) : string =
              \  let args = match Array.to_list Sys.argv with _ :: r -> r | [] -> [] in\n"
       ^ Printf.sprintf "  let file1 = (match List.nth_opt args %d with Some p -> read_opt p | None -> None) in\n" idx
       ^ Printf.sprintf "  let o = %s.run { %s.argv = List.map to_cl args; %s.file1 = file1 } in\n" m m m ^ emit_out
-  | FileAtEach -> failwith "shim: variadic footprint not yet supported (M4)"
+  | FileAtEach ->
+      conv ^ "let () =\n\
+             \  let args = match Array.to_list Sys.argv with _ :: r -> r | [] -> [] in\n\
+             \  let contents = List.map read_opt args in\n"
+      ^ Printf.sprintf "  let o = %s.run { %s.argv = List.map to_cl args; %s.contents = contents } in\n" m m m ^ emit_out
 
 type report = { ok : bool; log : string list }
 

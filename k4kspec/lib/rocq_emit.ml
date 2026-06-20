@@ -68,7 +68,7 @@ Definition int_of (s : string) : nat := if is_decimal s then natstr s 0 else 0.
 let input_record = function
   | NoFiles -> "Record Input := { argv : list bytes }."
   | FileAt _ -> "Record Input := { argv : list bytes ; file1 : option bytes }."
-  | FileAtEach -> "Record Input := { argv : list bytes ; files : list (option bytes) }."
+  | FileAtEach -> "Record Input := { argv : list bytes ; contents : list (option bytes) }."
 
 (* ---- expression translation (env tracks let/lambda variable types) -------- *)
 type ty = TList | TBytes | TInt | TBool
@@ -101,6 +101,10 @@ let coq_string (s : string) : string =
 
 let fail_unsupported f = failwith (Printf.sprintf "rocq_emit: unsupported construct: %s" f)
 
+(* the spec's footprint, set by [emit]; the variadic (FileAtEach) case rewrites
+   combinators over `argv` to iterate over the pre-read `contents` list instead. *)
+let cur_reads = ref NoFiles
+
 let rec re (env : env) (e : expr) : string =
   match e with
   | Lit (B s) -> coq_string s
@@ -116,10 +120,14 @@ let rec re (env : env) (e : expr) : string =
   | Lam (x, body) -> Printf.sprintf "(fun %s => %s)" x (re ((x, TBytes) :: env) body)
   | App (f, args) -> re_app env f args
 
-(* combinator whose 2nd argument is a predicate/mapping lambda over byte-typed elements *)
+(* the list a combinator iterates: for FileAtEach, `argv` becomes the pre-read `contents`
+   (the lambda variable then ranges over `option bytes`, and `file_at x` is the identity). *)
+and re_list env l = if l = ArgvAll && !cur_reads = FileAtEach then "(contents i)" else re env l
+
+(* combinator whose 2nd argument is a predicate/mapping lambda over the element type *)
 and re_lam_combinator env coqf l lam =
   match lam with
-  | Lam (x, body) -> Printf.sprintf "(%s (fun %s => %s) %s)" coqf x (re ((x, TBytes) :: env) body) (re env l)
+  | Lam (x, body) -> Printf.sprintf "(%s (fun %s => %s) %s)" coqf x (re ((x, TBytes) :: env) body) (re_list env l)
   | _ -> fail_unsupported "combinator needs a lambda"
 
 and re_app env f args =
@@ -135,10 +143,16 @@ and re_app env f args =
   | "map", [ l; lam ] -> re_lam_combinator env "List.map" l lam
   | "split", [ s; sep ] -> Printf.sprintf "(splits %s %s)" (re env sep) (re env s)
   | "get", [ l; i; d ] -> Printf.sprintf "(nth %s %s %s)" (re env i) (re env l) (re env d)
-  | "any", [ l; Lam (x, body) ] -> Printf.sprintf "(existsb (fun %s => %s) %s)" x (re ((x, TBytes) :: env) body) (re env l)
-  | "all", [ l; Lam (x, body) ] -> Printf.sprintf "(forallb (fun %s => %s) %s)" x (re ((x, TBytes) :: env) body) (re env l)
-  | "first", [ l; Lam (x, body); d ] -> Printf.sprintf "(lfirst (fun %s => %s) %s %s)" x (re ((x, TBytes) :: env) body) (re env l) (re env d)
-  | "count", [ l; Lam (x, body) ] -> Printf.sprintf "(length (List.filter (fun %s => %s) %s))" x (re ((x, TBytes) :: env) body) (re env l)
+  | "any", [ l; Lam (x, body) ] -> Printf.sprintf "(existsb (fun %s => %s) %s)" x (re ((x, TBytes) :: env) body) (re_list env l)
+  | "all", [ l; Lam (x, body) ] -> Printf.sprintf "(forallb (fun %s => %s) %s)" x (re ((x, TBytes) :: env) body) (re_list env l)
+  | "first", [ l; Lam (x, body); d ] -> Printf.sprintf "(lfirst (fun %s => %s) %s %s)" x (re ((x, TBytes) :: env) body) (re_list env l) (re env d)
+  | "count", [ l; Lam (x, body) ] -> Printf.sprintf "(length (List.filter (fun %s => %s) %s))" x (re ((x, TBytes) :: env) body) (re_list env l)
+  | "fold", [ l; init; Lam (acc, Lam (x, body)) ] ->
+      Printf.sprintf "(fold_left (fun %s %s => %s) %s %s)" acc x (re ((x, TBytes) :: (acc, TBytes) :: env) body) (re_list env l) (re env init)
+  | "file_at", [ e ] -> re env e                                    (* under FileAtEach iteration, the var IS the content option *)
+  | "opt_bytes", [ e ] -> Printf.sprintf "(fbytes %s)" (re env e)
+  | "absent", [ e ] -> Printf.sprintf "(match %s with None => true | Some _ => false end)" (re env e)
+  | "present", [ e ] -> Printf.sprintf "(match %s with None => false | Some _ => true end)" (re env e)
   | "eq", [ a; b ] ->
       (match typ env a with
        | TInt -> Printf.sprintf "(Nat.eqb %s %s)" (re env a) (re env b)
@@ -222,7 +236,7 @@ let extraction name =
      Extraction \"%s_ext.ml\" run.\n" name
 
 let emit (sp : spec) : string =
-  (match sp.reads with NoFiles | FileAt _ -> () | FileAtEach -> failwith "rocq_emit: variadic footprint not yet supported (M4)");
+  cur_reads := sp.reads;
   String.concat "\n"
     [ preamble;
       input_record sp.reads;

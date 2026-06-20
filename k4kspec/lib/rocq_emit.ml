@@ -1,17 +1,17 @@
-(* Elaborator: Ast.spec -> a self-contained Rocq .v source whose [correct] theorem,
-   once checked by coqc, certifies that the extracted [run] satisfies the relation
-   [spec_rel] denoted by the surface spec. v1 covers the NO-FILE fragment (footprint
-   NoFiles); file footprints raise (M3). The generated .v matches backend/poc/upper.v. *)
+(* Elaborator: Ast.spec -> a self-contained Rocq .v whose [correct] theorem, once
+   checked by coqc, certifies that the extracted [run] satisfies [spec_rel] (the relation
+   R denoted by the surface spec). Covers the NO-FILE and single-FILE (FileAt) fragments;
+   FileAtEach (variadic) is M4. The generated .v matches backend/poc/upper.v's guarantees. *)
 
 open Ast
 
-(* the blessed value algebra in Rocq — the certified vocabulary (audited once). *)
+(* The blessed value algebra in Rocq — the certified vocabulary (audited once).
+   These defs MUST match lib/algebra.ml. Output record is fixed; Input is footprint-specific. *)
 let preamble =
   {coq|Require Import Coq.Strings.String Coq.Strings.Ascii Coq.Lists.List Coq.Arith.PeanoNat Coq.Bool.Bool.
 Import ListNotations.
 
 Definition bytes := string.
-Record Input  := { argv : list bytes }.
 Record Output := { stdout : bytes ; stderr : bytes ; exit : nat }.
 
 Definition up_ascii (c : ascii) : ascii :=
@@ -25,20 +25,53 @@ Definition lo_ascii (c : ascii) : ascii :=
 Fixpoint ascii_lower (s : string) : string :=
   match s with EmptyString => EmptyString | String c r => String (lo_ascii c) (ascii_lower r) end.
 
+Definition nlc : ascii := ascii_of_nat 10.
 Definition bnth (l : list bytes) (n : nat) : bytes := nth n l EmptyString.
+Definition fbytes (o : option bytes) : bytes := match o with Some c => c | None => EmptyString end.
 Definition one_nonempty_line (s : string) : Prop := s <> EmptyString.
+
+(* split on newline, mechanical (keeps every piece, incl. a trailing empty) *)
+Fixpoint splitnl (s : string) : list string :=
+  match s with
+  | EmptyString => EmptyString :: nil
+  | String c r =>
+      if Ascii.eqb c nlc then EmptyString :: splitnl r
+      else match splitnl r with nil => String c EmptyString :: nil | h :: t => String c h :: t end
+  end.
+Definition drop_last_empty (l : list string) : list string :=
+  match rev l with EmptyString :: t => rev t | _ => l end.
+(* POSIX lines: a final '\n' is a terminator, not an empty trailing line *)
+Definition lines (b : string) : list string :=
+  match b with EmptyString => nil | _ => drop_last_empty (splitnl b) end.
+Fixpoint unlines (l : list string) : string :=
+  match l with nil => EmptyString | x :: r => append x (String nlc (unlines r)) end.
+
+Fixpoint is_prefix (p s : string) : bool :=
+  match p with
+  | EmptyString => true
+  | String pc pr => match s with EmptyString => false | String sc sr => if Ascii.eqb pc sc then is_prefix pr sr else false end
+  end.
+Fixpoint contains (s needle : string) : bool :=
+  match s with EmptyString => is_prefix needle EmptyString | String c r => if is_prefix needle (String c r) then true else contains r needle end.
 |coq}
 
-(* ---- expression translation ---------------------------------------------- *)
+let input_record = function
+  | NoFiles -> "Record Input := { argv : list bytes }."
+  | FileAt _ -> "Record Input := { argv : list bytes ; file1 : option bytes }."
+  | FileAtEach -> "Record Input := { argv : list bytes ; files : list (option bytes) }."
+
+(* ---- expression translation (env tracks let/lambda variable types) -------- *)
 type ty = TList | TBytes | TInt | TBool
 
-let rec typ (e : expr) : ty =
+type env = (string * ty) list
+
+let rec typ (env : env) (e : expr) : ty =
   match e with
   | Lit (B _) -> TBytes | Lit (I _) -> TInt | Lit (Bool _) -> TBool | Lit _ -> TBytes
   | Argv _ | Stdin | FileBytes -> TBytes
   | ArgvAll -> TList
-  | If (_, a, _) -> typ a
-  | Var _ -> TBytes
+  | If (_, a, _) -> typ env a
+  | Var x -> (try List.assoc x env with Not_found -> TBytes)
   | Lam _ -> TBytes
   | App (f, _) ->
       (match f with
@@ -47,7 +80,6 @@ let rec typ (e : expr) : ty =
        | "split" | "lines" | "filter" | "map" -> TList
        | _ -> TBool)
 
-(* a Coq [string] literal built from bytes (robust to newlines / non-printables) *)
 let coq_string (s : string) : string =
   let b = Buffer.create (String.length s * 8 + 8) in
   Buffer.add_char b '(';
@@ -57,9 +89,9 @@ let coq_string (s : string) : string =
   Buffer.add_char b ')';
   Buffer.contents b
 
-let fail_unsupported f = failwith (Printf.sprintf "rocq_emit: unsupported in the no-file fragment: %s" f)
+let fail_unsupported f = failwith (Printf.sprintf "rocq_emit: unsupported construct: %s" f)
 
-let rec re (e : expr) : string =
+let rec re (env : env) (e : expr) : string =
   match e with
   | Lit (B s) -> coq_string s
   | Lit (I n) -> string_of_int n
@@ -68,40 +100,53 @@ let rec re (e : expr) : string =
   | Argv k -> Printf.sprintf "(bnth (argv i) %d)" k
   | ArgvAll -> "(argv i)"
   | Stdin -> fail_unsupported "stdin"
-  | FileBytes -> fail_unsupported "file.bytes"
+  | FileBytes -> "(fbytes (file1 i))"
   | Var x -> x
-  | If (c, a, b) -> Printf.sprintf "(if %s then %s else %s)" (re c) (re a) (re b)
-  | Lam _ -> fail_unsupported "lambda"
-  | App (f, args) -> re_app f args
+  | If (c, a, b) -> Printf.sprintf "(if %s then %s else %s)" (re env c) (re env a) (re env b)
+  | Lam (x, body) -> Printf.sprintf "(fun %s => %s)" x (re ((x, TBytes) :: env) body)
+  | App (f, args) -> re_app env f args
 
-and re_app f args =
+(* combinator whose 2nd argument is a predicate/mapping lambda over byte-typed elements *)
+and re_lam_combinator env coqf l lam =
+  match lam with
+  | Lam (x, body) -> Printf.sprintf "(%s (fun %s => %s) %s)" coqf x (re ((x, TBytes) :: env) body) (re env l)
+  | _ -> fail_unsupported "combinator needs a lambda"
+
+and re_app env f args =
   match f, args with
-  | "len", [ e ] -> (match typ e with TList -> Printf.sprintf "(length %s)" (re e) | _ -> Printf.sprintf "(String.length %s)" (re e))
-  | "concat", [ a; b ] -> Printf.sprintf "(append %s %s)" (re a) (re b)
-  | "ascii_upper", [ e ] -> Printf.sprintf "(ascii_upper %s)" (re e)
-  | "ascii_lower", [ e ] -> Printf.sprintf "(ascii_lower %s)" (re e)
+  | "len", [ e ] -> (match typ env e with TList -> Printf.sprintf "(length %s)" (re env e) | _ -> Printf.sprintf "(String.length %s)" (re env e))
+  | "concat", [ a; b ] -> Printf.sprintf "(append %s %s)" (re env a) (re env b)
+  | "ascii_upper", [ e ] -> Printf.sprintf "(ascii_upper %s)" (re env e)
+  | "ascii_lower", [ e ] -> Printf.sprintf "(ascii_lower %s)" (re env e)
+  | "lines", [ e ] -> Printf.sprintf "(lines %s)" (re env e)
+  | "unlines", [ e ] -> Printf.sprintf "(unlines %s)" (re env e)
+  | "contains", [ a; b ] -> Printf.sprintf "(contains %s %s)" (re env a) (re env b)
+  | "filter", [ l; lam ] -> re_lam_combinator env "List.filter" l lam
+  | "map", [ l; lam ] -> re_lam_combinator env "List.map" l lam
   | "eq", [ a; b ] ->
-      (match typ a with
-       | TInt -> Printf.sprintf "(Nat.eqb %s %s)" (re a) (re b)
-       | TBytes -> Printf.sprintf "(String.eqb %s %s)" (re a) (re b)
-       | TBool -> Printf.sprintf "(Bool.eqb %s %s)" (re a) (re b)
+      (match typ env a with
+       | TInt -> Printf.sprintf "(Nat.eqb %s %s)" (re env a) (re env b)
+       | TBytes -> Printf.sprintf "(String.eqb %s %s)" (re env a) (re env b)
+       | TBool -> Printf.sprintf "(Bool.eqb %s %s)" (re env a) (re env b)
        | TList -> fail_unsupported "list-eq")
-  | "ne", [ a; b ] -> Printf.sprintf "(negb %s)" (re_app "eq" [ a; b ])
-  | "lt", [ a; b ] -> Printf.sprintf "(Nat.ltb %s %s)" (re a) (re b)
-  | "le", [ a; b ] -> Printf.sprintf "(Nat.leb %s %s)" (re a) (re b)
-  | "gt", [ a; b ] -> Printf.sprintf "(Nat.ltb %s %s)" (re b) (re a)
-  | "ge", [ a; b ] -> Printf.sprintf "(Nat.leb %s %s)" (re b) (re a)
-  | "not", [ e ] -> Printf.sprintf "(negb %s)" (re e)
-  | "and", [ a; b ] -> Printf.sprintf "(andb %s %s)" (re a) (re b)
-  | "or", [ a; b ] -> Printf.sprintf "(orb %s %s)" (re a) (re b)
-  | "is_empty", [ e ] -> (match typ e with TList -> Printf.sprintf "(Nat.eqb (length %s) 0)" (re e) | _ -> Printf.sprintf "(String.eqb %s EmptyString)" (re e))
-  | "sub", [ a; b ] -> Printf.sprintf "(%s - %s)" (re a) (re b)
-  | "add", [ a; b ] -> Printf.sprintf "(%s + %s)" (re a) (re b)
+  | "ne", [ a; b ] -> Printf.sprintf "(negb %s)" (re_app env "eq" [ a; b ])
+  | "lt", [ a; b ] -> Printf.sprintf "(Nat.ltb %s %s)" (re env a) (re env b)
+  | "le", [ a; b ] -> Printf.sprintf "(Nat.leb %s %s)" (re env a) (re env b)
+  | "gt", [ a; b ] -> Printf.sprintf "(Nat.ltb %s %s)" (re env b) (re env a)
+  | "ge", [ a; b ] -> Printf.sprintf "(Nat.leb %s %s)" (re env b) (re env a)
+  | "not", [ e ] -> Printf.sprintf "(negb %s)" (re env e)
+  | "and", [ a; b ] -> Printf.sprintf "(andb %s %s)" (re env a) (re env b)
+  | "or", [ a; b ] -> Printf.sprintf "(orb %s %s)" (re env a) (re env b)
+  | "is_empty", [ e ] -> (match typ env e with TList -> Printf.sprintf "(Nat.eqb (length %s) 0)" (re env e) | _ -> Printf.sprintf "(String.eqb %s EmptyString)" (re env e))
+  | "sub", [ a; b ] -> Printf.sprintf "(%s - %s)" (re env a) (re env b)
+  | "add", [ a; b ] -> Printf.sprintf "(%s + %s)" (re env a) (re env b)
+  | "absent_footprint", [] -> "(match (file1 i) with None => true | Some _ => false end)"
+  | "present_footprint", [] -> "(match (file1 i) with None => false | Some _ => true end)"
   | _ -> fail_unsupported f
 
 (* ---- per-case bodies ------------------------------------------------------ *)
-let stderr_prop = function
-  | Eq e -> Printf.sprintf "stderr o = %s" (re e)
+let stderr_prop env = function
+  | Eq e -> Printf.sprintf "stderr o = %s" (re env e)
   | P OneNonemptyLine -> "one_nonempty_line (stderr o)"
   | P Nonempty -> "stderr o <> EmptyString"
   | P EmptyB -> "stderr o = EmptyString"
@@ -109,37 +154,46 @@ let stderr_prop = function
 
 let outc ch (c : case) = List.assoc ch c.outs
 
-let with_lets (c : case) body =
-  List.fold_right (fun (x, e) acc -> Printf.sprintf "let %s := %s in %s" x (re e) acc) c.lets body
+(* emit the case's let-bindings, threading the type env, then call [body] with it *)
+let emit_lets (c : case) (body : env -> string) : string =
+  let rec go env = function
+    | [] -> body env
+    | (x, e) :: rest -> Printf.sprintf "let %s := %s in %s" x (re env e) (go ((x, typ env e) :: env) rest)
+  in
+  go [] c.lets
 
 let case_prop (c : case) : string =
-  let stdout_e = match outc Stdout c with Eq e -> re e | P _ -> failwith "stdout must be pinned" in
-  let exit_e = match outc Exit c with Eq e -> re e | P _ -> failwith "exit must be pinned" in
-  with_lets c (Printf.sprintf "(stdout o = %s /\\ %s /\\ exit o = %s)" stdout_e (stderr_prop (outc Stderr c)) exit_e)
+  emit_lets c (fun env ->
+      let stdout_e = match outc Stdout c with Eq e -> re env e | P _ -> failwith "stdout must be pinned" in
+      let exit_e = match outc Exit c with Eq e -> re env e | P _ -> failwith "exit must be pinned" in
+      Printf.sprintf "(stdout o = %s /\\ %s /\\ exit o = %s)" stdout_e (stderr_prop env (outc Stderr c)) exit_e)
 
 let case_run (name : string) (c : case) : string =
-  let stdout_e = match outc Stdout c with Eq e -> re e | P _ -> "EmptyString" in
-  let exit_e = match outc Exit c with Eq e -> re e | P _ -> "0" in
-  let stderr_e =
-    match outc Stderr c with
-    | Eq e -> re e
-    | P (OneNonemptyLine | Nonempty) -> coq_string (name ^ ": error")
-    | P (Any | EmptyB) -> "EmptyString"
-  in
-  with_lets c (Printf.sprintf "{| stdout := %s; stderr := %s; exit := %s |}" stdout_e stderr_e exit_e)
+  emit_lets c (fun env ->
+      let stdout_e = match outc Stdout c with Eq e -> re env e | P _ -> "EmptyString" in
+      let exit_e = match outc Exit c with Eq e -> re env e | P _ -> "0" in
+      let stderr_e =
+        match outc Stderr c with
+        | Eq e -> re env e
+        | P (OneNonemptyLine | Nonempty) -> coq_string (name ^ ": error")
+        | P (Any | EmptyB) -> "EmptyString"
+      in
+      Printf.sprintf "{| stdout := %s; stderr := %s; exit := %s |}" stdout_e stderr_e exit_e)
 
 let rec chain body = function
   | [ c ] -> body c
-  | c :: rest -> (match c.guard with Some g -> Printf.sprintf "if %s then %s else %s" (re g) (body c) (chain body rest) | None -> body c)
+  | c :: rest -> (match c.guard with Some g -> Printf.sprintf "if %s then %s else %s" (re [] g) (body c) (chain body rest) | None -> body c)
   | [] -> failwith "rocq_emit: no cases"
 
-let proof =
-  "Theorem correct : forall i, spec_rel i (run i).\n\
-  \  Proof.\n\
-  \    intros i. unfold spec_rel, run, one_nonempty_line.\n\
-  \    repeat (match goal with |- context [ if ?b then _ else _ ] => destruct b end);\n\
-  \    cbn; repeat split; (reflexivity || discriminate || exact I).\n\
-  \  Qed.\n"
+let proof reads =
+  let pre = match reads with FileAt _ -> "destruct (file1 i); cbn; " | FileAtEach -> "" | NoFiles -> "" in
+  Printf.sprintf
+    "Theorem correct : forall i, spec_rel i (run i).\n\
+    \  Proof.\n\
+    \    intros i. unfold spec_rel, run, one_nonempty_line, fbytes.\n\
+    \    %srepeat (match goal with |- context [ if ?b then _ else _ ] => destruct b end);\n\
+    \    cbn; repeat split; (reflexivity || discriminate || exact I).\n\
+    \  Qed.\n" pre
 
 let extraction name =
   Printf.sprintf
@@ -150,10 +204,11 @@ let extraction name =
      Extraction \"%s_ext.ml\" run.\n" name
 
 let emit (sp : spec) : string =
-  (match sp.reads with NoFiles -> () | _ -> failwith "rocq_emit: file footprints not yet supported (M3)");
+  (match sp.reads with NoFiles | FileAt _ -> () | FileAtEach -> failwith "rocq_emit: variadic footprint not yet supported (M4)");
   String.concat "\n"
     [ preamble;
+      input_record sp.reads;
       Printf.sprintf "Definition spec_rel (i : Input) (o : Output) : Prop :=\n  %s." (chain case_prop sp.cases);
       Printf.sprintf "Definition run (i : Input) : Output :=\n  %s." (chain (case_run sp.name) sp.cases);
-      proof;
+      proof sp.reads;
       extraction sp.name ]

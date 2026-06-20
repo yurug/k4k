@@ -4,18 +4,28 @@
 
 open Ast
 
-(* the trusted no-file I/O shim, specialised to the extracted module name *)
-let shim_ml (name : string) : string =
-  let m = String.capitalize_ascii (name ^ "_ext") in
-  Printf.sprintf
+(* the trusted I/O shim, specialised to the footprint + extracted module name.
+   It reads EXACTLY the declared footprint paths (frame by construction). *)
+let shim_ml (sp : spec) : string =
+  let m = String.capitalize_ascii (sp.name ^ "_ext") in
+  let conv =
     "let to_cl (s : string) : char list = List.init (String.length s) (String.get s)\n\
      let of_cl (l : char list) : string = String.of_seq (List.to_seq l)\n\
-     let () =\n\
-    \  let args = match Array.to_list Sys.argv with _ :: r -> r | [] -> [] in\n\
-    \  let o = %s.run (List.map to_cl args) in\n\
-    \  print_string (of_cl o.%s.stdout);\n\
-    \  prerr_string (of_cl o.%s.stderr);\n\
-    \  exit o.%s.exit\n" m m m m
+     let read_opt p = (try let ic = open_in_bin p in let n = in_channel_length ic in\n\
+    \    let s = really_input_string ic n in close_in ic; Some (to_cl s) with _ -> None)\n"
+  in
+  let emit_out = Printf.sprintf "  print_string (of_cl o.%s.stdout); prerr_string (of_cl o.%s.stderr); exit o.%s.exit\n" m m m in
+  match sp.reads with
+  | NoFiles ->
+      conv ^ "let () =\n\
+             \  let args = match Array.to_list Sys.argv with _ :: r -> r | [] -> [] in\n"
+      ^ Printf.sprintf "  let o = %s.run (List.map to_cl args) in\n" m ^ emit_out
+  | FileAt idx ->
+      conv ^ "let () =\n\
+             \  let args = match Array.to_list Sys.argv with _ :: r -> r | [] -> [] in\n"
+      ^ Printf.sprintf "  let file1 = (match List.nth_opt args %d with Some p -> read_opt p | None -> None) in\n" idx
+      ^ Printf.sprintf "  let o = %s.run { %s.argv = List.map to_cl args; %s.file1 = file1 } in\n" m m m ^ emit_out
+  | FileAtEach -> failwith "shim: variadic footprint not yet supported (M4)"
 
 type report = { ok : bool; log : string list }
 
@@ -46,7 +56,7 @@ let certify ?(workdir = "/tmp/k4k_certify") (sp : spec) : report =
              else begin
                say "coqc: proof CHECKED (exit 0), extraction done";
                (* 3. shim + compile the certified binary *)
-               write (name ^ "_main.ml") (shim_ml name);
+               write (name ^ "_main.ml") (shim_ml sp);
                let c2, o2, e2 = Refdiff.run_cmd [ ocf; "ocamlopt"; name ^ "_ext.mli"; name ^ "_ext.ml"; name ^ "_main.ml"; "-o"; name ] ~cwd:workdir in
                if c2 <> 0 then (say (Printf.sprintf "FAIL: ocamlopt exit %d:\n%s%s" c2 o2 e2); done_ false)
                else begin
@@ -54,9 +64,13 @@ let certify ?(workdir = "/tmp/k4k_certify") (sp : spec) : report =
                  (* 4. cross-check binary vs the Eval oracle on examples + sweep *)
                  let bin = path name in
                  let inputs = List.map (fun e -> (e.ex_argv, e.ex_files)) sp.examples @ Check.scenarios sp in
-                 let mism = ref 0 in
+                 let mism = ref 0 and prev = ref [] in
                  List.iter
                    (fun (argv, files) ->
+                     (* materialise exactly this input's files on disk; the binary reads them *)
+                     List.iter (fun (p, _) -> (try Sys.remove (path p) with _ -> ())) !prev;
+                     List.iter (fun (p, c) -> write p c) files;
+                     prev := files;
                      let oracle = try Some (Eval.run sp (Eval.input_of argv files)) with Eval.Spec_error _ -> None in
                      match oracle with
                      | None -> ()
@@ -65,10 +79,11 @@ let certify ?(workdir = "/tmp/k4k_certify") (sp : spec) : report =
                          if bout <> o.Eval.rstdout || bc <> o.Eval.rexit then begin
                            incr mism;
                            if !mism <= 5 then
-                             say (Printf.sprintf "MISMATCH argv=[%s]: binary(out=%S exit=%d) vs spec(out=%S exit=%d)"
-                                    (String.concat ";" argv) bout bc o.Eval.rstdout o.Eval.rexit)
+                             say (Printf.sprintf "MISMATCH argv=[%s] files=[%s]: binary(out=%S exit=%d) vs spec(out=%S exit=%d)"
+                                    (String.concat ";" argv) (String.concat ";" (List.map fst files)) bout bc o.Eval.rstdout o.Eval.rexit)
                          end)
                    inputs;
+                 List.iter (fun (p, _) -> (try Sys.remove (path p) with _ -> ())) !prev;
                  if !mism > 0 then (say (Printf.sprintf "FAIL: %d binary/spec mismatch(es)" !mism); done_ false)
                  else begin
                    say (Printf.sprintf "binary MATCHES spec on %d inputs" (List.length inputs));

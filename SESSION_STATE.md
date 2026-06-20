@@ -80,7 +80,7 @@ on boundary inputs — *review these: is this what you meant?*). Exit 0 iff it v
 | `lib/ast.ml`     | spec AST (Input/Output, cases/lets/outs, footprint, examples) |
 | `lib/eval.ml`    | the spec **oracle**: run a spec → determined (stdout, exit) + stderr constraint |
 | `lib/specs.ml`   | grepf / cutf / catf / **kvget** (non-clone) as AST values, with examples |
-| `lib/check.ml`   | the reference-free harness (examples / stability / under-spec / sweep) |
+| `lib/check.ml`   | the reference-free harness (examples / stability / under-spec / sweep). The sweep includes **mutations of your own examples** (drop/add an arg, empty a file, toggle trailing newline, remove a file) — the most relevant boundaries — plus a generic boundary grid |
 | `lib/refdiff.ml` | OPTIONAL clone differential vs a reference binary (special case) |
 | `bin/main.ml`    | CLI: `list` / `check` / `run` |
 | `test/test_k4kspec.ml` | stdlib-only tests (algebra + oracle + all examples + exhaustiveness) |

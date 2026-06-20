@@ -51,6 +51,29 @@ let check_example sp (e : example) : ex_result =
 let arg_pool = [ "x"; ""; "-"; ","; "="; "2"; "0"; "1"; "q" ]
 let content_pool = [ ""; "a"; "a\n"; "a\nb"; "a\nb\n"; "\n"; "a,b,c\n"; "k=1\nk=2\n" ]
 
+(* mutation-based generation: perturb each author example towards its boundaries.
+   These inputs sit NEXT TO the author's stated intent, so the spec's behavior on them
+   is the most useful thing to put in front of the human for adjudication. *)
+let example_mutations (sp : spec) : (string list * (string * string) list) list =
+  let toggle_nl c =
+    if c <> "" && c.[String.length c - 1] = '\n' then String.sub c 0 (String.length c - 1) else c ^ "x"
+  in
+  let mutate (argv, files) =
+    let drop_last = match List.rev argv with _ :: r -> [ (List.rev r, files) ] | [] -> [] in
+    let add_arg = [ (argv @ [ "x" ], files) ] in
+    let file_muts =
+      List.concat_map
+        (fun (p, c) ->
+          let others = List.filter (fun (q, _) -> q <> p) files in
+          [ (argv, (p, "") :: others);              (* empty the file        *)
+            (argv, (p, toggle_nl c) :: others);     (* toggle trailing newline *)
+            (argv, others) ])                       (* remove file -> absent  *)
+        files
+    in
+    drop_last @ add_arg @ file_muts
+  in
+  List.concat_map (fun e -> mutate (e.ex_argv, e.ex_files)) sp.examples
+
 (* a scenario is (argv, present-files) *)
 let scenarios (sp : spec) : (string list * (string * string) list) list =
   let from_examples = List.map (fun e -> (e.ex_argv, e.ex_files)) sp.examples in
@@ -87,7 +110,7 @@ let scenarios (sp : spec) : (string list * (string * string) list) list =
   let seen = Hashtbl.create 97 in
   List.filter
     (fun s -> let k = Marshal.to_string s [] in if Hashtbl.mem seen k then false else (Hashtbl.add seen k (); true))
-    (from_examples @ gen)
+    (from_examples @ example_mutations sp @ gen)
 
 (* ---- stability ------------------------------------------------------------ *)
 let has_otherwise sp = List.exists (fun c -> c.guard = None) sp.cases

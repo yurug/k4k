@@ -30,19 +30,23 @@ Definition bnth (l : list bytes) (n : nat) : bytes := nth n l EmptyString.
 Definition fbytes (o : option bytes) : bytes := match o with Some c => c | None => EmptyString end.
 Definition one_nonempty_line (s : string) : Prop := s <> EmptyString.
 
-(* split on newline, mechanical (keeps every piece, incl. a trailing empty) *)
-Fixpoint splitnl (s : string) : list string :=
+(* split on a single char, mechanical (keeps every piece, incl. a trailing empty) *)
+Fixpoint splitc (d : ascii) (s : string) : list string :=
   match s with
   | EmptyString => EmptyString :: nil
   | String c r =>
-      if Ascii.eqb c nlc then EmptyString :: splitnl r
-      else match splitnl r with nil => String c EmptyString :: nil | h :: t => String c h :: t end
+      if Ascii.eqb c d then EmptyString :: splitc d r
+      else match splitc d r with nil => String c EmptyString :: nil | h :: t => String c h :: t end
   end.
+Definition hchar (s : string) : ascii := match s with String c _ => c | EmptyString => ascii_of_nat 0 end.
+Definition splits (delim s : string) : list string := splitc (hchar delim) s.   (* delim is 1 byte (guarded) *)
 Definition drop_last_empty (l : list string) : list string :=
   match rev l with EmptyString :: t => rev t | _ => l end.
 (* POSIX lines: a final '\n' is a terminator, not an empty trailing line *)
 Definition lines (b : string) : list string :=
-  match b with EmptyString => nil | _ => drop_last_empty (splitnl b) end.
+  match b with EmptyString => nil | _ => drop_last_empty (splitc nlc b) end.
+Definition lfirst (p : string -> bool) (l : list string) (d : string) : string :=
+  match find p l with Some v => v | None => d end.
 Fixpoint unlines (l : list string) : string :=
   match l with nil => EmptyString | x :: r => append x (String nlc (unlines r)) end.
 
@@ -53,6 +57,12 @@ Fixpoint is_prefix (p s : string) : bool :=
   end.
 Fixpoint contains (s needle : string) : bool :=
   match s with EmptyString => is_prefix needle EmptyString | String c r => if is_prefix needle (String c r) then true else contains r needle end.
+
+Definition is_digit (c : ascii) : bool := andb (Nat.leb 48 (nat_of_ascii c)) (Nat.leb (nat_of_ascii c) 57).
+Fixpoint all_digits (s : string) : bool := match s with EmptyString => true | String c r => andb (is_digit c) (all_digits r) end.
+Definition is_decimal (s : string) : bool := andb (negb (String.eqb s EmptyString)) (all_digits s).
+Fixpoint natstr (s : string) (acc : nat) : nat := match s with EmptyString => acc | String c r => natstr r (acc * 10 + (nat_of_ascii c - 48)) end.
+Definition int_of (s : string) : nat := if is_decimal s then natstr s 0 else 0.
 |coq}
 
 let input_record = function
@@ -123,6 +133,12 @@ and re_app env f args =
   | "contains", [ a; b ] -> Printf.sprintf "(contains %s %s)" (re env a) (re env b)
   | "filter", [ l; lam ] -> re_lam_combinator env "List.filter" l lam
   | "map", [ l; lam ] -> re_lam_combinator env "List.map" l lam
+  | "split", [ s; sep ] -> Printf.sprintf "(splits %s %s)" (re env sep) (re env s)
+  | "get", [ l; i; d ] -> Printf.sprintf "(nth %s %s %s)" (re env i) (re env l) (re env d)
+  | "any", [ l; Lam (x, body) ] -> Printf.sprintf "(existsb (fun %s => %s) %s)" x (re ((x, TBytes) :: env) body) (re env l)
+  | "all", [ l; Lam (x, body) ] -> Printf.sprintf "(forallb (fun %s => %s) %s)" x (re ((x, TBytes) :: env) body) (re env l)
+  | "first", [ l; Lam (x, body); d ] -> Printf.sprintf "(lfirst (fun %s => %s) %s %s)" x (re ((x, TBytes) :: env) body) (re env l) (re env d)
+  | "count", [ l; Lam (x, body) ] -> Printf.sprintf "(length (List.filter (fun %s => %s) %s))" x (re ((x, TBytes) :: env) body) (re env l)
   | "eq", [ a; b ] ->
       (match typ env a with
        | TInt -> Printf.sprintf "(Nat.eqb %s %s)" (re env a) (re env b)
@@ -140,6 +156,8 @@ and re_app env f args =
   | "is_empty", [ e ] -> (match typ env e with TList -> Printf.sprintf "(Nat.eqb (length %s) 0)" (re env e) | _ -> Printf.sprintf "(String.eqb %s EmptyString)" (re env e))
   | "sub", [ a; b ] -> Printf.sprintf "(%s - %s)" (re env a) (re env b)
   | "add", [ a; b ] -> Printf.sprintf "(%s + %s)" (re env a) (re env b)
+  | "is_decimal", [ e ] -> Printf.sprintf "(is_decimal %s)" (re env e)
+  | "int_of", [ e ] -> Printf.sprintf "(int_of %s)" (re env e)
   | "absent_footprint", [] -> "(match (file1 i) with None => true | Some _ => false end)"
   | "present_footprint", [] -> "(match (file1 i) with None => false | Some _ => true end)"
   | _ -> fail_unsupported f

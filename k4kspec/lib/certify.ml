@@ -54,11 +54,23 @@ let certify ?(workdir = "/tmp/k4k_certify") (sp : spec) : report =
          | None, _ -> say "FAIL: coqc not on PATH"; done_ false
          | _, None -> say "FAIL: ocamlfind not on PATH"; done_ false
          | Some coqc, Some ocf ->
-             (* 2. coqc checks the proof + extracts *)
-             let c1, o1, e1 = Refdiff.run_cmd [ coqc; name ^ ".v" ] ~cwd:workdir in
+             (* audited-once blessed algebra: copy backend/Kalgebra.v in and compile it first *)
+             let kalg_ok =
+               match List.find_opt Sys.file_exists [ "k4kspec/backend/Kalgebra.v"; "backend/Kalgebra.v"; "../backend/Kalgebra.v" ] with
+               | None -> say "FAIL: cannot locate k4kspec/backend/Kalgebra.v"; false
+               | Some ksrc ->
+                   let ic = open_in_bin ksrc in let kn = in_channel_length ic in
+                   let ks = really_input_string ic kn in close_in ic; write "Kalgebra.v" ks;
+                   let ck, ko, ke = Refdiff.run_cmd [ coqc; "-Q"; "."; ""; "Kalgebra.v" ] ~cwd:workdir in
+                   if ck <> 0 then (say (Printf.sprintf "FAIL: coqc Kalgebra.v exit %d:\n%s%s" ck ko ke); false) else true
+             in
+             if not kalg_ok then done_ false
+             else
+             (* 2. coqc checks the proof + extracts (the generated .v requires Kalgebra) *)
+             let c1, o1, e1 = Refdiff.run_cmd [ coqc; "-Q"; "."; ""; name ^ ".v" ] ~cwd:workdir in
              if c1 <> 0 then (say (Printf.sprintf "FAIL: coqc exit %d:\n%s%s" c1 o1 e1); done_ false)
              else begin
-               say "coqc: proof CHECKED (exit 0), extraction done";
+               say "coqc: proof CHECKED (exit 0; algebra from audited-once Kalgebra.v), extraction done";
                (* 3. shim + compile the certified binary *)
                write (name ^ "_main.ml") (shim_ml sp);
                let c2, o2, e2 = Refdiff.run_cmd [ ocf; "ocamlopt"; name ^ "_ext.mli"; name ^ "_ext.ml"; name ^ "_main.ml"; "-o"; name ] ~cwd:workdir in
@@ -95,7 +107,7 @@ let certify ?(workdir = "/tmp/k4k_certify") (sp : spec) : report =
                    let _, coqv, _ = Refdiff.run_cmd [ coqc; "--version" ] ~cwd:workdir in
                    let manifest =
                      Printf.sprintf
-                       "# TCB manifest — %s\n\nClaim: the extracted implementation is PROVEN (coqc) to satisfy spec_rel,\nthe relation denoted by the signed k4kspec, MODULO this trusted base:\n\n- Rocq kernel + extraction: %s- OCaml compiler (ocamlfind ocamlopt %s)\n- the blessed value algebra (Rocq preamble in %s.v)\n- the I/O shim (%s_main.ml)\n- the elaborator (lib/rocq_emit.ml)\n\nArtifacts: %s.v (source+proof), %s_ext.ml (extracted), %s (binary).\nLimitation: v1 generates `run` to match the spec, so the proof is easy; replacing the\ndeterministic generator with a stochastic agent backend (hard proofs) is future work.\n"
+                       "# TCB manifest — %s\n\nClaim: the extracted implementation is PROVEN (coqc) to satisfy spec_rel,\nthe relation denoted by the signed k4kspec, MODULO this trusted base:\n\n- Rocq kernel + extraction: %s- OCaml compiler (ocamlfind ocamlopt %s)\n- the blessed value algebra (audited-once backend/Kalgebra.v; extracted into %s_ext.ml)\n- the I/O shim (%s_main.ml)\n- the elaborator (lib/rocq_emit.ml)\n\nArtifacts: %s.v (source+proof), %s_ext.ml (extracted), %s (binary).\nLimitation: v1 generates `run` to match the spec, so the proof is easy; replacing the\ndeterministic generator with a stochastic agent backend (hard proofs) is future work.\n"
                        name coqv (match Refdiff.which "ocamlopt" with Some p -> p | None -> "ocamlopt") name name name name name
                    in
                    write (name ^ ".tcb.md") manifest;

@@ -207,3 +207,79 @@ let certify_structured ?(workdir = "/tmp/k4k_certify_agent") ?(max_attempts = 3)
            say "[assemble] FINAL gate: certify_v (bans admits; coqc; extract; compile; cross-check; manifest)";
            let r = Certify.certify_v ~workdir sp (String.concat "\n" [ stmt; run; devf; extr ]) in
            { Certify.ok = r.Certify.ok; log = List.rev !log @ r.Certify.log })))
+
+(* ===== COMPOSITIONAL METHODOLOGY (ADR-021): decompose -> module-interface gate -> certify each
+   component -> assemble. The agent proposes COMPONENTS (impl + functional contract), `run` as their
+   composition, and a glue proof of the top spec from the component contracts; the harness gates the
+   decomposition (the glue must be Qed'd with the component certificates Admitted) and then drives
+   the component certificates to proven. Generalizes ADR-020's skeleton gate to a module boundary. *)
+
+let decompose_prompt stmt =
+  "You are building a CERTIFIED Coq (Rocq 9.1) program by COMPOSITIONAL decomposition.\n" ^ kalgebra_blurb
+  ^ "\n\nThe Input type and the specification relation are ALREADY defined (do NOT restate them):\n\n" ^ stmt
+  ^ "\n\nDECOMPOSE the implementation into COMPONENTS and prove the top goal FROM THEIR CONTRACTS:\n\
+     1. Define each component as a Coq function `Definition compK (x : AK) : BK := ...` (naive/clear).\n\
+     2. Give each a CONTRACT `Definition compK_spec (x : AK) (y : BK) : Prop := ...`.\n\
+     3. Define `run : Input -> Output` as the COMPOSITION of the components.\n\
+     4. State each component certificate `Lemma compK_correct : forall x, compK_spec x (compK x).`\n\
+        and leave its proof `Admitted` FOR NOW.\n\
+     5. PROVE the top `Theorem correct : forall i, spec_rel i (run i).` with a real `Qed`, using ONLY\n\
+        the `compK_correct` lemmas (the GLUE). The WHOLE thing MUST COMPILE: the glue must go through\n\
+        GIVEN the Admitted component certificates (this is the module-interface gate).\n\
+     Output raw Coq only — component `Definition`s + `_spec`s, `run`, the Admitted `compK_correct`\n\
+     lemmas, then `Theorem correct ... Qed.` Do NOT restate Input/spec_rel. No prose."
+
+let fill_comp_prompt stmt dev =
+  "You are completing a CERTIFIED Coq program (compositional).\n" ^ kalgebra_blurb
+  ^ "\n\nAlready defined (do NOT restate Input/spec_rel):\n\n" ^ stmt
+  ^ "\n\nThe development so far (components + `run` + the glue `correct`), which COMPILES but whose\n\
+     component certificates are still `Admitted`:\n\n" ^ dev
+  ^ "\n\nProve EVERY Admitted `compK_correct` (you may add helper lemmas above each). Return the COMPLETE\n\
+     development — all component `Definition`s/`_spec`s, `run`, every `compK_correct` (now real `Qed`),\n\
+     and `Theorem correct ... Qed.` — raw Coq only, with NO `Admitted`/`admit`/`Axiom`. Don't restate Input/spec_rel."
+
+let certify_compositional ?(workdir = "/tmp/k4k_certify_agent") ?(max_attempts = 3) ?(max_fill = 5) ~(backend : backend) (sp : spec) : Certify.report =
+  let stmt = (try Rocq_emit.emit_statement sp with Failure m -> failwith ("statement: " ^ m)) in
+  let extr = Rocq_emit.extraction_for sp.Ast.name in
+  let name = sp.Ast.name in
+  let chk = workdir ^ "_chk" in
+  let log = ref [] in
+  let say s = log := s :: !log; Printf.eprintf "%s\n%!" s in
+  let fail () = { Certify.ok = false; log = List.rev !log } in
+  let check v = Certify.coqc_check ~workdir:chk name v in
+  (* PHASE A — DECOMPOSE + MODULE-INTERFACE GATE *)
+  let rec decompose attempt prompt =
+    say (Printf.sprintf "[decompose] attempt %d: requesting components + contracts + run + glue (certs Admitted)..." attempt);
+    let dev = clean (backend.invoke prompt) in
+    let ok, out = check (String.concat "\n" [ stmt; dev ]) in
+    if ok && Algebra.contains dev "correct" then
+      (say (Printf.sprintf "[decompose] MODULE-INTERFACE GATE passed (attempt %d): run composes from the component contracts; glue Qed'd with components Admitted" attempt); Some dev)
+    else if attempt >= max_attempts then (say (Printf.sprintf "[decompose] FAILED after %d attempts:\n%s" attempt out); None)
+    else decompose (attempt + 1) (decompose_prompt stmt ^ "\n\nYour previous decomposition failed the gate. coqc said:\n" ^ out ^ "\nReturn corrected components + run + Admitted certs + a Qed'd `correct`.")
+  in
+  (match decompose 1 (decompose_prompt stmt) with
+   | None -> fail ()
+   | Some dev0 ->
+     (* PHASE B — CERTIFY EACH COMPONENT (drive the compK_correct admits to 0) *)
+     let rec p_fill round dev =
+       if not (has_admit dev) then (say (Printf.sprintf "[components] all component certificates proved (after %d round(s))" (round - 1)); Some dev)
+       else if round > max_fill then (say (Printf.sprintf "[components] admits REMAIN after %d rounds — final gate will reject honestly" max_fill); Some dev)
+       else
+         let rec one k prompt =
+           say (Printf.sprintf "[components round %d] sub-attempt %d: proving component certificates..." round k);
+           let body = clean (backend.invoke prompt) in
+           let ok, out = check (String.concat "\n" [ stmt; body ]) in
+           if ok then Some body
+           else if k >= 2 then (say (Printf.sprintf "[components round %d] no compiling development; coqc:\n%s" round out); None)
+           else one (k + 1) (fill_comp_prompt stmt dev ^ "\n\nYour previous attempt did NOT compile. coqc said:\n" ^ out ^ "\nReturn the complete development again, corrected.")
+         in
+         (match one 1 (fill_comp_prompt stmt dev) with
+          | Some body -> say (Printf.sprintf "[components round %d] compiles (admits left: %b)" round (has_admit body)); p_fill (round + 1) body
+          | None -> Some dev)
+     in
+     (match p_fill 1 dev0 with
+      | None -> fail ()
+      | Some devf ->
+        say "[assemble] FINAL gate: certify_v (bans admits; coqc; extract; compile; cross-check; manifest)";
+        let r = Certify.certify_v ~workdir sp (String.concat "\n" [ stmt; devf; extr ]) in
+        { Certify.ok = r.Certify.ok; log = List.rev !log @ r.Certify.log }))

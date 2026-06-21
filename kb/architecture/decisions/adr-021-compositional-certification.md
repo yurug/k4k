@@ -84,15 +84,24 @@ with the component certificates `Admitted`); PHASE B **certify each component** 
 `compK_correct` admits to 0, focused coqc feedback); PHASE C **assemble** + `certify_v` (the real,
 no-admits certificate). It is ADR-020's structured method generalized to module boundaries.
 
-**Result:** `bsort` certifies compositionally — claude **drove** a genuine 2-component decomposition
-(`sort_chars : bytes→bytes` with contract `Sorted ∧ Permutation`; `err_line : unit→bytes` with
-contract `one_nonempty_line`), `run` composing them, and the glue deriving the top spec from the two
-component certificates. Module-interface gate passed attempt 1; 0 escape hatches; binary correct.
-(Small spec — validates the machinery; the scaling payoff is on large multi-module targets.)
+**Results.**
+- `bsort` (2 components) — claude split into `sort_chars` (contract `Sorted ∧ Permutation`) +
+  `err_line` (contract `one_nonempty_line`); glue derives the top spec from both certificates.
+- **`grepf` — a FIRST MULTI-MODULE grep-class certificate (5 components).** `certify-agent
+  --compositional grepf` decomposed it into `comp_argc` (arg count), `comp_nofile` (file-absent
+  test), `comp_match` (matching lines = filter-by-contains over `lines`), `comp_err` (error output),
+  `comp_ok` (success output); `run` composes them; the glue proves the top observational spec from
+  the **five component contracts alone** (`rewrite`/`exact` on the contracts). Module-interface gate
+  passed attempt 1; 0 escape hatches; certified binary matched **39/39** inputs; `Print Assumptions`
+  = Closed under the global context. The **human signs only the top `spec_rel`**; the five component
+  contracts are agent-proposed + kernel-checked. Captured at `k4kspec/backend/poc/grepf_compositional.v`.
+
+This validates multi-module **breadth** (a real module graph + contract-based glue) on a grep-class
+program; **depth** (a component with a substantial internal proof) is shown separately (the sort
+component in `bsort`, the multi-invariant `usort`).
 
 ## Open / next
-- A **first genuinely multi-module target** (a small grep-class program) to exercise scaling, not
-  just the machinery.
+- A target combining **breadth + a deep component** (e.g. a grep-then-sort pipeline) — both axes at once.
 - **Recursive decomposition**: a component whose own certificate is hard becomes its own
   `certify_compositional`/`certify_structured` sub-problem.
 - A **certified-component library** (a matcher, a parser, a numeral renderer) reused across targets.

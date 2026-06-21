@@ -16,6 +16,17 @@ commit, then a FRESH agent audits (criteria in PLAN.md §Audit); fix until a fre
 GREEN, then emit the completion promise. **Loop state below is updated each iteration:**
 
 ### Certify-pipeline progress log (newest first)
+- 2026-06-21: **FIRST MULTI-MODULE certificate — grepf, 5 agent-chosen components.** `certify-agent
+  --compositional grepf` (claude, tools off) certified the grep-class spec by decomposing it into
+  FIVE components — comp_argc (arg count), comp_nofile (file-absent test), comp_match (matching lines
+  = filter-by-contains over lines), comp_err (error output), comp_ok (success output) — each with a
+  functional contract + certificate; run composes them; the glue proves the top observational spec
+  from the five contracts ALONE. Module-interface gate passed attempt 1; 0 escape hatches; binary
+  MATCHES 39/39; independently re-checks (Print Assumptions = Closed under global context). Human
+  signs ONLY the top spec_rel. Reference: `k4kspec/backend/poc/grepf_compositional.v` (commit
+  0b4364d). Validates multi-module BREADTH (module graph + contract glue) on a grep-class program;
+  DEPTH shown separately (bsort sort component, usort). NEXT: breadth + a deep component (grep-then-
+  sort pipeline); recursive decomposition; certified-component library.
 - 2026-06-21: **AGENT-DRIVEN COMPOSITIONAL certification (ADR-021 follow-on) — built + validated.**
   `certify-agent --compositional` (`lib/agent_proof.ml:certify_compositional`): PHASE A decompose
   (agent proposes components [impl + functional contract] + run-as-composition + glue) gated by the

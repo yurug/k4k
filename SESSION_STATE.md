@@ -16,6 +16,23 @@ commit, then a FRESH agent audits (criteria in PLAN.md §Audit); fix until a fre
 GREEN, then emit the completion promise. **Loop state below is updated each iteration:**
 
 ### Certify-pipeline progress log (newest first)
+- 2026-06-21: **COMPOSITIONAL CERTIFICATION (ADR-021) — architecture + validated prototype.** Yann's
+  forward-looking concern: real targets (a grep clone) need modular architecture to scale, even under
+  KISS. **ADR-021:** the human signs ONLY the top observational `spec_rel` (stays flat regardless of
+  impl size); the implementation scales on two impl-side axes — (1) compositional verification (`run`
+  = composition of certified components, each a FUNCTIONAL Coq contract `forall x, S x (f x)`,
+  agent-proposed + kernel-checked, NOT human-signed; ADR-020's skeleton gate generalizes to a
+  MODULE-INTERFACE GATE), (2) naive->efficient refinement (we certify the simplest correct impl, not
+  20kloc of perf engineering). Contract form DECIDED: functional Coq relations (components are
+  functions, not CLI programs). **Prototype `k4kspec/backend/poc/compose_sort.v` (coqc exit 0):**
+  `run = format o core` certified from two component contracts (core=sort: Sorted/\Permutation;
+  format=string_of_list_ascii: roundtrip); GLUE `compose` derives the top byte-level spec from the two
+  certificates only — `Print Assumptions compose` = Closed under the global context (0 axioms). Plus
+  the MODULE-INTERFACE GATE (`acompose`, Section AbstractComposition): the top spec proven with
+  components UNINTERPRETED + contracts as hypotheses — the decomposition is kernel-valid BEFORE any
+  component is built. Commits bee7000 (ADR-021) + fc41c36 (poc). **Follow-on:** wire compositional
+  decomposition into the agent backend (agent proposes components+contracts+glue; harness drives the
+  module-interface gate + recursive structured certification).
 - 2026-06-20: **STRUCTURED PROOF METHODOLOGY (ADR-020) built + validated — unblocks usort.** Yann's
   redirection: design a methodology before brute-forcing hard proofs. Approved: skeleton-gate + fill,
   correctness-only. `certify-agent --structured <spec>` (`lib/agent_proof.ml:certify_structured`,

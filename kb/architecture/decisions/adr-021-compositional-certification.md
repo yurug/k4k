@@ -12,9 +12,9 @@ related: [adr-013]
 # ADR-021: Compositional certification — scale the implementation, keep the spec KISS
 
 ## Status
-Accepted (2026-06-21). Refines ADR-020 (its structured methodology is applied *recursively* here).
-Approved scope: write the architecture **and** prototype a two-component certificate (the contract
-form is decided in this ADR).
+Accepted / **realized** (2026-06-21). Refines ADR-020 (its structured methodology is applied
+*recursively* here). Architecture + Coq-level prototype + **agent-driven** orchestration all built
+(`certify-agent --compositional`, commits `bee7000`/`fc41c36`/`ec74442`). Contract form decided below.
 
 ## Context
 Even under KISS, realistic targets (a `grep` clone, an `awk`-lite, …) have implementations far too
@@ -76,11 +76,25 @@ Plus the **module-interface gate demo**: with `core`/`format` certificates left 
 still compiles (the architecture is kernel-valid *before* the components are proved). Lives at
 `k4kspec/backend/poc/compose_sort.v` — validates the Coq-level composition machinery.
 
-## Open / next (the agent-orchestration follow-on)
-- **Wire compositional decomposition into the agent backend**: the agent proposes components +
-  contracts + glue; the harness drives the module-interface gate, then certifies each component by
-  the recursive structured method. (This ADR validates the *Coq-level* machinery; agent
-  orchestration is the next build.)
+## Agent orchestration — REALIZED (2026-06-21)
+`lib/agent_proof.ml:certify_compositional` (CLI `certify-agent --compositional`, commit `ec74442`):
+PHASE A **decompose** — the agent proposes components (impl + functional contract), `run` as their
+composition, and a glue proof — gated by the **module-interface gate** (coqc accepts the glue `Qed`'d
+with the component certificates `Admitted`); PHASE B **certify each component** (drive the
+`compK_correct` admits to 0, focused coqc feedback); PHASE C **assemble** + `certify_v` (the real,
+no-admits certificate). It is ADR-020's structured method generalized to module boundaries.
+
+**Result:** `bsort` certifies compositionally — claude **drove** a genuine 2-component decomposition
+(`sort_chars : bytes→bytes` with contract `Sorted ∧ Permutation`; `err_line : unit→bytes` with
+contract `one_nonempty_line`), `run` composing them, and the glue deriving the top spec from the two
+component certificates. Module-interface gate passed attempt 1; 0 escape hatches; binary correct.
+(Small spec — validates the machinery; the scaling payoff is on large multi-module targets.)
+
+## Open / next
+- A **first genuinely multi-module target** (a small grep-class program) to exercise scaling, not
+  just the machinery.
+- **Recursive decomposition**: a component whose own certificate is hard becomes its own
+  `certify_compositional`/`certify_structured` sub-problem.
 - A **certified-component library** (a matcher, a parser, a numeral renderer) reused across targets.
 - **Inter-component dependency ordering** when one component's contract feeds another.
 

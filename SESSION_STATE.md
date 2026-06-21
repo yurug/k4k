@@ -16,6 +16,17 @@ commit, then a FRESH agent audits (criteria in PLAN.md §Audit); fix until a fre
 GREEN, then emit the completion promise. **Loop state below is updated each iteration:**
 
 ### Certify-pipeline progress log (newest first)
+- 2026-06-21: **AGENT-DRIVEN COMPOSITIONAL certification (ADR-021 follow-on) — built + validated.**
+  `certify-agent --compositional` (`lib/agent_proof.ml:certify_compositional`): PHASE A decompose
+  (agent proposes components [impl + functional contract] + run-as-composition + glue) gated by the
+  MODULE-INTERFACE GATE (coqc accepts the glue Qed'd with component certs Admitted) → PHASE B certify
+  each component (drive compK_correct admits→0) → PHASE C assemble + certify_v. ADR-020's structured
+  method generalized to module boundaries. **bsort certifies compositionally**: claude DROVE a genuine
+  2-component decomposition (sort_chars:bytes→bytes contract Sorted/\Permutation; err_line:unit→bytes
+  contract one_nonempty_line), run composing them, glue deriving the top spec from the two component
+  certificates; module-interface gate passed attempt 1; 0 escape hatches; binary correct. Commit
+  ec74442. Validates the machinery (small spec; scaling payoff is on large multi-module targets).
+  Next: a first genuinely multi-module target; recursive decomposition; certified-component library.
 - 2026-06-21: **COMPOSITIONAL CERTIFICATION (ADR-021) — architecture + validated prototype.** Yann's
   forward-looking concern: real targets (a grep clone) need modular architecture to scale, even under
   KISS. **ADR-021:** the human signs ONLY the top observational `spec_rel` (stays flat regardless of

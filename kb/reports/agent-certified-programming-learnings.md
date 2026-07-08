@@ -3,7 +3,7 @@ id: reports.agent-certified-programming-learnings
 type: report
 summary: Learnings from building k4k's agent proof backend — getting an LLM to write CERTIFIED CLI programs (Rocq proofs, coqc the only gate). The arc from "certify a spec-shaped program" to agent-invented inductive proofs, a proof methodology, and compositional scaling. Written as raw material for a blog post.
 domain: reports
-last-updated: 2026-06-23
+last-updated: 2026-07-08
 depends-on: [adr-018, adr-019, adr-020, adr-021]
 related: [reports.expert-panel-2026-06-19, notes]
 ---
@@ -166,6 +166,24 @@ grepf's five components have *trivial* proofs (breadth, not depth); breadth and 
 combined in one program yet. Stating the boundary with each win is what keeps the narrative honest —
 and is usually where the next experiment comes from.
 
+### Addendum — 2026-07-08 re-validation
+
+**L18 — Given freedom, the model picks the algorithm that makes the proof easy.** Re-certifying
+`usort` through the clean built-in path, the agent abandoned insertion-sort+dedup (~10 lemmas, its
+June solution) for `filter (∈ input) (map ascii_of_nat (seq 0 256))` — enumerate the ordered byte
+universe, keep what's present. Sorted and duplicate-free *by construction*: 6 lemmas, every gate
+passed attempt 1. Under-determined specs don't just *leave* the implementation freedom — the model
+*uses* that freedom to minimize proof obligations. L6 (naive-first) is not just a policy we impose;
+it's a pressure the prover-agent responds to on its own.
+
+**L19 — The gate can be sound while the paperwork lies.** The fresh audit of that run caught a
+false hardcoded line in the TCB manifest ("v1 generates `run` to match the spec… agent backend is
+future work" — on a certificate the agent backend produced). Nothing certified was weakened; the
+*template* was stale. Honest reporting (L14) includes the report generators themselves. The same
+audit also raised the bar for what an audit can be: it produced a Coq **meta-proof** that the
+spec's two laws uniquely determine the output — auditors can *prove things about your statement*,
+not just probe it.
+
 ---
 
 ## Evidence table
@@ -177,6 +195,7 @@ and is usually where the next experiment comes from.
 | `bsort` | invented insertion sort; proved `Sorted ∧ Permutation` by induction | closed (after tools-off fix) |
 | `partition` | proof *construction* over an unfamiliar preorder (`part_le`) | closed, attempt 1 |
 | `usort` | multi-invariant (strict-sort + set-equality); **one-shot stalled** | closed only via the methodology |
+| `usort` (re-run 2026-07-08) | agent switched to filter-the-byte-universe — **proof-friendlier algorithm**, 6 lemmas | closed, every gate attempt 1 |
 | `bsort` (compositional) | agent-driven 2-component decomposition | certified |
 | `grepf` (compositional) | **first multi-module certificate — 5 agent-chosen components, 39/39** | certified |
 

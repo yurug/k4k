@@ -12,6 +12,8 @@ Definition bytes := string.
 
 (* byte order, for relational laws (e.g. sorting) *)
 Definition ascii_le (a b : ascii) : Prop := nat_of_ascii a <= nat_of_ascii b.
+(* STRICT byte order: `Sorted ascii_lt l` forces strictly increasing -> no duplicates *)
+Definition ascii_lt (a b : ascii) : Prop := nat_of_ascii a < nat_of_ascii b.
 
 (* partition preorder around the threshold 109 ('m'): "if b is in the small group, so is a".
    Sorted part_le l  <->  l is partitioned (all bytes < 'm' precede all bytes >= 'm'). It is a

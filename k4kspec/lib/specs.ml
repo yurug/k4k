@@ -177,5 +177,26 @@ let partition : spec =
     examples = [ ex ~exit:2 []; ex ~exit:2 [ "a"; "b" ] ];   (* success path is under-determined *)
   }
 
-let all = [ grepf; cutf; catf; kvget; bsort; partition ]
+(* ---- usort ARG  (ADVERSARIAL: TWO interacting invariants — strict sort + set equality) ------ *)
+(* stdout's bytes are ARG's bytes SORTED and DEDUPLICATED. Expressed as: `Sorted ascii_lt` (a STRICT
+   order, so the output has no duplicates) AND `same_set` (same membership as ARG). The agent must
+   produce a sort+dedup and prove BOTH a strict-sortedness invariant (each consecutive pair strictly
+   increases — needs the dedup to kill equals) AND set-preservation in both directions. Harder than
+   partition: two different invariants that interact, NoDup-flavoured. The ceiling probe. *)
+let usort : spec =
+  {
+    name = "usort"; reads = NoFiles;
+    cases =
+      [
+        case ~guard:(ne (len ArgvAll) (i 1)) err2;
+        case
+          ~laws:
+            [ App ("sorted_strict", [ App ("list_of", [ OStdout ]) ]);
+              App ("same_set", [ App ("list_of", [ OStdout ]); App ("list_of", [ Argv 0 ]) ]) ]
+          [ (Stdout, P Any); (Stderr, Eq (s "")); (Exit, Eq (i 0)) ];
+      ];
+    examples = [ ex ~exit:2 []; ex ~exit:2 [ "a"; "b" ] ];   (* success path is under-determined *)
+  }
+
+let all = [ grepf; cutf; catf; kvget; bsort; partition; usort ]
 let by_name = List.map (fun s -> (s.name, s)) all

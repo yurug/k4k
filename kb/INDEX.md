@@ -3,7 +3,7 @@ id: INDEX
 type: index
 summary: Master entry point for the k4k knowledge base. Always read this first.
 domain: meta
-last-updated: 2026-05-02
+last-updated: 2026-07-08
 depends-on: []
 refines: []
 related: []
@@ -119,7 +119,7 @@ kb/
 
 - **Methodology files**: 40 (+ ADR-011, ADR-012, ADR-013)
 - **Reference files** active: `NOTES.md`. Archived under `archive/v0-drifted/`: questions-round{1,2,3}, plan, plan-simulation report, all audit reports, the user's feedback that triggered the v2 reorientation.
-- **Last updated**: 2026-05-03
+- **Last updated**: 2026-07-08
 
 ## Methodology phase tracker
 
@@ -148,6 +148,7 @@ kb/
 | **v3 design pass** (2026-06-20) — spec-language semantics + guidance doc + intent UX | KB ✓: ADR-017 (guidance document — third, uncertified artifact); `spec/k4kspec.md` (language reference — semantic domain, relation R, surface forms, value algebra incl. opinion-free principle + lambdas-as-combinator-args, fs frame/footprint incl. variadic + deletion, under-spec posture, worked examples grepf/cutf/catf); ADR-014 += intent-seeded generation + decision-focused review; ADR-016 += clone-as-oracle, under-spec sign-off, certificate-scope disclosure, NFR triage. **Still open:** blessed-def precise semantics, the I/O shim (cli×Rocq), the IR + statement-preserving elaborator, the validation oracle, argv-grammar sugar. |
 | **v3 BUILD** (2026-06-20) — validation front-end + REALIZED v1 certify back-end | Code ✓ in `k4kspec/` (stdlib-only OCaml; separate from the v2 tree). Front-end: parser (`lib/parse.ml`, round-trip tested) + the reference-free validation harness (oracle/examples/stability/curated sweep). **Back-end (ADR-018):** `k4kspec certify <file>` = elaborate (`lib/rocq_emit.ml`) → coqc-checked proof → extract → compile(+shim) → run → cross-check vs oracle → TCB manifest. **All 6 v1-fragment specs certify** (upper/greet/grepf/kvget/cutf/catf), each FRESH-AGENT audited GREEN with tamper tests (non-vacuous). Blessed algebra audited-once (`backend/Kalgebra.v`). Commits 0f9eb9d..63ee151. **Honest limit:** v1 generates `run` to match the spec ⇒ easy proofs (certifies the pipeline, not hard-proof automation). **Next:** the agent proof backend (ADR-019, the central bet); statement-preserving elaborator; verified extraction. |
 | **v3 AGENT-PROOF** (2026-06-20) — the central bet, realized + validated + given a methodology | **ADR-019:** `certify-agent <file>` — elaborator fixes `spec_rel`; an external agent (`$K4K_PROOF_CMD`, e.g. tools-off `claude -p`) proposes `run`+proof; coqc is the only gate (+ error-feedback retries, fresh-agent audited GREEN; can't be tricked by a `spec_rel` redefinition). Relational-LAWS machinery (output-refs + per-case `laws` + under-determined channels; `Sorted`/`Permutation`/`ascii_le`/`part_le`/`ascii_lt` in Kalgebra). **Validated:** easy (`upper`+4 pinned), HARD inductive (`bsort`: invented insertion sort, proved Sorted/Permutation), HARD non-sort (`partition`: custom preorder, proof by construction). **Ceiling found:** `usort` (strict-sort + set-equality, multi-invariant) — one-shot monolithic generation stalls. **ADR-020 (methodology):** replace one-shot with **implement-naive → SKETCH (kernel-checked skeleton gate: lemmas Admitted, coqc verifies the decomposition suffices) → fill each lemma in isolation → assemble + no-admits gate.** Correctness-only for v1. Commits 63ee151..c118155 (+ methodology build next). |
+| **v3 usort landing + re-validation** (2026-07-08) — provenance gap closed | The 2026-06-20 `usort` result's spec artifacts (spec in `specs.ml`, `sorted_strict`/`same_set` emissions, `ascii_lt` in Kalgebra) had sat **uncommitted** since the run — the KB claimed a result git couldn't reproduce. Landed as a first-class built-in + **re-certified** via `certify-agent --structured` (all gates attempt 1, one fill round). New datapoint: the agent invented a **proof-friendlier algorithm** (filter the ordered 0–255 byte universe by membership — sorted+dedup by construction, 6 lemmas) instead of insertion-sort+dedup. Fresh-agent audit GREEN (Coq meta-proof of output uniqueness; 5 novel gate attacks rejected; 16/16 independent oracle; tamper-tested non-vacuous). Audit also confirmed a **manifest honesty bug** (hardcoded "v1 generates run to match the spec" Limitation line is false for agent-produced certificates) — fixed in the follow-up commit. Known pre-existing gap (named, not fixed here): the `check` front-end predates relational laws and fails law-carrying specs (bsort/partition/usort exit 1). |
 
 ## Agent notes
 

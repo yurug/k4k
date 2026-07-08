@@ -3,7 +3,7 @@ id: adr-020
 type: decision
 summary: The agent proof backend follows a METHODOLOGY instead of one-shot monolithic generation. Four phases — implement-naive, sketch (a kernel-checked proof skeleton with the lemmas Admitted), fill (prove each lemma in isolation, focused feedback), assemble (final coqc gate, no admits). The keystone is the SKELETON GATE: coqc checks the decomposition is type-correct and sufficient before any lemma is proved. Correctness-only for v1; naive→efficient refinement deferred.
 domain: architecture
-last-updated: 2026-06-20
+last-updated: 2026-07-08
 depends-on: [adr-019, adr-016, conventions.context-economy, glossary]
 refines: [adr-019]
 related: [adr-013, notes]
@@ -25,6 +25,18 @@ passed first try**, fill closed all lemmas in one round, final gate green. claud
 for strict-sortedness; `insertA_in`/`isortA_in`/`nat_of_ascii_inj` for set-equality); 0 escape
 hatches; binary `banana → abn`, `zzaazz → az`. Also validated end-to-end on `upper`. The
 methodology unblocked a proof one-shot could not even begin.
+
+**Re-validation & landing (2026-07-08).** The 2026-06-20 run's spec artifacts (the `usort` spec,
+the `sorted_strict`/`same_set` law emissions, `ascii_lt` in Kalgebra) had never been committed —
+the result was real but not reproducible from git. Landed now and **re-certified through the clean
+built-in path**: implement / skeleton-gate / fill all passed **attempt 1, one fill round**. Notably
+the agent invented a **different, proof-friendlier algorithm** this time — filter the ordered
+universe `map ascii_of_nat (seq 0 256)` by membership in the input (sorted + duplicate-free *by
+construction*, 6 lemmas) instead of insertion-sort+dedup (~10 lemmas). Fresh-agent adversarial
+audit **GREEN**: a Coq meta-proof that the two laws uniquely determine the output
+(`spec_output_unique`, closed under the global context), `Sorted ascii_lt → NoDup` proved, 5 novel
+gate attacks rejected (incl. shadowing `ascii_lt` and weakening the arg guard), 16/16 vs an
+independent byte-level oracle, 3-way tamper test non-vacuous.
 
 ## Context
 

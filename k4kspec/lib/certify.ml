@@ -56,10 +56,21 @@ let coqc_check ?(workdir = "/tmp/k4k_coqc_check") (name : string) (v : string) :
             (c = 0, o ^ e)
           end)
 
+(* the manifest's closing honesty line depends on WHO produced run+proof (the 2026-07-08 audit
+   caught the deterministic text shipping, falsely, on agent-produced certificates) *)
+let deterministic_limitation =
+  "Limitation: v1 generates `run` to match the spec, so the proof is easy; replacing the\n\
+   deterministic generator with a stochastic agent backend (hard proofs) is future work."
+
+let agent_provenance =
+  "Provenance: `run` + proof were PROPOSED by a stochastic agent backend (untrusted) and\n\
+   CHECKED by coqc; the agent is NOT part of the trusted base above."
+
 (* the pipeline given a final .v source (elaborator- OR agent-produced): write it, gate on no
    escape hatches, coqc (with the audited-once Kalgebra), extract, compile (+ shim), run,
    cross-check vs the oracle, write the manifest. *)
-let certify_v ?(workdir = "/tmp/k4k_certify") (sp : spec) (v : string) : report =
+let certify_v ?(workdir = "/tmp/k4k_certify") ?(limitation = deterministic_limitation) (sp : spec)
+    (v : string) : report =
   let log = ref [] in
   let say s = log := s :: !log in
   let done_ ok = { ok; log = List.rev !log } in
@@ -132,8 +143,8 @@ let certify_v ?(workdir = "/tmp/k4k_certify") (sp : spec) (v : string) : report 
                    let _, coqv, _ = Refdiff.run_cmd [ coqc; "--version" ] ~cwd:workdir in
                    let manifest =
                      Printf.sprintf
-                       "# TCB manifest — %s\n\nClaim: the extracted implementation is PROVEN (coqc) to satisfy spec_rel,\nthe relation denoted by the signed k4kspec, MODULO this trusted base:\n\n- Rocq kernel + extraction: %s- OCaml compiler (ocamlfind ocamlopt %s)\n- the blessed value algebra (audited-once backend/Kalgebra.v; extracted into %s_ext.ml)\n- the I/O shim (%s_main.ml)\n- the elaborator (lib/rocq_emit.ml)\n\nArtifacts: %s.v (source+proof), %s_ext.ml (extracted), %s (binary).\nLimitation: v1 generates `run` to match the spec, so the proof is easy; replacing the\ndeterministic generator with a stochastic agent backend (hard proofs) is future work.\n"
-                       name coqv (match Refdiff.which "ocamlopt" with Some p -> p | None -> "ocamlopt") name name name name name
+                       "# TCB manifest — %s\n\nClaim: the extracted implementation is PROVEN (coqc) to satisfy spec_rel,\nthe relation denoted by the signed k4kspec, MODULO this trusted base:\n\n- Rocq kernel + extraction: %s- OCaml compiler (ocamlfind ocamlopt %s)\n- the blessed value algebra (audited-once backend/Kalgebra.v; extracted into %s_ext.ml)\n- the I/O shim (%s_main.ml)\n- the elaborator (lib/rocq_emit.ml)\n\nArtifacts: %s.v (source+proof), %s_ext.ml (extracted), %s (binary).\n%s\n"
+                       name coqv (match Refdiff.which "ocamlopt" with Some p -> p | None -> "ocamlopt") name name name name name limitation
                    in
                    write (name ^ ".tcb.md") manifest;
                    say (Printf.sprintf "wrote %s.tcb.md ; certified binary at %s" name bin);

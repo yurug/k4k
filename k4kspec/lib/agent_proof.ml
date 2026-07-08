@@ -96,7 +96,7 @@ let certify ?(workdir = "/tmp/k4k_certify_agent") ?(max_attempts = 4) ~(backend 
   let rec loop attempt prompt acc_log =
     let body = clean (backend.invoke prompt) in
     let v = assemble body in
-    let r = Certify.certify_v ~workdir sp v in
+    let r = Certify.certify_v ~workdir ~limitation:Certify.agent_provenance sp v in
     let attempt_log = Printf.sprintf "[attempt %d via %s] %s" attempt backend.name (if r.Certify.ok then "coqc CLOSED the agent's proof; certified" else "rejected") in
     if r.Certify.ok then { Certify.ok = true; log = acc_log @ [ attempt_log ] @ r.Certify.log }
     else if attempt >= max_attempts then
@@ -205,7 +205,7 @@ let certify_structured ?(workdir = "/tmp/k4k_certify_agent") ?(max_attempts = 3)
          | None -> fail ()
          | Some devf ->
            say "[assemble] FINAL gate: certify_v (bans admits; coqc; extract; compile; cross-check; manifest)";
-           let r = Certify.certify_v ~workdir sp (String.concat "\n" [ stmt; run; devf; extr ]) in
+           let r = Certify.certify_v ~workdir ~limitation:Certify.agent_provenance sp (String.concat "\n" [ stmt; run; devf; extr ]) in
            { Certify.ok = r.Certify.ok; log = List.rev !log @ r.Certify.log })))
 
 (* ===== COMPOSITIONAL METHODOLOGY (ADR-021): decompose -> module-interface gate -> certify each
@@ -281,5 +281,5 @@ let certify_compositional ?(workdir = "/tmp/k4k_certify_agent") ?(max_attempts =
       | None -> fail ()
       | Some devf ->
         say "[assemble] FINAL gate: certify_v (bans admits; coqc; extract; compile; cross-check; manifest)";
-        let r = Certify.certify_v ~workdir sp (String.concat "\n" [ stmt; devf; extr ]) in
+        let r = Certify.certify_v ~workdir ~limitation:Certify.agent_provenance sp (String.concat "\n" [ stmt; devf; extr ]) in
         { Certify.ok = r.Certify.ok; log = List.rev !log @ r.Certify.log }))

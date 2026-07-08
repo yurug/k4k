@@ -16,6 +16,29 @@ commit, then a FRESH agent audits (criteria in PLAN.md §Audit); fix until a fre
 GREEN, then emit the completion promise. **Loop state below is updated each iteration:**
 
 ### Certify-pipeline progress log (newest first)
+- 2026-07-08: **usort LANDED + re-validated (provenance gap closed); manifest honesty fix.**
+  Audit found the 2026-06-20 usort result's spec artifacts (usort in `specs.ml`,
+  `sorted_strict`/`same_set` in `rocq_emit.ml`, `ascii_lt` in `Kalgebra.v`) were NEVER committed —
+  the KB claimed a result git couldn't reproduce. Landed as a first-class built-in and re-certified
+  via `certify-agent --structured usort` (tools-off claude): implement/skeleton/fill ALL attempt 1,
+  ONE fill round. NEW DATAPOINT (L18): the agent invented a proof-friendlier ALGORITHM this time —
+  `filter (∈ input) (map ascii_of_nat (seq 0 256))`, sorted+dedup BY CONSTRUCTION, 6 lemmas vs
+  June's ~10-lemma insertion-sort+dedup. Validation: Print Assumptions closed; 3-way tamper test
+  non-vacuous; binary correct on 6 probes. Fresh-agent audit GREEN and unusually strong: Coq
+  META-PROOF that the two laws uniquely determine the output; ascii_lt proved a strict total order
+  with Sorted→NoDup; 5 novel gate attacks rejected (axiom-smuggling caught by Print Assumptions,
+  ascii_lt shadowing, guard weakening); 16/16 vs an independent byte-level oracle incl. raw
+  non-UTF-8 bytes. Audit findings: (1) FIXED — TCB manifest's hardcoded Limitation line was false
+  for agent-produced certificates (certify_v now takes ?limitation; agent paths pass provenance
+  text). (2) OPEN (hardening): certify_v should run Print Assumptions as a gate (banned-substring
+  "Axiom " is whitespace-evadable) and ban `Extract Constant`-class vernacs in agent bodies.
+  (3) OPEN (pre-existing): the `check` front-end predates laws — bsort/partition/usort all exit 1
+  with misleading diagnostics ("matched NO case"/"dead case" for law-cases); teach check to report
+  law-cases as proof-guaranteed. (4) Vendored agentic-dev-kit is 1 commit behind canonical
+  (~/work/dev/agentic-dev-kit @953c455 adds kb-lint + KB-enforcement); kb/ has 142 pre-existing
+  lint errors (frontmatter schema, dangling links, >200-line files) — separate cleanup task.
+  NEXT: Phase B — breadth+depth in ONE target (grep-then-sort pipeline) via
+  `certify-agent --compositional`, per ADR-021 "Open/next".
 - 2026-06-21: **FIRST MULTI-MODULE certificate — grepf, 5 agent-chosen components.** `certify-agent
   --compositional grepf` (claude, tools off) certified the grep-class spec by decomposing it into
   FIVE components — comp_argc (arg count), comp_nofile (file-absent test), comp_match (matching lines

@@ -30,8 +30,13 @@ GREEN, then emit the completion promise. **Loop state below is updated each iter
   ascii_lt shadowing, guard weakening); 16/16 vs an independent byte-level oracle incl. raw
   non-UTF-8 bytes. Audit findings: (1) FIXED — TCB manifest's hardcoded Limitation line was false
   for agent-produced certificates (certify_v now takes ?limitation; agent paths pass provenance
-  text). (2) OPEN (hardening): certify_v should run Print Assumptions as a gate (banned-substring
-  "Axiom " is whitespace-evadable) and ban `Extract Constant`-class vernacs in agent bodies.
+  text). (2) FIXED (and it was worse than the audit thought): a live attack showed a vacuous
+  `Theorem correct : True.` passed EVERY gate on an under-determined spec — an echo binary was
+  "certified" as usort (nothing pinned WHAT was proved; Print Assumptions alone would NOT have
+  caught it, True's proof is closed). certify_v now compiles a harness-authored gate file:
+  `Check (correct : forall i, spec_rel i (run i))` pins the statement + `Print Assumptions` must
+  be Closed (catches Axiom<tab> spelling evasion, demonstrated); Extract-class vernacs banned.
+  Echo + tab-axiom attacks now FAIL; deterministic/stub/prior paths pass; tests ALL OK.
   (3) OPEN (pre-existing): the `check` front-end predates laws — bsort/partition/usort all exit 1
   with misleading diagnostics ("matched NO case"/"dead case" for law-cases); teach check to report
   law-cases as proof-guaranteed. (4) Vendored agentic-dev-kit is 1 commit behind canonical

@@ -80,7 +80,10 @@ let certify_v ?(workdir = "/tmp/k4k_certify") ?(limitation = deterministic_limit
   let name = sp.name in
   write (name ^ ".v") v;
   (* honesty gate: no escape hatches in the proof *)
-  let banned = List.filter (fun w -> Algebra.contains v w) [ "Admitted"; "Axiom "; " admit"; "admit."; "give_up"; "Parameter "; "Conjecture"; "Abort" ] in
+  (* "Extract "/"Extraction <directive>" would let an agent body change the extraction semantics of
+     trusted algebra functions without failing coqc or Print Assumptions; the harness's own
+     directives ("Extraction \"file\" run", the ExtrOcaml* requires) contain none of these. *)
+  let banned = List.filter (fun w -> Algebra.contains v w) [ "Admitted"; "Axiom "; " admit"; "admit."; "give_up"; "Parameter "; "Conjecture"; "Abort"; "Extract "; "Extraction Implicit"; "Extraction Inline"; "Extraction Language" ] in
        if banned <> [] then (say ("FAIL: generated .v contains banned: " ^ String.concat ", " banned); done_ false)
        else begin
          match Refdiff.which "coqc", Refdiff.which "ocamlfind" with
@@ -102,8 +105,22 @@ let certify_v ?(workdir = "/tmp/k4k_certify") ?(limitation = deterministic_limit
              (* 2. coqc checks the proof + extracts (the generated .v requires Kalgebra) *)
              let c1, o1, e1 = Refdiff.run_cmd [ coqc; "-Q"; "."; ""; name ^ ".v" ] ~cwd:workdir in
              if c1 <> 0 then (say (Printf.sprintf "FAIL: coqc exit %d:\n%s%s" c1 o1 e1); done_ false)
+             else
+             (* certificate gate (2026-07-08): a HARNESS-authored, kernel-checked file pins WHAT was
+                proved. Without it a vacuous `Theorem correct : True.` passes every other gate on an
+                under-determined spec (demonstrated live: an echo binary "certified" as usort). The
+                Check pins the exact statement; Print Assumptions requires zero axioms (the
+                banned-substring check alone is whitespace-evadable). *)
+             let gate_src = Printf.sprintf "Require Import %s.\nCheck (correct : forall i, spec_rel i (run i)).\nPrint Assumptions correct.\n" name in
+             let () = write (name ^ "_gate.v") gate_src in
+             let cg, og, eg = Refdiff.run_cmd [ coqc; "-Q"; "."; ""; name ^ "_gate.v" ] ~cwd:workdir in
+             if cg <> 0 then
+               (say (Printf.sprintf "FAIL: certificate gate: `correct` does not prove `forall i, spec_rel i (run i)`:\n%s%s" og eg); done_ false)
+             else if not (Algebra.contains (og ^ eg) "Closed under the global context") then
+               (say "FAIL: certificate gate: `correct` depends on axioms (Print Assumptions not closed)"; done_ false)
              else begin
                say "coqc: proof CHECKED (exit 0; algebra from audited-once Kalgebra.v), extraction done";
+               say "certificate gate: statement pinned (correct : forall i, spec_rel i (run i)); Print Assumptions closed";
                (* 3. shim + compile the certified binary *)
                write (name ^ "_main.ml") (shim_ml sp);
                let c2, o2, e2 = Refdiff.run_cmd [ ocf; "ocamlopt"; name ^ "_ext.mli"; name ^ "_ext.ml"; name ^ "_main.ml"; "-o"; name ] ~cwd:workdir in

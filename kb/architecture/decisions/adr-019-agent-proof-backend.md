@@ -3,7 +3,7 @@ id: adr-019
 type: decision
 summary: The agent proof backend (the central bet), realized. The elaborator fixes the certified statement spec_rel; an EXTERNAL agent proposes an implementation `run` (possibly different from the spec) plus a Coq proof of `forall i, spec_rel i (run i)`; coqc is the ONLY acceptance gate, with error-feedback retries. Demonstrated with claude closing a real proof; the gate rejects non-proofs. Realizes the two-artifact separation at the proof level.
 domain: architecture
-last-updated: 2026-06-20
+last-updated: 2026-07-08
 depends-on: [adr-018, adr-009, adr-016, glossary]
 refines: [adr-018]
 related: [notes]
@@ -76,6 +76,21 @@ Coq instead of trying to compile it itself), the kernel as the only judge:
 - **The gate rejects non-proofs.** Wrong `run` + non-closing `Proof. reflexivity. Qed.` → coqc
   rejects → FAILED; `Admitted` → banned-word gate → FAILED; a `spec_rel` redefinition → coqc
   `spec_rel already exists` → FAILED (fresh-agent audited GREEN).
+
+- **Certificate gate (hardening, 2026-07-08).** A live attack showed the above was NOT enough on
+  an under-determined spec: a vacuous `Theorem correct : True.` passed every gate (coqc happy, no
+  banned words, error path cross-checks, success path skipped as "proof-guaranteed") and
+  "certified" an echo binary as `usort`. Nothing pinned WHAT was proved. `certify_v` now compiles
+  a **harness-authored gate file** after the agent's `.v`:
+  `Check (correct : forall i, spec_rel i (run i)).` pins the exact statement (kernel-checked,
+  fail-closed — a differently-named or module-hidden theorem fails the gate), and
+  `Print Assumptions correct.` must print `Closed under the global context` (catches axiom
+  smuggling regardless of spelling — the banned-substring `"Axiom "` is whitespace-evadable, and
+  `Axiom<tab>` was demonstrated to slip it). Also banned: `Extract `/`Extraction Implicit`/
+  `Extraction Inline`/`Extraction Language` in the assembled `.v` (an agent body could otherwise
+  redefine the extraction of trusted algebra functions without failing coqc or Print Assumptions).
+  Verified: the echo attack and the tab-axiom attack now FAIL at the gate; the deterministic,
+  stub, and prior certified paths all still pass.
 
 This is the moment v1 becomes *certify real software*: an agent-developed implementation, proven
 equivalent to the human-fixed spec — including by **induction it constructs over relations it has

@@ -198,5 +198,32 @@ let usort : spec =
     examples = [ ex ~exit:2 []; ex ~exit:2 [ "a"; "b" ] ];   (* success path is under-determined *)
   }
 
-let all = [ grepf; cutf; catf; kvget; bsort; partition; usort ]
+(* ---- grepsort NEEDLE FILE  (PHASE-B TARGET: breadth + depth in ONE certificate) ------------- *)
+(* stdout's LINES are the lines of FILE containing NEEDLE, SORTED (lexicographic byte order
+   `bytes_le`; duplicate lines kept). Laws: `sorted_lines` over lines(stdout) AND `permutation`
+   (polymorphic, here over line LISTS) against the filtered input lines — stdout under-determined
+   up to `lines`'s trailing-newline class. Exit mirrors grepf (1 when nothing matches), pinned by
+   an input-only expression. Forces BOTH ADR-021 axes at once: a module graph (args / file-absent /
+   match / format / error = breadth, like grepf's 5 components) and a component with a real
+   inductive proof (a sort over a LEXICOGRAPHIC order on strings = depth, harder than byte sort). *)
+let grepsort : spec =
+  {
+    name = "grepsort"; reads = FileAt 1;
+    cases =
+      [
+        case ~guard:(ne (len ArgvAll) (i 2)) err2;
+        case ~guard:(app "absent_footprint" []) err2;
+        case
+          ~lets:[ ("matched", app "filter" [ app "lines" [ FileBytes ]; Lam ("L", app "contains" [ Var "L"; Argv 0 ]) ]) ]
+          ~laws:
+            [ App ("sorted_lines", [ App ("lines", [ OStdout ]) ]);
+              App ("permutation", [ App ("lines", [ OStdout ]); Var "matched" ]) ]
+          [ (Stdout, P Any); (Stderr, Eq (s "")); (Exit, Eq (If (app "is_empty" [ Var "matched" ], i 1, i 0))) ];
+      ];
+    examples =
+      [ ex ~exit:2 [ "x" ]; ex ~exit:2 [ "x"; "y"; "z" ]; ex ~exit:2 [ "x"; "nope" ] ];
+    (* success path is under-determined (law-constrained) *)
+  }
+
+let all = [ grepf; cutf; catf; kvget; bsort; partition; usort; grepsort ]
 let by_name = List.map (fun s -> (s.name, s)) all

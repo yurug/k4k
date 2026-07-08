@@ -19,6 +19,16 @@ Definition ascii_lt (a b : ascii) : Prop := nat_of_ascii a < nat_of_ascii b.
    Sorted part_le l  <->  l is partitioned (all bytes < 'm' precede all bytes >= 'm'). It is a
    transitive total preorder — the agent must discover and prove that to use it. *)
 Definition part_le (a b : ascii) : Prop := nat_of_ascii b < 109 -> nat_of_ascii a < 109.
+
+(* lexicographic byte order on strings, for LINE-sorting laws (`Sorted bytes_le (lines s)`):
+   a total preorder (a total order, since nat_of_ascii is injective); duplicates allowed. *)
+Fixpoint bytes_le (a b : bytes) : Prop :=
+  match a, b with
+  | EmptyString, _ => True
+  | String _ _, EmptyString => False
+  | String x a', String y b' =>
+      nat_of_ascii x < nat_of_ascii y \/ (nat_of_ascii x = nat_of_ascii y /\ bytes_le a' b')
+  end.
 Record Output := { stdout : bytes ; stderr : bytes ; exit : nat }.
 
 Definition up_ascii (c : ascii) : ascii :=

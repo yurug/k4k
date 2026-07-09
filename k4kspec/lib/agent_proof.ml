@@ -110,10 +110,17 @@ let certify ?(workdir = "/tmp/k4k_certify_agent") ?(max_attempts = 4) ~(backend 
 let kalgebra_blurb =
   "The module `Kalgebra` is imported and provides: `bytes`(=string), `Output`{stdout;stderr;exit:nat},\n\
    helpers `ascii_upper` `ascii_lower` `bnth` `fbytes` `one_nonempty_line` `lines` `unlines` `splits`\n\
-   `contains` `lfirst` `is_decimal` `int_of`; order relations `ascii_le` `ascii_lt` `part_le`; and (for\n\
+   `contains` `lfirst` `is_decimal` `int_of`; order relations `ascii_le` `ascii_lt` `part_le` (on ascii)\n\
+   and `bytes_le` (Prop-valued LEXICOGRAPHIC order on strings: True if the first is empty; on cons/cons,\n\
+   `nat_of_ascii x < nat_of_ascii y \\/ (nat_of_ascii x = nat_of_ascii y /\\ bytes_le a' b')`); and (for\n\
    relational laws) `Sorted`/`Permutation` (Coq.Sorting), `list_ascii_of_string`/`string_of_list_ascii`\n\
    (+ the roundtrip lemma `list_ascii_of_string_of_list_ascii`), plus the Coq stdlib (String, List, Nat,\n\
-   Bool, Sorting; `List.filter`, `List.nodup`, `Ascii.ascii_dec`, `StronglySorted`, etc.)."
+   Bool, Sorting; `List.filter`, `List.nodup`, `Ascii.ascii_dec`, `StronglySorted`, etc.).\n\
+   SEMANTICS you will need: `lines` is POSIX — a FINAL newline is a TERMINATOR, not a separator\n\
+   (`lines \"a\\nb\\n\" = [\"a\";\"b\"] = lines \"a\\nb\"`); `unlines` TERMINATES every line (`unlines\n\
+   [\"a\";\"b\"] = \"a\\nb\\n\"`); hence `lines (unlines l) = l` holds ONLY when no element of `l`\n\
+   contains a newline (true for elements drawn from a `lines` result) — state that side condition\n\
+   explicitly if you need the roundtrip."
 
 let impl_prompt stmt =
   "You are writing a CERTIFIED Coq (Rocq 9.1) implementation by a STRUCTURED method.\n" ^ kalgebra_blurb
@@ -229,16 +236,63 @@ let decompose_prompt stmt =
      Output raw Coq only — component `Definition`s + `_spec`s, `run`, the Admitted `compK_correct`\n\
      lemmas, then `Theorem correct ... Qed.` Do NOT restate Input/spec_rel. No prose."
 
-let fill_comp_prompt stmt dev =
-  "You are completing a CERTIFIED Coq program (compositional).\n" ^ kalgebra_blurb
-  ^ "\n\nAlready defined (do NOT restate Input/spec_rel):\n\n" ^ stmt
-  ^ "\n\nThe development so far (components + `run` + the glue `correct`), which COMPILES but whose\n\
-     component certificates are still `Admitted`:\n\n" ^ dev
-  ^ "\n\nProve EVERY Admitted `compK_correct` (you may add helper lemmas above each). Return the COMPLETE\n\
-     development — all component `Definition`s/`_spec`s, `run`, every `compK_correct` (now real `Qed`),\n\
-     and `Theorem correct ... Qed.` — raw Coq only, with NO `Admitted`/`admit`/`Axiom`. Don't restate Input/spec_rel."
+(* ---- per-lemma machinery (RECURSIVE fill, ADR-021): locate each `Lemma/Theorem <name> ...
+   Admitted.` span so ONE lemma at a time is replaced in an otherwise byte-identical development —
+   focused feedback, no regeneration drift on already-proven parts ---------------------------- *)
 
-let certify_compositional ?(workdir = "/tmp/k4k_certify_agent") ?(max_attempts = 3) ?(max_fill = 5) ~(backend : backend) (sp : spec) : Certify.report =
+let ident_at (s : string) (i : int) : string =
+  let n = String.length s in
+  let ok c = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c = '_' || c = '\'' in
+  let rec go j = if j < n && ok s.[j] then go (j + 1) else j in
+  String.sub s i (go i - i)
+
+let positions (sub : string) (s : string) : int list =
+  let n = String.length s and m = String.length sub in
+  let rec go i acc = if i + m > n then List.rev acc else if String.sub s i m = sub then go (i + 1) (i :: acc) else go (i + 1) acc in
+  go 0 []
+
+(* every Admitted lemma as (name, span_start, span_stop); the span covers `Lemma <name> ... Admitted.` *)
+let admitted_spans (dev : string) : (string * int * int) list =
+  let heads =
+    List.sort compare
+      (List.map (fun i -> (i, i + 6)) (positions "Lemma " dev)
+       @ List.map (fun i -> (i, i + 8)) (positions "Theorem " dev))
+  in
+  List.filter_map
+    (fun j ->
+      match List.rev (List.filter (fun (i, _) -> i < j) heads) with
+      | [] -> None
+      | (i, ni) :: _ -> Some (ident_at dev ni, i, j + String.length "Admitted."))
+    (positions "Admitted." dev)
+
+let splice (s : string) (start : int) (stop : int) (repl : string) : string =
+  String.sub s 0 start ^ repl ^ String.sub s stop (String.length s - stop)
+
+let fill_one_prompt stmt dev lname =
+  "You are completing a CERTIFIED Coq (Rocq 9.1) development (compositional).\n" ^ kalgebra_blurb
+  ^ "\n\nInput/spec_rel are ALREADY defined (do NOT restate them):\n\n" ^ stmt
+  ^ "\n\nThe current development (it COMPILES; some lemmas are still Admitted):\n\n" ^ dev
+  ^ Printf.sprintf
+      "\n\nProve ONLY the lemma `%s`. Return a REPLACEMENT for the text from `Lemma %s` through its\n\
+       `Admitted.` — nothing else: optional helper Definitions/Fixpoints/Lemmas FIRST (each helper\n\
+       fully proved, its `Qed.` on its own line), then `Lemma %s` with its statement UNCHANGED and a\n\
+       real proof whose final `Qed.` is on its own line. Raw Coq only. No prose. Do NOT restate any\n\
+       other part of the development." lname lname lname
+
+let sketch_one_prompt stmt dev lname err =
+  "You are decomposing ONE HARD LEMMA of a CERTIFIED Coq (Rocq 9.1) development.\n" ^ kalgebra_blurb
+  ^ "\n\nInput/spec_rel are ALREADY defined (do NOT restate them):\n\n" ^ stmt
+  ^ "\n\nThe current development (it COMPILES; `" ^ lname ^ "` is still Admitted):\n\n" ^ dev
+  ^ "\n\nDirect proof of `" ^ lname ^ "` failed; the last coqc error was:\n" ^ err
+  ^ Printf.sprintf
+      "\n\nDECOMPOSE it. Return a REPLACEMENT for the text from `Lemma %s` through its `Admitted.`:\n\
+       helper lemma STATEMENTS chosen so `%s` follows from them (each helper left `Admitted.`, on its\n\
+       own line — statements only, choose them carefully), then `Lemma %s` with its statement\n\
+       UNCHANGED and a real proof FROM the helpers, its final `Qed.` on its own line. The whole\n\
+       development must COMPILE with the helpers Admitted (the kernel gates your decomposition).\n\
+       Raw Coq only. No prose." lname lname lname
+
+let certify_compositional ?(workdir = "/tmp/k4k_certify_agent") ?(max_attempts = 3) ?(fill_budget = 48) ~(backend : backend) (sp : spec) : Certify.report =
   let stmt = (try Rocq_emit.emit_statement sp with Failure m -> failwith ("statement: " ^ m)) in
   let extr = Rocq_emit.extraction_for sp.Ast.name in
   let name = sp.Ast.name in
@@ -260,24 +314,67 @@ let certify_compositional ?(workdir = "/tmp/k4k_certify_agent") ?(max_attempts =
   (match decompose 1 (decompose_prompt stmt) with
    | None -> fail ()
    | Some dev0 ->
-     (* PHASE B — CERTIFY EACH COMPONENT (drive the compK_correct admits to 0) *)
-     let rec p_fill round dev =
-       if not (has_admit dev) then (say (Printf.sprintf "[components] all component certificates proved (after %d round(s))" (round - 1)); Some dev)
-       else if round > max_fill then (say (Printf.sprintf "[components] admits REMAIN after %d rounds — final gate will reject honestly" max_fill); Some dev)
-       else
-         let rec one k prompt =
-           say (Printf.sprintf "[components round %d] sub-attempt %d: proving component certificates..." round k);
-           let body = clean (backend.invoke prompt) in
-           let ok, out = check (String.concat "\n" [ stmt; body ]) in
-           if ok then Some body
-           else if k >= 2 then (say (Printf.sprintf "[components round %d] no compiling development; coqc:\n%s" round out); None)
-           else one (k + 1) (fill_comp_prompt stmt dev ^ "\n\nYour previous attempt did NOT compile. coqc said:\n" ^ out ^ "\nReturn the complete development again, corrected.")
-         in
-         (match one 1 (fill_comp_prompt stmt dev) with
-          | Some body -> say (Printf.sprintf "[components round %d] compiles (admits left: %b)" round (has_admit body)); p_fill (round + 1) body
-          | None -> Some dev)
+     (* PHASE B — CERTIFY EACH COMPONENT, one Admitted lemma at a time (RECURSIVE fill):
+        focused per-lemma attempts with per-lemma coqc feedback; a lemma that resists escalates
+        ONCE to a kernel-gated skeleton (ADR-020's sketch applied at the component boundary) whose
+        Admitted helpers re-enter this same loop — that is the recursion. The escalation ladder
+        mirrors the agentic-dev-kit contract: bounded focused attempts -> escalate with the error
+        -> split. No doomed assemble: admits remaining => honest per-lemma failure report. *)
+     let budget = ref fill_budget in
+     (* one lemma: splice agent replacements for [start,stop) until the whole dev compiles AND
+        <lname> is no longer Admitted (a lazy echo of the Admitted block still "compiles"). *)
+     let attempt_one lname start stop dev base_prompt max_k ~helpers_may_admit =
+       let rec go k prompt last_err =
+         if !budget <= 0 || k > max_k then
+           Error (if last_err = "" then "budget exhausted before any attempt on this lemma" else last_err)
+         else begin
+           decr budget;
+           let repl = clean (backend.invoke prompt) in
+           let dev' = splice dev start stop repl in
+           let ok, out = check (String.concat "\n" [ stmt; dev' ]) in
+           let still_admitted = List.exists (fun (n, _, _) -> n = lname) (admitted_spans dev') in
+           let admits_ok = helpers_may_admit || not (has_admit repl) in
+           if ok && (not still_admitted) && admits_ok then Ok dev'
+           else
+             let why =
+               if not ok then out
+               else if still_admitted then Printf.sprintf "`%s` is still Admitted in your replacement." lname
+               else "your replacement still contains an escape hatch (Admitted/admit/Axiom/Abort)."
+             in
+             go (k + 1) (base_prompt ^ "\n\nYour previous replacement was rejected:\n" ^ why ^ "\nReturn the corrected replacement (same rules).") why
+         end
+       in
+       go 1 base_prompt ""
      in
-     (match p_fill 1 dev0 with
+     let rec drive dev escalated =
+       match admitted_spans dev with
+       | [] -> Some dev
+       | (lname, start, stop) :: rest ->
+           say (Printf.sprintf "[component %s] focused fill (%d Admitted remaining; budget %d)..." lname (List.length rest + 1) !budget);
+           (match attempt_one lname start stop dev (fill_one_prompt stmt dev lname) 3 ~helpers_may_admit:false with
+            | Ok dev' -> say (Printf.sprintf "[component %s] PROVED" lname); drive dev' escalated
+            | Error err ->
+                if List.mem lname escalated || !budget <= 0 then begin
+                  say (Printf.sprintf "[component %s] FAILED%s; last rejection:\n%s" lname
+                         (if List.mem lname escalated then " (after skeleton escalation)" else " (budget exhausted)") err);
+                  say (Printf.sprintf "[components] unproven: %s"
+                         (String.concat ", " (List.map (fun (n, _, _) -> n) (admitted_spans dev))));
+                  None
+                end
+                else begin
+                  say (Printf.sprintf "[component %s] resists direct proof — escalating to a kernel-gated skeleton (ADR-020, recursive)..." lname);
+                  match attempt_one lname start stop dev (sketch_one_prompt stmt dev lname err) 2 ~helpers_may_admit:true with
+                  | Ok dev' ->
+                      say (Printf.sprintf "[component %s] SKELETON GATE passed: proved from helper statements; its Admitted helpers re-enter the loop" lname);
+                      drive dev' (lname :: escalated)
+                  | Error err2 ->
+                      say (Printf.sprintf "[component %s] skeleton escalation FAILED; last rejection:\n%s" lname err2);
+                      say (Printf.sprintf "[components] unproven: %s"
+                             (String.concat ", " (List.map (fun (n, _, _) -> n) (admitted_spans dev))));
+                      None
+                end)
+     in
+     (match drive dev0 [] with
       | None -> fail ()
       | Some devf ->
         say "[assemble] FINAL gate: certify_v (bans admits; coqc; extract; compile; cross-check; manifest)";

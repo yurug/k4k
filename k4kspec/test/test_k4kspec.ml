@@ -209,6 +209,32 @@ let () =
    check "fully-waived spec would fail check"
      (fst (Check.report (Sign.apply_waivers Specs.grepsort [ (2, 0); (2, 1) ])) = false));
 
+  (* ---- certificate rendering (pure) ------------------------------------------- *)
+  (let mk_sig ?(waivers = []) () =
+     { Sign.spec_file = "grepsort.k4kspec"; spec_hash = "abc123"; hints_file = None; hints_hash = None;
+       version = 1; previous = "none"; date = "2026-07-10"; signer = "test"; underspec = []; waivers }
+   in
+   let cert_nowaive =
+     Certificate.render ~sp:Specs.grepsort ~signature:(mk_sig ()) ~sig_path:"v1.sig"
+       ~hints_present:false ~tcb:"TCB-HERE" ~log:[ "binary MATCHES spec on 21/29 inputs" ]
+   in
+   check "cert scope: law-constrained stdout" (Algebra.contains cert_nowaive "CERTIFIED-BY-LAW (2 law(s)");
+   check "cert scope: free stderr" (Algebra.contains cert_nowaive "FREE — uncertified (one-nonempty-line)");
+   check "cert no waivers" (Algebra.contains cert_nowaive "(none)");
+   check "cert TCB passthrough" (Algebra.contains cert_nowaive "TCB-HERE");
+   check "cert cross-check line" (Algebra.contains cert_nowaive "21/29");
+   check "cert no-hints disclosure" (Algebra.contains cert_nowaive "no guidance file");
+   let w = { Sign.case_i = 2; law_j = 0; tier = "B"; rationale = "the reason" } in
+   let cert_waived =
+     Certificate.render ~sp:Specs.grepsort ~signature:(mk_sig ~waivers:[ w ] ()) ~sig_path:"v1.sig"
+       ~hints_present:false ~tcb:"TCB" ~log:[]
+   in
+   check "cert waiver section" (Algebra.contains cert_waived "case#2.law#0 — tier B — **NOT formally verified.**");
+   check "cert waiver law text" (Algebra.contains cert_waived "sorted_lines(lines(stdout))");
+   check "cert waiver rationale verbatim" (Algebra.contains cert_waived "the reason");
+   check "cert waiver honesty line" (Algebra.contains cert_waived "NO property testing was run");
+   check "cert partial-waive scope" (Algebra.contains cert_waived "CERTIFIED-BY-LAW (1 law(s)); 1 law(s) WAIVED"));
+
   (* ---- law parsing units ---------------------------------------------------- *)
   let mini_spec laws_and_stmts =
     "interface cli \"t\":\n  reads: nothing\ncases on argv:\n  when len(argv) != 1: exit 2 ; stderr: one nonempty line ; stdout: \"\"\n  otherwise:\n"

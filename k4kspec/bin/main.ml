@@ -141,6 +141,28 @@ let do_certify arg ~unsigned ~mode =
          | `Compositional -> Agent_proof.certify_compositional ~signature ~backend sp)
   in
   List.iter print_endline r.Certify.log;
+  (* SIGNED successful runs are PROMOTED into the ledger: certificate.md + the named artifacts
+     move from the /tmp workdir to <name>.k4k/certificates/v<N>/. Dev runs stay in /tmp. *)
+  (match sg, r.Certify.ok with
+   | Some s, true ->
+       let workdir = match mode with `Det -> "/tmp/k4k_certify" | `Agent _ -> "/tmp/k4k_certify_agent" in
+       let n = sp0.Ast.name in
+       let sig_path =
+         match Store.latest_signature arg with Some (_, p) -> p | None -> "?" in
+       let cert =
+         Certificate.render ~sp:sp0 ~signature:s ~sig_path
+           ~hints_present:(Sys.file_exists (Store.hints_path arg))
+           ~tcb:(try Store.read_file (Filename.concat workdir (n ^ ".tcb.md")) with _ -> "(tcb manifest missing)")
+           ~log:r.Certify.log
+       in
+       let dst =
+         Store.promote arg s.Sign.version
+           (List.map (fun f -> (Filename.concat workdir f, f))
+              [ n ^ ".v"; n ^ "_ext.ml"; n ^ "_main.ml"; n; n ^ ".tcb.md" ])
+       in
+       Store.write_file (Filename.concat dst "certificate.md") cert;
+       Printf.printf "certificate: %s\n" (Filename.concat dst "certificate.md")
+   | _ -> ());
   let label = match mode with `Det -> "CERTIFY" | `Agent _ -> "CERTIFY-AGENT" in
   print_endline (label ^ ": " ^ (if r.Certify.ok then "OK" else "FAILED"));
   exit (if r.Certify.ok then 0 else 1)

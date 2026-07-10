@@ -161,6 +161,15 @@ let free_dims (sp : spec) : (int * chan * pred) list =
       List.filter_map (fun (ch, r) -> match r with P p -> Some (idx, ch, p) | Eq _ -> None) c.outs) sp.cases)
 
 let chan_name = function Stdout -> "stdout" | Stderr -> "stderr" | Exit -> "exit"
+
+(* does this (law) expression mention the given OUTPUT channel? *)
+let rec law_mentions ch (e : expr) =
+  match e with
+  | OStdout -> ch = Stdout | OStderr -> ch = Stderr | OExit -> ch = Exit
+  | App (_, xs) -> List.exists (law_mentions ch) xs
+  | Lam (_, b) -> law_mentions ch b
+  | If (a, b, c) -> law_mentions ch a || law_mentions ch b || law_mentions ch c
+  | Lit _ | Argv _ | ArgvAll | Stdin | FileBytes | Var _ -> false
 let pred_name = function OneNonemptyLine -> "one-nonempty-line" | Nonempty -> "nonempty" | EmptyB -> "empty" | Any -> "ANY (unconstrained)"
 
 (* ---- the report ----------------------------------------------------------- *)
@@ -194,15 +203,7 @@ let report (sp : spec) : bool * string =
   let fired = undet @ List.filter_map (function (_, `Ok (_, idx)) -> Some idx | _ -> None) traced in
   let dead = List.filter (fun idx -> not (List.mem idx fired)) (List.init (List.length sp.cases) Fun.id) in
   (* a P Any channel is VACUOUS only if no relational law of its case mentions it *)
-  let rec mentions ch (e : expr) =
-    match e with
-    | OStdout -> ch = Stdout | OStderr -> ch = Stderr | OExit -> ch = Exit
-    | App (_, xs) -> List.exists (mentions ch) xs
-    | Lam (_, b) -> mentions ch b
-    | If (a, b, c) -> mentions ch a || mentions ch b || mentions ch c
-    | Lit _ | Argv _ | ArgvAll | Stdin | FileBytes | Var _ -> false
-  in
-  let law_constrained idx ch = List.exists (mentions ch) (List.nth sp.cases idx).laws in
+  let law_constrained idx ch = List.exists (law_mentions ch) (List.nth sp.cases idx).laws in
   let anys = List.filter (fun (_, _, p) -> p = Any) (free_dims sp) in
   let vacuous, lawful = List.partition (fun (idx, ch, _) -> not (law_constrained idx ch)) anys in
   p "";

@@ -122,6 +122,32 @@ let () =
       ("bsort.k4kspec", Specs.bsort); ("partition.k4kspec", Specs.partition);
       ("usort.k4kspec", Specs.usort); ("grepsort.k4kspec", Specs.grepsort) ];
 
+  (* ---- Record (the .sig / proposal on-disk format) --------------------------- *)
+  let r0 : Record.t =
+    { fields =
+        [ ("k4k-signature", "1"); ("spec", "greet.k4kspec");
+          ("waive", "case#1.law#0 tier=B");
+          ("rationale", "line one\nline two continues\nline three");
+          ("waive", "case#1.law#1 tier=C") ];
+      sections = [ ("proposed spec", "interface cli \"t\":\n  reads: nothing\n"); ("notes", "free text\n") ] }
+  in
+  let r1 = Record.of_string (Record.to_string r0) in
+  check "record round-trip fields" (r1.Record.fields = r0.Record.fields);
+  check "record round-trip sections" (r1.Record.sections = r0.Record.sections);
+  check "record get first" (Record.get r1 "waive" = Some "case#1.law#0 tier=B");
+  check "record get_all order" (Record.get_all r1 "waive" = [ "case#1.law#0 tier=B"; "case#1.law#1 tier=C" ]);
+  check "record folded value" (Record.get r1 "rationale" = Some "line one\nline two continues\nline three");
+  check "record section" (Record.section r1 "notes" = Some "free text\n");
+  let r2 = Record.of_string "# a comment\nkey: v\n\nother: w\n" in
+  check "record comments+blanks skipped" (r2.Record.fields = [ ("key", "v"); ("other", "w") ]);
+  check "record malformed line raises"
+    (match Record.of_string "no colon here\n" with exception Failure _ -> true | _ -> false);
+
+  (* ---- Check.report (quiet form) --------------------------------------------- *)
+  (let ok, txt = Check.report Specs.grepf in
+   check "report grepf ok" ok;
+   check "report grepf text" (Algebra.contains txt "[stability]"));
+
   (* ---- law parsing units ---------------------------------------------------- *)
   let mini_spec laws_and_stmts =
     "interface cli \"t\":\n  reads: nothing\ncases on argv:\n  when len(argv) != 1: exit 2 ; stderr: one nonempty line ; stdout: \"\"\n  otherwise:\n"

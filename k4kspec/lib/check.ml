@@ -164,8 +164,10 @@ let chan_name = function Stdout -> "stdout" | Stderr -> "stderr" | Exit -> "exit
 let pred_name = function OneNonemptyLine -> "one-nonempty-line" | Nonempty -> "nonempty" | EmptyB -> "empty" | Any -> "ANY (unconstrained)"
 
 (* ---- the report ----------------------------------------------------------- *)
-let run_report (sp : spec) : bool =
-  let p fmt = Printf.ksprintf (fun s -> print_string s; print_newline ()) fmt in
+(* quiet form: (validates?, full report text) — used by sign/propose gates *)
+let report (sp : spec) : bool * string =
+  let buf = Buffer.create 1024 in
+  let p fmt = Printf.ksprintf (fun s -> Buffer.add_string buf s; Buffer.add_char buf '\n') fmt in
   p "=== k4kspec check: %s ===" sp.name;
 
   (* examples *)
@@ -281,4 +283,10 @@ let run_report (sp : spec) : bool =
   end;
 
   (* overall pass = all examples pass, exhaustive, no fully-vacuous channel *)
-  passed = List.length results && nonexhaustive = [] && vacuous = []
+  let ok = passed = List.length results && nonexhaustive = [] && vacuous = [] in
+  (ok, Buffer.contents buf)
+
+let run_report (sp : spec) : bool =
+  let ok, s = report sp in
+  print_string s;
+  ok

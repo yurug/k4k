@@ -40,8 +40,10 @@ GREEN, then emit the completion promise. **Loop state below is updated each iter
   lemmas into Kalgebra as blessed PROVED laws — zero TCB growth); inter-component dependency
   ordering; deeper recursion stress. Backlog: law-aware `check` front-end; kb/ lint debt (142).
   FOLLOW-UP same day: library harvested (commit 9d75932 — lines_unlines + lines_no_newline +
-  splitc laws in Kalgebra's PROVED-LAWS section, blurb advertises them; run 3 = the compounding
-  test, in flight). Law-aware check DONE: `Eval.Undetermined idx` distinguishes matched-but-
+  splitc laws in Kalgebra's PROVED-LAWS section, blurb advertises them). Run 3 = the compounding
+  test: GREEN in 6 calls, 0 escalations, every component first-try — run 1's budget-consuming
+  roundtrip is now `apply lines_unlines. Qed.`, the glue cites lines_no_newline for the side
+  condition. Trajectory 24-FAIL → 12 → 6 (L23: certificates mint lemmas; harvest each one). Law-aware check DONE: `Eval.Undetermined idx` distinguishes matched-but-
   law-constrained from no-match; check reports "law-constrained inputs: N (proof-guaranteed via
   certify)" instead of a false exhaustiveness FAIL, law cases aren't "dead", ANY-with-laws is
   "constrained by N law(s)" not a vacuity WARN; bsort/partition/usort/grepsort now check-exit 0

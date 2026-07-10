@@ -213,6 +213,14 @@ unproven report instead of "no compiling development"). Soundness never rests on
 heuristics: a mis-parse can only produce a false negative; the final statement-pin +
 Print Assumptions + banned-vernac gate decides certification.
 
+**L23 — Certificates mint lemmas; the library compounds.** Same spec, same prover, three harness
+states: undocumented algebra → FAILED (24 calls, cascade); documented semantics → 12 calls,
+1 escalation; harvested blessed-laws library → **6 calls, 0 escalations** (every component
+first-try; run 1's budget-consuming roundtrip became `apply lines_unlines. Qed.`). Proved lemmas
+about audited-once definitions are kernel-checked at compile — the library grows at **zero TCB
+cost**. The economics of certification are cumulative: each hard proof should be harvested, not
+just celebrated.
+
 ---
 
 ## Evidence table
@@ -228,6 +236,7 @@ Print Assumptions + banned-vernac gate decides certification.
 | vacuous-`True` attack (2026-07-08) | echo binary "certified" as usort — **nothing pinned the statement** | hole demonstrated; statement-pin gate added, attack now fails |
 | `grepsort` run 1 (2026-07-10) | recursive fill's live cascade; sort proved in 2 calls, **depth was the lines/unlines algebra** | honest per-lemma failure, budget 24 exhausted 5 lemmas short |
 | `grepsort` run 2 (2026-07-10) | **first breadth+depth certificate** — 4 components + invented lex sort + discovered side condition; algebra semantics documented in prompt | closed in 12/48 calls, 1 escalation; audit GREEN |
+| `grepsort` run 3 (2026-07-10) | **the library compounds** — blessed-laws harvest cited (`apply lines_unlines`), 5 components | closed in 6 calls, 0 escalations, all first-try |
 | `bsort` (compositional) | agent-driven 2-component decomposition | certified |
 | `grepf` (compositional) | **first multi-module certificate — 5 agent-chosen components, 39/39** | certified |
 

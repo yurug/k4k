@@ -124,10 +124,26 @@ ADR's "recursive decomposition" item first:
   that `bytes_le` is a total order and that the two laws pin the output uniquely (up to one
   trailing newline — accepted under-determination).
 
+## The blessed-laws library — first slice realized (2026-07-10, commit `9d75932`)
+grepsort's agent-proven `lines`/`unlines`/`splitc` lemmas were harvested into a **PROVED-LAWS
+section of Kalgebra.v** (theorems about the audited-once definitions, kernel-checked at compile ⇒
+**zero TCB growth**; `no_newline` is lemma vocabulary only), and the prompt blurb advertises them
+("cite, do NOT reprove"). **The compounding is empirical** — same spec, same prover, three runs:
+
+| run | harness state | outcome |
+|---|---|---|
+| 1 | undocumented algebra, budget 24 | FAILED — roundtrip cascade exhausted budget, 5 lemmas short |
+| 2 | + POSIX semantics documented    | GREEN — 12 calls, 1 skeleton escalation |
+| 3 | + blessed-laws library          | GREEN — **6 calls, 0 escalations**; every component first-try |
+
+The proof that consumed run 1's entire budget became three lines (`apply lines_unlines. Qed.`);
+the glue discharges the side condition by citing `lines_no_newline`. Certification effort
+**amortizes across programs** through the library — each hard certificate mints lemmas that make
+the next one cheaper.
+
 ## Open / next
-- A **certified-component library** (a matcher, a parser, a numeral renderer) reused across
-  targets — e.g. harvest grepsort's proven `splitc`/`lines`/`unlines` lemmas into Kalgebra as
-  blessed *proved* laws (kernel-checked ⇒ zero TCB growth).
+- **Grow the library by harvest**: after each new certificate, move its general algebra lemmas
+  (statements mentioning only Kalgebra defs + stdlib) into the PROVED-LAWS section.
 - **Inter-component dependency ordering** when one component's contract feeds another.
 - Deeper recursion stress: a target whose skeleton helpers themselves need skeletons routinely
   (grepsort needed depth 2 only in run 1).

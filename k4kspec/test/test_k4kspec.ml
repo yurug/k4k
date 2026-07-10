@@ -72,6 +72,7 @@ let () =
         (fun (argv, files) ->
           match Eval.run_traced sp (Eval.input_of argv files) with
           | _ -> ()
+          | exception Eval.Undetermined _ -> ()   (* matched a law case: exhaustive, just not determined *)
           | exception Eval.Spec_error _ ->
               incr fails; Printf.printf "FAIL  %s non-exhaustive on argv=%s\n" sp.name (lst argv))
         (Check.scenarios sp))

@@ -53,8 +53,19 @@ let do_check arg rest =
 let do_run arg args =
   let sp = load arg in
       let inp = { Eval.argv = args; stdin = ""; read_file = read_file_opt } in
-      (match (try `Ok (Eval.run_traced sp inp) with Eval.Spec_error m -> `Err m) with
+      (match
+         (try `Ok (Eval.run_traced sp inp) with
+          | Eval.Spec_error m -> `Err m
+          | Eval.Undetermined idx -> `Undet idx)
+       with
        | `Err m -> Printf.eprintf "[k4kspec] %s: spec error: %s\n" sp.Ast.name m; exit 64
+       | `Undet idx ->
+           Printf.eprintf
+             "[k4kspec] %s: input matches case #%d, whose output is LAW-CONSTRAINED (under-determined) — \
+              the spec admits several outputs, so it is not executable as a model on this input. \
+              Build the certified implementation instead: `k4kspec certify-agent %s`.\n"
+             sp.Ast.name idx sp.Ast.name;
+           exit 64
        | `Ok (r, idx) ->
            (* the spec's OWN stdout / (pinned) stderr — the program's real output *)
            print_string r.Eval.rstdout;

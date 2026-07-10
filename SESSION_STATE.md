@@ -39,6 +39,13 @@ GREEN, then emit the completion promise. **Loop state below is updated each iter
   NEXT (ADR-021 open): certified-component library (harvest grepsort's proven splitc/lines/unlines
   lemmas into Kalgebra as blessed PROVED laws — zero TCB growth); inter-component dependency
   ordering; deeper recursion stress. Backlog: law-aware `check` front-end; kb/ lint debt (142).
+  FOLLOW-UP same day: library harvested (commit 9d75932 — lines_unlines + lines_no_newline +
+  splitc laws in Kalgebra's PROVED-LAWS section, blurb advertises them; run 3 = the compounding
+  test, in flight). Law-aware check DONE: `Eval.Undetermined idx` distinguishes matched-but-
+  law-constrained from no-match; check reports "law-constrained inputs: N (proof-guaranteed via
+  certify)" instead of a false exhaustiveness FAIL, law cases aren't "dead", ANY-with-laws is
+  "constrained by N law(s)" not a vacuity WARN; bsort/partition/usort/grepsort now check-exit 0
+  (determined specs unchanged); `run` on a law case explains and points to certify-agent.
 - 2026-07-08: **usort LANDED + re-validated (provenance gap closed); manifest honesty fix.**
   Audit found the 2026-06-20 usort result's spec artifacts (usort in `specs.ml`,
   `sorted_strict`/`same_set` in `rocq_emit.ml`, `ascii_lt` in `Kalgebra.v`) were NEVER committed —

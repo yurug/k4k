@@ -70,7 +70,12 @@ type ex_result = Pass | Fail of string list | Err of string
 
 let check_example sp (e : example) : ex_result =
   let inp = Eval.input_of e.ex_argv e.ex_files in
-  match (try `Ok (Eval.run sp inp) with Eval.Spec_error m -> `Err m) with
+  match
+    (try `Ok (Eval.run sp inp) with
+     | Eval.Spec_error m -> `Err m
+     | Eval.Undetermined idx ->
+         `Err (Printf.sprintf "matches law-constrained case #%d: not oracle-checkable (proof-guaranteed via certify) — examples belong on the determined cases" idx))
+  with
   | `Err m -> Err m
   | `Ok r ->
       let so = match e.ex_stdout with
@@ -178,11 +183,26 @@ let run_report (sp : spec) : bool =
   let scen = scenarios sp in
   let traced = List.map (fun (argv, files) ->
       let inp = Eval.input_of argv files in
-      ((argv, files), try `Ok (Eval.run_traced sp inp) with Eval.Spec_error m -> `Err m)) scen in
+      ((argv, files),
+       try `Ok (Eval.run_traced sp inp) with
+       | Eval.Undetermined idx -> `Undet idx
+       | Eval.Spec_error m -> `Err m)) scen in
   let nonexhaustive = List.filter (function (_, `Err _) -> true | _ -> false) traced in
-  let fired = List.filter_map (function (_, `Ok (_, idx)) -> Some idx | _ -> None) traced in
+  let undet = List.filter_map (function (_, `Undet idx) -> Some idx | _ -> None) traced in
+  let fired = undet @ List.filter_map (function (_, `Ok (_, idx)) -> Some idx | _ -> None) traced in
   let dead = List.filter (fun idx -> not (List.mem idx fired)) (List.init (List.length sp.cases) Fun.id) in
-  let vacuous = List.filter (fun (_, _, p) -> p = Any) (free_dims sp) in
+  (* a P Any channel is VACUOUS only if no relational law of its case mentions it *)
+  let rec mentions ch (e : expr) =
+    match e with
+    | OStdout -> ch = Stdout | OStderr -> ch = Stderr | OExit -> ch = Exit
+    | App (_, xs) -> List.exists (mentions ch) xs
+    | Lam (_, b) -> mentions ch b
+    | If (a, b, c) -> mentions ch a || mentions ch b || mentions ch c
+    | Lit _ | Argv _ | ArgvAll | Stdin | FileBytes | Var _ -> false
+  in
+  let law_constrained idx ch = List.exists (mentions ch) (List.nth sp.cases idx).laws in
+  let anys = List.filter (fun (_, _, p) -> p = Any) (free_dims sp) in
+  let vacuous, lawful = List.partition (fun (idx, ch, _) -> not (law_constrained idx ch)) anys in
   p "";
   p "[stability]";
   p "  exhaustiveness (static): %s" (if has_otherwise sp then "OK (otherwise present)" else "WARN: no otherwise");
@@ -190,16 +210,26 @@ let run_report (sp : spec) : bool =
     (if nonexhaustive = [] then "OK (all matched a case)"
      else Printf.sprintf "FAIL: %d input(s) matched NO case" (List.length nonexhaustive));
   List.iter (fun ((argv, files), _) -> p "      no-match: argv=%s files=%s" (argv_str argv) (files_str files)) nonexhaustive;
+  if undet <> [] then
+    p "  law-constrained inputs: %d (matched a law case; output proof-guaranteed via `certify`, not oracle-checkable)"
+      (List.length undet);
   p "  dead cases (heuristic, over sweep): %s" (if dead = [] then "none" else String.concat ", " (List.map (Printf.sprintf "#%d") dead));
   p "  anti-vacuity: %s" (if vacuous = [] then "OK (no fully-unconstrained channel)"
                           else String.concat "; " (List.map (fun (idx, ch, _) -> Printf.sprintf "WARN case #%d %s is ANY" idx (chan_name ch)) vacuous));
+  List.iter (fun (idx, ch, _) ->
+      p "    case #%d %s is ANY but constrained by %d law(s) — content certified, not validated here"
+        idx (chan_name ch) (List.length (List.nth sp.cases idx).laws)) lawful;
 
   (* under-specified dimensions — surfaced for explicit sign-off *)
   p "";
   p "[under-specified dimensions]  (content agent-authored, NOT certified — intended?)";
   (match free_dims sp with
    | [] -> p "  none — every channel is pinned"
-   | ds -> List.iter (fun (idx, ch, pr) -> p "  case #%d  %s : free (%s)" idx (chan_name ch) (pred_name pr)) ds);
+   | ds -> List.iter (fun (idx, ch, pr) ->
+       if pr = Any && law_constrained idx ch then
+         p "  case #%d  %s : law-constrained (%d law(s); see [stability])" idx (chan_name ch)
+           (List.length (List.nth sp.cases idx).laws)
+       else p "  case #%d  %s : free (%s)" idx (chan_name ch) (pred_name pr)) ds);
 
   (* curated validation surface: per-case representatives + behavior-changing mutations.
      A flat dump of every swept input defeats human review (rubber-stamping); we surface
@@ -223,7 +253,7 @@ let run_report (sp : spec) : bool =
     sp.cases;
 
   (* mutations of the author's examples that CHANGED observable behavior *)
-  let run_opt inp = try Some (Eval.run sp inp) with Eval.Spec_error _ -> None in
+  let run_opt inp = try Some (Eval.run sp inp) with Eval.Spec_error _ | Eval.Undetermined _ -> None in
   let surprises =
     List.concat (List.mapi (fun k e ->
         match run_opt (Eval.input_of e.ex_argv e.ex_files) with

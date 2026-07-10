@@ -16,6 +16,12 @@ type result = { rstdout : string; rexit : int; rstderr : stderr_c }
 
 exception Spec_error of string
 
+(* the input MATCHED case [idx], but that case's stdout/exit is a predicate (law-constrained /
+   under-determined) — the oracle cannot produce THE output because the spec admits several.
+   NOT an error: certify proves the implementation satisfies the laws; the oracle just cannot
+   cross-check it. Distinguished from Spec_error so reports stop calling this "no case matched". *)
+exception Undetermined of int
+
 (* ---- value coercions ------------------------------------------------------ *)
 let to_b = function B s -> s | _ -> raise (Spec_error "expected bytes")
 let to_i = function I n -> n | _ -> raise (Spec_error "expected int")
@@ -137,6 +143,10 @@ let run_traced (sp : spec) (inp : input) : result * int =
         if matches then (c, idx) else pick (idx + 1) rest
   in
   let c, idx = pick 0 sp.cases in
+  let undet =
+    List.exists (fun (ch, r) -> (ch = Stdout || ch = Exit) && (match r with P _ -> true | Eq _ -> false)) c.outs
+  in
+  if undet then raise (Undetermined idx);
   (eval_case sp inp c, idx)
 
 let run (sp : spec) (inp : input) : result = fst (run_traced sp inp)

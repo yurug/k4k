@@ -137,7 +137,7 @@ let certify_v ?(workdir = "/tmp/k4k_certify") ?(limitation = deterministic_limit
                      List.iter (fun (p, _) -> (try Sys.remove (path p) with _ -> ())) !prev;
                      List.iter (fun (p, c) -> write p c) files;
                      prev := files;
-                     let oracle = try Some (Eval.run sp (Eval.input_of argv files)) with Eval.Spec_error _ -> None in
+                     let oracle = try Some (Eval.run sp (Eval.input_of argv files)) with Eval.Spec_error _ | Eval.Undetermined _ -> None in
                      match oracle with
                      | None -> ()   (* under-determined input (e.g. relational-law output): proof-guaranteed, not cross-checked *)
                      | Some o ->

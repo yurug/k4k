@@ -3,7 +3,7 @@ id: reports.agent-certified-programming-learnings
 type: report
 summary: Learnings from building k4k's agent proof backend — getting an LLM to write CERTIFIED CLI programs (Rocq proofs, coqc the only gate). The arc from "certify a spec-shaped program" to agent-invented inductive proofs, a proof methodology, and compositional scaling. Written as raw material for a blog post.
 domain: reports
-last-updated: 2026-07-08
+last-updated: 2026-07-10
 depends-on: [adr-018, adr-019, adr-020, adr-021]
 related: [reports.expert-panel-2026-06-19, notes]
 ---
@@ -184,6 +184,35 @@ audit also raised the bar for what an audit can be: it produced a Coq **meta-pro
 spec's two laws uniquely determine the output — auditors can *prove things about your statement*,
 not just probe it.
 
+**L19b — Nothing pinned WHAT was proved (the sharpest gate lesson).** Extending the audit above,
+a live attack certified an **echo binary as `usort`**: a vacuous `Theorem correct : True.` passed
+coqc, the banned-word gate, and the cross-check (the under-determined success path is skipped as
+"proof-guaranteed" — which was the lie). `Print Assumptions` alone cannot catch this: the proof of
+`True` IS closed. The fix is a harness-authored, kernel-checked **statement pin** — a gate file
+with `Check (correct : forall i, spec_rel i (run i))` — plus the closedness check. "coqc is the
+only gate" is incomplete until the harness also pins the *type* of what coqc checked.
+
+**L20 — Documentation of the trusted vocabulary is prover fuel.** grepsort run 1 (budget 24)
+died in a lemma cascade around `lines`/`unlines`/`splitc`; run 2 closed in **12 calls** after
+three prompt lines documenting the algebra's POSIX semantics (final newline = terminator; unlines
+terminates every line; the roundtrip needs a no-embedded-newline side condition). The model was
+reverse-engineering Fixpoints instead of proving. Cheaper than any budget increase — context
+economy is a proving strategy, not a token optimization.
+
+**L21 — The depth is never where you designed it.** grepsort was built to make the *sort* the
+deep component (lexicographic order, real induction). The sort proved in 2 focused calls; the wall
+was the **I/O-format boundary** — `lines (unlines l) = l` only under a side condition the agent
+had to discover. Benchmark designers: your intended hard part and the actual hard part will
+differ; instrument per-lemma so you can see where the budget actually goes.
+
+**L22 — Recursion turns stalls into cascades.** The per-lemma fill (splice ONE
+`Lemma … Admitted.` replacement at a time; a resisting lemma escalates once to a kernel-gated
+skeleton whose Admitted helpers re-enter the loop) converted grepsort's monolithic stall into a
+visible, bounded lemma cascade — and made the failure mode *legible* (an honest per-lemma
+unproven report instead of "no compiling development"). Soundness never rests on the splicing
+heuristics: a mis-parse can only produce a false negative; the final statement-pin +
+Print Assumptions + banned-vernac gate decides certification.
+
 ---
 
 ## Evidence table
@@ -196,6 +225,9 @@ not just probe it.
 | `partition` | proof *construction* over an unfamiliar preorder (`part_le`) | closed, attempt 1 |
 | `usort` | multi-invariant (strict-sort + set-equality); **one-shot stalled** | closed only via the methodology |
 | `usort` (re-run 2026-07-08) | agent switched to filter-the-byte-universe — **proof-friendlier algorithm**, 6 lemmas | closed, every gate attempt 1 |
+| vacuous-`True` attack (2026-07-08) | echo binary "certified" as usort — **nothing pinned the statement** | hole demonstrated; statement-pin gate added, attack now fails |
+| `grepsort` run 1 (2026-07-10) | recursive fill's live cascade; sort proved in 2 calls, **depth was the lines/unlines algebra** | honest per-lemma failure, budget 24 exhausted 5 lemmas short |
+| `grepsort` run 2 (2026-07-10) | **first breadth+depth certificate** — 4 components + invented lex sort + discovered side condition; algebra semantics documented in prompt | closed in 12/48 calls, 1 escalation; audit GREEN |
 | `bsort` (compositional) | agent-driven 2-component decomposition | certified |
 | `grepf` (compositional) | **first multi-module certificate — 5 agent-chosen components, 39/39** | certified |
 
@@ -221,10 +253,12 @@ Methodology (ADR-020): implement-naive → **skeleton gate** → fill → assemb
 
 What's validated: the agent proof backend (coqc-gated, adversarially audited); hard *inductive*
 proofs (sort, custom-preorder partition); the structured methodology (unblocks multi-invariant
-proofs); compositional *breadth* (a 5-module grep-class certificate). What's *not* yet shown: a
-single target with **breadth + a deep component** (a grep-then-sort pipeline), recursive
-decomposition (a hard component spawning its own sub-certification), a reusable certified-component
-library, and the hardest proof tier (non-obvious invariants / IH strengthening the model must
-invent). And the TCB is still real: every certificate is "proven *modulo* the Rocq kernel +
-extraction + the OCaml compiler + the blessed algebra + the I/O shim + the elaborator" — shrinking
-and honestly manifesting that perimeter is permanent work, not a footnote.
+proofs); compositional *breadth* (a 5-module grep-class certificate); **breadth + depth in one
+target with recursive decomposition** (`grepsort`: a 4-component certificate whose hard component
+spawned its own kernel-gated skeleton). What's *not* yet shown: a reusable certified-component
+library (harvesting proven algebra lemmas into the blessed vocabulary), routine deeper recursion
+(grepsort needed depth 2 only once), and the hardest proof tier (non-obvious invariants / IH
+strengthening the model must invent). And the TCB is still real: every certificate is "proven
+*modulo* the Rocq kernel + extraction + the OCaml compiler + the blessed algebra + the I/O shim +
+the elaborator" — shrinking and honestly manifesting that perimeter is permanent work, not a
+footnote.

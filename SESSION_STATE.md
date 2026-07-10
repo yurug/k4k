@@ -16,6 +16,29 @@ commit, then a FRESH agent audits (criteria in PLAN.md §Audit); fix until a fre
 GREEN, then emit the completion promise. **Loop state below is updated each iteration:**
 
 ### Certify-pipeline progress log (newest first)
+- 2026-07-10: **grepsort CERTIFIED — first BREADTH+DEPTH certificate; recursive fill realized
+  (ADR-021's top two open items closed).** Commits: 572e73a (certificate gate), a3a4dbb (spec:
+  bytes_le + sorted_lines + grepsort), da3dea9 (recursive per-lemma fill), + this landing.
+  ARC: (1) monolithic component fill stalled one tactic short (ADR-020's failure shape at module
+  level); (2) rebuilt as RECURSIVE fill — one `Lemma … Admitted.` span agent-replaced+spliced at a
+  time, ≤3 focused attempts w/ per-lemma coqc feedback, one kernel-gated skeleton escalation per
+  lemma, helpers re-enter the loop, total-budget bound, honest per-lemma failure (same ladder as
+  the agentic-dev-kit escalation contract); (3) run 1 (budget 24): sort proved in 2 calls — the
+  DEPTH was the lines/unlines/splitc roundtrip (needs a discovered no-embedded-newline side
+  condition); cascade converged but exhausted budget 5 lemmas short; (4) documented the algebra's
+  POSIX semantics in kalgebra_blurb (3 lines) + budget 48 → run 2 closed GREEN in 12 calls,
+  1 escalation. L20: documenting the trusted vocabulary beat the budget increase. Certificate:
+  4 components; agent invented boolean lex comparator blexb + insertion sort + the Forall
+  side condition; statement-pin gate + Print Assumptions closed; binary byte-identical to
+  `grep -F | sort` on all probes incl. no-trailing-newline and empty-needle/empty-line; 3+5
+  body-only tampers rejected (tamper-design lesson: verify the sed changed the BODY only — a
+  no-op or statement-touching tamper proves nothing); fresh-agent audit GREEN (bytes_le proven
+  reflexive/total/transitive/antisym; laws pin output uniquely up to one trailing newline —
+  accepted; recursive-fill heuristics can only false-negative, never false-certify; manifest
+  provenance accurate; 21/29 cross-check categorization verified genuine).
+  NEXT (ADR-021 open): certified-component library (harvest grepsort's proven splitc/lines/unlines
+  lemmas into Kalgebra as blessed PROVED laws — zero TCB growth); inter-component dependency
+  ordering; deeper recursion stress. Backlog: law-aware `check` front-end; kb/ lint debt (142).
 - 2026-07-08: **usort LANDED + re-validated (provenance gap closed); manifest honesty fix.**
   Audit found the 2026-06-20 usort result's spec artifacts (usort in `specs.ml`,
   `sorted_strict`/`same_set` in `rocq_emit.ml`, `ascii_lt` in `Kalgebra.v`) were NEVER committed —

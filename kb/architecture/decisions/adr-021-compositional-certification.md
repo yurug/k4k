@@ -3,7 +3,7 @@ id: adr-021
 type: decision
 summary: How k4k scales to large implementations while the human-reviewed spec stays KISS. The observational spec_rel is the ONLY human-signed artifact and stays flat regardless of implementation size. The implementation+proof scale on two implementation-side axes — (1) COMPOSITIONAL verification (run is a composition of certified components, each with an agent-proposed, kernel-checked FUNCTIONAL contract; the top proof composes the contracts; the ADR-020 methodology applies recursively, the skeleton gate generalizing to a module-interface gate), and (2) naive→efficient refinement. Component contracts are functional Coq relations (∀x. S x (f x)), not mini observational specs.
 domain: architecture
-last-updated: 2026-06-21
+last-updated: 2026-07-10
 depends-on: [adr-020, adr-019, adr-016, notes]
 refines: [adr-020]
 related: [adr-013]
@@ -100,12 +100,37 @@ This validates multi-module **breadth** (a real module graph + contract-based gl
 program; **depth** (a component with a substantial internal proof) is shown separately (the sort
 component in `bsort`, the multi-invariant `usort`).
 
+## Breadth + depth + RECURSION — realized (2026-07-10)
+**`grepsort`** (lines of FILE containing NEEDLE, sorted by the lexicographic `bytes_le` — laws
+`sorted_lines` + `permutation` over line lists, under-determined stdout, input-pinned grep-like
+exit) is the **first certificate with both axes in one target**, and it required realizing this
+ADR's "recursive decomposition" item first:
+
+- The monolithic component fill re-created ADR-020's failure shape at the module level and stalled.
+  Replaced by the **recursive per-lemma fill** (`agent_proof.ml`, commit `da3dea9`): one
+  `Lemma … Admitted.` span is agent-replaced and spliced at a time (≤3 focused attempts, per-lemma
+  coqc feedback); a resisting lemma escalates ONCE to a kernel-gated skeleton whose Admitted
+  helpers re-enter the same loop — ADR-020 applied recursively, bounded by a total call budget,
+  with an honest per-lemma failure report on exhaustion.
+- **Live cascade observed** (run 1, budget 24): the feared deep component — the lex **sort** —
+  proved in 2 focused calls; the true depth was the **`lines`/`unlines`/`splitc` roundtrip**
+  (valid only under a no-embedded-newline side condition the agent must discover). Run 2 closed
+  GREEN in **12 calls, one escalation** after the algebra's POSIX semantics were documented in the
+  prompt — documentation of the trusted vocabulary beat a bigger budget.
+- Certificate: 4 components (`comp_err`/`comp_lines`/`comp_sort`/`comp_render`) + glue; agent
+  invented a boolean lex comparator + insertion sort + the `Forall` no-newline side condition;
+  statement-pin gate + `Print Assumptions` closed; 3+5 body-only tampers rejected; 17-case
+  independent oracle (8-bit clean, duplicates kept) exact; fresh-agent audit GREEN incl. a proof
+  that `bytes_le` is a total order and that the two laws pin the output uniquely (up to one
+  trailing newline — accepted under-determination).
+
 ## Open / next
-- A target combining **breadth + a deep component** (e.g. a grep-then-sort pipeline) — both axes at once.
-- **Recursive decomposition**: a component whose own certificate is hard becomes its own
-  `certify_compositional`/`certify_structured` sub-problem.
-- A **certified-component library** (a matcher, a parser, a numeral renderer) reused across targets.
+- A **certified-component library** (a matcher, a parser, a numeral renderer) reused across
+  targets — e.g. harvest grepsort's proven `splitc`/`lines`/`unlines` lemmas into Kalgebra as
+  blessed *proved* laws (kernel-checked ⇒ zero TCB growth).
 - **Inter-component dependency ordering** when one component's contract feeds another.
+- Deeper recursion stress: a target whose skeleton helpers themselves need skeletons routinely
+  (grepsort needed depth 2 only in run 1).
 
 ## Grounding
 CompCert / seL4 compositional refinement; refinement calculus (Back/Morgan); contract-based modular

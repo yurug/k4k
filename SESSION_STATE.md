@@ -16,6 +16,30 @@ commit, then a FRESH agent audits (criteria in PLAN.md §Audit); fix until a fre
 GREEN, then emit the completion promise. **Loop state below is updated each iteration:**
 
 ### Certify-pipeline progress log (newest first)
+- 2026-07-10 (later): **v3 PRODUCTIZATION — the full PRD loop shipped on the k4kspec core
+  (ADR-022; commits 271990d..).** Approved plan executed in 8 milestones, each green+committed:
+  M1 laws in the surface language (per-case `law` stmt; output-refs only in laws, statically
+  checked; 4 law built-ins as surface files, emit byte-identical). M2 record.ml (one machine-
+  record format) + quiet Check.report. M3 sign/store: <name>.k4k/ ledger; BLAKE256 signatures =
+  version history w/ chain; under-spec ack (exit 4); certify GATED (exit 3; --unsigned = stamped
+  dev run); Kalgebra EMBEDDED in the binary (product runs from any cwd). M4 tier waivers (laws
+  only; single choke point; fully-waived spec fails check BY DESIGN). M5 certificate.md: computed
+  scope table (CERTIFIED / CERTIFIED-BY-LAW / FREE / WAIVED), waiver disclosure derived from the
+  same record that weakens (cannot diverge), promotion into certificates/v<N>/. M6 propose/
+  revise/propose-fix: retry-gated (structure→parse→check→decisions-monotone), monotonic immortal
+  decision journal, deterministic stubs = whole loop agent-free-testable, mechanical delta +
+  line diff, last-failure.md + propose-fix. M7 LIVE DEMO all green: propose "grep -F clone" →
+  signed-quality draft attempt 1 → sign v1 → live proof attempt 1 (60/60) → promoted certificate
+  → forced failure → live propose-fix (honest cost analysis) → live revise invented 7
+  interlocking laws (anti-smuggling + canonicality) when the vocabulary lacked int→string;
+  monotone decisions held; unelaborable draft CONTAINED by the honesty chain (check flags → sign
+  refuses). M8 fresh-agent audit RED→FIXED: read-twice TOCTOU in the gate (certify could prove
+  bytes never signed under a race) → read-once (verify_bytes + single buffer), strace-verified
+  1 open; all other attacks mitigated. Tests 100+ checks ALL OK; kb-lint errors at baseline.
+  DEFERRED (recorded in ADR-022): v2 watcher retirement pass (README/WALKTHROUGH/opam still
+  describe v2); accept-a-proposal command (mv is the acceptance act); tier-B/C execution;
+  guidance→R conflict check; elaborate-dry-run gate in revise; propose name path-guard;
+  int→bytes rendering in the algebra (the revise demo wanted it).
 - 2026-07-10: **grepsort CERTIFIED — first BREADTH+DEPTH certificate; recursive fill realized
   (ADR-021's top two open items closed).** Commits: 572e73a (certificate gate), a3a4dbb (spec:
   bytes_le + sorted_lines + grepsort), da3dea9 (recursive per-lemma fill), + this landing.

@@ -3,7 +3,7 @@ id: spec.k4kspec
 type: spec
 summary: The k4kspec language reference (v3, in progress). The concrete observational specification language — semantic domain, the relation R, the surface forms (interface/footprint/cases/laws/examples/errors), the value algebra, the filesystem frame/footprint model, and the under-specification posture. Worked examples included. Open items flagged.
 domain: spec
-last-updated: 2026-06-20
+last-updated: 2026-07-10
 depends-on: [glossary, adr-015, adr-016, adr-017]
 refines: []
 related: [domain.prd]
@@ -49,15 +49,16 @@ cases on argv, file(s):                # ORDERED, first-match wins
   ...
   otherwise: <output constraints>      # makes the table total
 
-laws:                                  # cross-cutting; relational propositions (∀/∃ allowed)
-  - <proposition over (input, output)>
+    law <proposition>                  # REALIZED (2026-07-10): laws are PER-CASE statements,
+                                       # one per `law` line in a case body — not a spec-level
+                                       # block (ambiguous with the stdout:/exit: keywords)
 
 examples:                              # concrete rows, checked against the denotation
   <input> -> <output>
 ```
 
 - **CASES** — a decision table on the input. **Guards must be computable booleans**; ordered first-match (so a later case sees the earlier guards as false, which keeps footprint references well-defined). Exhaustive (via `otherwise`) ⇒ totality.
-- **LAWS** — relational properties; may use arbitrary `∀/∃` and law-only predicates (`sorted`, `permutation`, `distinct`). Discharged by proof, never computed; **illegal in guards**.
+- **LAWS** — relational properties, discharged by proof, never computed; **illegal in guards** (statically rejected at parse time). Realized vocabulary (each elaborates to an audited-once Kalgebra relation): `sorted`, `sorted_strict`, `sorted_lines`, `partitioned`, `permutation(a,b)`, `same_set(a,b)`, over `list_of(bytes)` / `lines(bytes)`; inside a `law` (and ONLY there) `stdout`/`stderr`/`exit` denote the output channels, with `let`-bound names in scope. A law-constrained channel is written `stdout: any` + `law …` lines. The earlier draft's spec-level `laws:` block, `distinct`, and free-form `∀/∃` are NOT realized — grow by need, each addition audited.
 - **EXAMPLES** — concrete rows, statically checked to satisfy `R`. Reader aids + regression anchors; a contradictory example is a stability error.
 - **ERRORS** — optional named-error table; `raise NAME` is pure sugar for setting `(exit, stderr)`. Use it only when pinning the message (critical / machine-facing). Ordinary diagnostics under-specify instead (§6).
 
@@ -81,7 +82,8 @@ bytes   split(b,sep):list  join(xs,sep)  lines(b):list  unlines(xs)        # spl
 parse   int_of(b):int (dflt 0 on non-decimal)   is_decimal(b):bool
 files   present(f) absent(f)  f.bytes  file_at(pathbytes):file  resolve(base,p)
 combi   map(xs,f) filter(xs,p) count(xs,p) all(xs,p) any(xs,p) find(xs,p):opt fold(xs,init,f)
-law     sorted permutation distinct  ∀x:τ.P  ∃x:τ.P                        # NEVER in guards
+law     sorted sorted_strict sorted_lines partitioned permutation same_set  # NEVER in guards
+        (+ list_of(b) / lines(b) as law arguments; output-refs stdout/stderr/exit ONLY here)
 ```
 
 **Lambdas:** allowed **only** as arguments to the blessed combinators, with a body that is a blessed-total expression in the bound variable(s) (no recursion, no nested `∀/∃` in guard position). May capture enclosing `let`-bindings. This keeps higher-order use bounded, total, readable, and trivially elaborable. `fold` is the escape hatch; most specs use `map`/`filter`/`count`.

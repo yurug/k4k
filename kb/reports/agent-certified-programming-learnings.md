@@ -221,6 +221,15 @@ about audited-once definitions are kernel-checked at compile — the library gro
 cost**. The economics of certification are cumulative: each hard proof should be harvested, not
 just celebrated.
 
+**L24 — The proof machinery survives audits; the product glue is where the holes are.** The
+adversarial audit of the v3 product surface (signature gate, waiver disclosure, decision
+monotonicity) found every *cryptographic and logical* attack mitigated — and one classic
+systems bug: a read-twice TOCTOU where the gate hashed one read of the spec and the loader
+parsed another, so a race could certify bytes that were never signed. Kernel-checked cores
+concentrate risk in the mundane perimeter (file IO, path handling, template text — cf. L19).
+Audit the glue with systems eyes (the auditor strace'd the opens), not just the math. Fix was
+read-once: hash and parse the same buffer; verified by open-count 2→1.
+
 ---
 
 ## Evidence table

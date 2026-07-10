@@ -118,9 +118,13 @@ let kalgebra_blurb =
    Bool, Sorting; `List.filter`, `List.nodup`, `Ascii.ascii_dec`, `StronglySorted`, etc.).\n\
    SEMANTICS you will need: `lines` is POSIX — a FINAL newline is a TERMINATOR, not a separator\n\
    (`lines \"a\\nb\\n\" = [\"a\";\"b\"] = lines \"a\\nb\"`); `unlines` TERMINATES every line (`unlines\n\
-   [\"a\";\"b\"] = \"a\\nb\\n\"`); hence `lines (unlines l) = l` holds ONLY when no element of `l`\n\
-   contains a newline (true for elements drawn from a `lines` result) — state that side condition\n\
-   explicitly if you need the roundtrip."
+   [\"a\";\"b\"] = \"a\\nb\\n\"`).\n\
+   BLESSED LAWS (already PROVED in Kalgebra — cite them, do NOT reprove): `no_newline s := ~ In nlc\n\
+   (list_ascii_of_string s)`; `lines_unlines : forall l, Forall no_newline l -> lines (unlines l)\n\
+   = l` (THE roundtrip); `lines_no_newline : forall s, Forall no_newline (lines s)` (supplies the\n\
+   side condition); plus `splitc_no_delim`, `splitc_nlc_no_newline`, `splitc_app_nl`,\n\
+   `splitc_unlines`, `drop_last_empty_app`, `unlines_cons_not_empty`, `Forall_drop_last_empty`,\n\
+   `Forall_app_helper`/`Forall_rev_helper`/`Forall_tail_helper`."
 
 let impl_prompt stmt =
   "You are writing a CERTIFIED Coq (Rocq 9.1) implementation by a STRUCTURED method.\n" ^ kalgebra_blurb

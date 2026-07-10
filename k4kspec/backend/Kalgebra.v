@@ -67,6 +67,163 @@ Fixpoint unlines (l : list string) : string :=
 Definition lfirst (p : string -> bool) (l : list string) (d : string) : string :=
   match find p l with Some v => v | None => d end.
 
+(* ============== PROVED LAWS of the algebra (the blessed-laws library, ADR-021) ==============
+   Everything in this section is a THEOREM about the definitions above, kernel-checked when this
+   file compiles — it adds NOTHING to the TCB (only Definitions are trusted). First harvest
+   (2026-07-10): the lines/unlines interaction laws from the grepsort certificate — the roundtrip
+   and its side condition, which every line-oriented proof needs. `no_newline` is lemma
+   vocabulary (appears only in law statements), not spec vocabulary. *)
+
+Definition no_newline (s : bytes) : Prop := ~ List.In nlc (list_ascii_of_string s).
+
+Lemma splitc_no_delim :
+  forall (d : ascii) (s : string),
+    Forall (fun p => ~ List.In d (list_ascii_of_string p)) (splitc d s).
+Proof.
+  intros d s. induction s as [| c r IH]; simpl.
+  - constructor.
+    + intro H; simpl in H; destruct H.
+    + constructor.
+  - destruct (Ascii.eqb c d) eqn:Heq.
+    + constructor.
+      * intro H; simpl in H; destruct H.
+      * exact IH.
+    + apply Ascii.eqb_neq in Heq.
+      revert IH.
+      destruct (splitc d r) as [| h t]; simpl; intro IH.
+      * constructor.
+        { intro H; simpl in H.
+          destruct H as [H | H]; [exact (Heq H) | destruct H]. }
+        { constructor. }
+      * inversion IH as [| ? ? Hh Ht]; subst.
+        constructor.
+        { intro H; simpl in H.
+          destruct H as [H | H]; [exact (Heq H) | exact (Hh H)]. }
+        { exact Ht. }
+Qed.
+
+Lemma splitc_nlc_no_newline :
+  forall s : string, Forall no_newline (splitc nlc s).
+Proof.
+  intro s. exact (splitc_no_delim nlc s).
+Qed.
+
+(* generic Forall conveniences (named *_helper to avoid stdlib clashes) *)
+Lemma Forall_app_helper :
+  forall (A : Type) (P : A -> Prop) (l1 l2 : list A),
+    Forall P l1 -> Forall P l2 -> Forall P (l1 ++ l2).
+Proof.
+  intros A P l1 l2 H1 H2.
+  induction H1 as [| x l1' HPx HF IH]; simpl.
+  - exact H2.
+  - constructor; [exact HPx | exact IH].
+Qed.
+
+Lemma Forall_rev_helper :
+  forall (A : Type) (P : A -> Prop) (l : list A),
+    Forall P l -> Forall P (rev l).
+Proof.
+  intros A P l H.
+  induction H as [| x l' HPx HF IH]; simpl.
+  - constructor.
+  - apply Forall_app_helper.
+    + exact IH.
+    + constructor; [exact HPx | constructor].
+Qed.
+
+Lemma Forall_tail_helper :
+  forall (A : Type) (P : A -> Prop) (x : A) (l : list A),
+    Forall P (x :: l) -> Forall P l.
+Proof.
+  intros A P x l H.
+  inversion H; subst; assumption.
+Qed.
+
+Lemma Forall_drop_last_empty :
+  forall (P : string -> Prop) (l : list string),
+    Forall P l -> Forall P (drop_last_empty l).
+Proof.
+  intros P l H.
+  unfold drop_last_empty.
+  destruct (rev l) as [| h t] eqn:Hrev.
+  - exact H.
+  - destruct h as [| c r].
+    + assert (Ht : Forall P (EmptyString :: t)).
+      { rewrite <- Hrev. apply Forall_rev_helper. exact H. }
+      exact (Forall_rev_helper _ P t
+               (Forall_tail_helper _ P EmptyString t Ht)).
+    + exact H.
+Qed.
+
+(* every element of a `lines` result is newline-free — supplies the roundtrip side condition *)
+Lemma lines_no_newline : forall s, Forall no_newline (lines s).
+Proof.
+  intro s. unfold lines. destruct s as [| c r].
+  - constructor.
+  - apply Forall_drop_last_empty. apply splitc_nlc_no_newline.
+Qed.
+
+Lemma splitc_app_nl :
+  forall s t, no_newline s ->
+    splitc nlc (append s (String nlc t)) = s :: splitc nlc t.
+Proof.
+  intro s. induction s as [| c s' IH]; intros t H.
+  - simpl.
+    destruct (Ascii.eqb nlc nlc) eqn:Eq.
+    + reflexivity.
+    + rewrite Ascii.eqb_refl in Eq. discriminate Eq.
+  - unfold no_newline in H. simpl in H.
+    assert (Hc : Ascii.eqb c nlc = false).
+    { apply (proj2 (Ascii.eqb_neq c nlc)). intro E. apply H. left.
+      rewrite E. reflexivity. }
+    assert (Hs' : no_newline s').
+    { intro Hin. apply H. right. exact Hin. }
+    simpl. rewrite Hc.
+    rewrite (IH t Hs').
+    reflexivity.
+Qed.
+
+Lemma splitc_unlines :
+  forall l, Forall no_newline l ->
+    splitc nlc (unlines l) = (l ++ [EmptyString])%list.
+Proof.
+  intro l. induction l as [| x r IH]; intro H.
+  - reflexivity.
+  - inversion H as [| ? ? Hx Hr]; subst.
+    simpl.
+    rewrite (splitc_app_nl x (unlines r) Hx).
+    rewrite (IH Hr).
+    reflexivity.
+Qed.
+
+Lemma drop_last_empty_app :
+  forall l : list string, drop_last_empty (l ++ [EmptyString])%list = l.
+Proof.
+  intro l. unfold drop_last_empty.
+  rewrite rev_app_distr. simpl.
+  apply rev_involutive.
+Qed.
+
+Lemma unlines_cons_not_empty :
+  forall x r, unlines (x :: r) <> EmptyString.
+Proof.
+  intros x r. destruct x; simpl; discriminate.
+Qed.
+
+(* THE roundtrip: lines is a left inverse of unlines on newline-free lines *)
+Lemma lines_unlines : forall l, Forall no_newline l -> lines (unlines l) = l.
+Proof.
+  intros l H. destruct l as [| h t].
+  - reflexivity.
+  - unfold lines.
+    destruct (unlines (h :: t)) as [| c r] eqn:E.
+    + exfalso. exact (unlines_cons_not_empty h t E).
+    + rewrite <- E.
+      rewrite (splitc_unlines (h :: t) H).
+      apply drop_last_empty_app.
+Qed.
+(* ============================== end of the blessed-laws library ============================== *)
+
 Fixpoint is_prefix (p s : string) : bool :=
   match p with
   | EmptyString => true

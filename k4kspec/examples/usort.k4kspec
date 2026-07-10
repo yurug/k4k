@@ -1,0 +1,17 @@
+# usort ARG — stdout's bytes are ARG's bytes SORTED and DEDUPLICATED.
+# Two interacting laws: a STRICT sort (strictly increasing => no duplicates) and
+# set-equality with ARG. The multi-invariant ceiling probe.
+interface cli "usort":
+  reads: nothing
+  writes: nothing
+cases on argv:
+  when len(argv) != 1: exit 2 ; stderr: one nonempty line ; stdout: ""
+  otherwise:
+    stdout: any
+    stderr: ""
+    exit:   0
+    law sorted_strict(list_of(stdout))
+    law same_set(list_of(stdout), list_of(argv[0]))
+examples:
+  argv=[] -> exit=2
+  argv=["a","b"] -> exit=2

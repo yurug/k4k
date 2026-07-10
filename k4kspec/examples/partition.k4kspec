@@ -1,0 +1,17 @@
+# partition ARG — stdout is a PERMUTATION of ARG's bytes, PARTITIONED around 'm' (109):
+# every byte < 'm' precedes every byte >= 'm'. `partitioned` is Sorted over the
+# implication-preorder part_le (audited-once, in Kalgebra) — not a stdlib order.
+interface cli "partition":
+  reads: nothing
+  writes: nothing
+cases on argv:
+  when len(argv) != 1: exit 2 ; stderr: one nonempty line ; stdout: ""
+  otherwise:
+    stdout: any
+    stderr: ""
+    exit:   0
+    law partitioned(list_of(stdout))
+    law permutation(list_of(stdout), list_of(argv[0]))
+examples:
+  argv=[] -> exit=2
+  argv=["a","b"] -> exit=2

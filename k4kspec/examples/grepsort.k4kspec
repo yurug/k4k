@@ -1,0 +1,20 @@
+# grepsort NEEDLE FILE — the lines of FILE containing NEEDLE, sorted (lexicographic
+# byte order, duplicates kept); exit 1 when nothing matches. Output is law-constrained
+# up to the trailing-newline class of `lines`. The breadth+depth target (ADR-021).
+interface cli "grepsort":
+  reads: file at argv[1]
+  writes: nothing
+cases on argv, file:
+  when len(argv) != 2: exit 2 ; stderr: one nonempty line ; stdout: ""
+  when file absent:    exit 2 ; stderr: one nonempty line ; stdout: ""
+  otherwise:
+    let matched = filter(lines(file.bytes), \L -> contains(L, argv[0]))
+    stdout: any
+    stderr: ""
+    exit:   if is_empty(matched) then 1 else 0
+    law sorted_lines(lines(stdout))
+    law permutation(lines(stdout), matched)
+examples:
+  argv=["x"] -> exit=2
+  argv=["x","y","z"] -> exit=2
+  argv=["x","nope"] -> exit=2

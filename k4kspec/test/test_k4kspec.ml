@@ -96,6 +96,19 @@ let () =
             (incr fails; Printf.printf "FAIL  %s: parsed examples differ from the AST spec\n" file);
           if List.length parsed.Ast.cases <> List.length ast.Ast.cases then
             (incr fails; Printf.printf "FAIL  %s: case count differs\n" file);
+          (* laws are invisible to the behavioral sweep (Eval raises Undetermined first):
+             compare them structurally *)
+          if List.map (fun (c : Ast.case) -> c.Ast.laws) parsed.Ast.cases
+             <> List.map (fun (c : Ast.case) -> c.Ast.laws) ast.Ast.cases then
+            (incr fails; Printf.printf "FAIL  %s: parsed laws differ from the AST spec\n" file);
+          (* the decisive oracle: byte-identical certified statement (spec_rel) *)
+          (match
+             (try `Ok (Rocq_emit.emit_statement parsed) with Failure m -> `Err m),
+             (try `Ok (Rocq_emit.emit_statement ast) with Failure m -> `Err m)
+           with
+           | `Ok a, `Ok b when a = b -> ()
+           | `Ok _, `Ok _ -> incr fails; Printf.printf "FAIL  %s: emitted spec_rel differs from the AST spec's\n" file
+           | `Err m, _ | _, `Err m -> incr fails; Printf.printf "FAIL  %s: emit_statement: %s\n" file m);
           List.iter
             (fun (argv, files) ->
               let inp = Eval.input_of argv files in
@@ -105,7 +118,29 @@ let () =
                 (incr fails; Printf.printf "FAIL  %s: round-trip behaviour differs on argv=%s\n" file (lst argv)))
             (Check.scenarios ast))
     [ ("grepf.k4kspec", Specs.grepf); ("cutf.k4kspec", Specs.cutf);
-      ("catf.k4kspec", Specs.catf); ("kvget.k4kspec", Specs.kvget) ];
+      ("catf.k4kspec", Specs.catf); ("kvget.k4kspec", Specs.kvget);
+      ("bsort.k4kspec", Specs.bsort); ("partition.k4kspec", Specs.partition);
+      ("usort.k4kspec", Specs.usort); ("grepsort.k4kspec", Specs.grepsort) ];
+
+  (* ---- law parsing units ---------------------------------------------------- *)
+  let mini_spec laws_and_stmts =
+    "interface cli \"t\":\n  reads: nothing\ncases on argv:\n  when len(argv) != 1: exit 2 ; stderr: one nonempty line ; stdout: \"\"\n  otherwise:\n"
+    ^ laws_and_stmts ^ "\nexamples:\n  argv=[] -> exit=2\n"
+  in
+  (match Parse.parse (mini_spec "    stdout: any\n    stderr: \"\"\n    exit: 0\n    law permutation(lines(stdout), matched)") with
+   | sp ->
+       (match (List.nth sp.Ast.cases 1).Ast.laws with
+        | [ Ast.App ("permutation", [ Ast.App ("lines", [ Ast.OStdout ]); Ast.Var "matched" ]) ] -> ()
+        | _ -> incr fails; print_endline "FAIL  law-parse: wrong AST for permutation(lines(stdout), matched)")
+   | exception Parse.Parse_error m -> incr fails; Printf.printf "FAIL  law-parse: %s\n" m);
+  (* output-ref outside a law is a static parse error *)
+  (match Parse.parse (mini_spec "    stdout: concat(stdout, \"x\")\n    stderr: \"\"\n    exit: 0") with
+   | _ -> incr fails; print_endline "FAIL  law-position: output-ref in an output equation was ACCEPTED"
+   | exception Parse.Parse_error _ -> ());
+  (match Parse.parse
+           ("interface cli \"t\":\n  reads: nothing\ncases on argv:\n  when exit == 0: exit 2 ; stderr: one nonempty line ; stdout: \"\"\n  otherwise: exit 0 ; stderr: \"\" ; stdout: \"\"\nexamples:\n  argv=[] -> exit=2\n") with
+   | _ -> incr fails; print_endline "FAIL  law-position: output-ref in a guard was ACCEPTED"
+   | exception Parse.Parse_error _ -> ());
 
   if !fails = 0 then print_endline "ALL OK"
   else (Printf.printf "\n%d FAILURE(S)\n" !fails; exit 1)

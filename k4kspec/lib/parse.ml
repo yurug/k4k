@@ -12,11 +12,15 @@
          stdout: <rhs>
          stderr: <rhs>
          exit:   <expr>
+         law <expr>                       # relational law (0+ per case); may reference the
+                                          # OUTPUT channels stdout/stderr/exit as expressions
      examples:
        argv=[..] (file="..." | files={p="..",..})? -> stdout="..." exit=N
 
    A <rhs> is: `one nonempty line` | `nonempty` | `any` | <expr>.
-   Every case must set stdout, stderr and exit exactly once. *)
+   Every case must set stdout, stderr and exit exactly once.
+   `stdout`/`stderr`/`exit` as EXPRESSIONS (output references) are valid only inside `law`
+   propositions — a static post-parse check rejects them anywhere else. *)
 
 open Ast
 
@@ -164,6 +168,11 @@ and p_primary st : expr =
       List.fold_right (fun x b -> Lam (x, b)) ps body
   | TId "argv" -> adv st; if peek st = TLBrack then (adv st; let n = int_lit st in eat st TRBrack; Argv n) else ArgvAll
   | TId "stdin" -> adv st; Stdin
+  (* output-channel references — statement dispatch in p_case wins first, so `stdout:` etc.
+     never reach here; as EXPRESSIONS these are legal only in laws (statically checked) *)
+  | TId "stdout" -> adv st; OStdout
+  | TId "stderr" -> adv st; OStderr
+  | TId "exit" -> adv st; OExit
   | TId "true" -> adv st; Lit (Bool true)
   | TId "false" -> adv st; Lit (Bool false)
   | TId "file" ->
@@ -203,7 +212,7 @@ let p_case st : case =
     | TId "otherwise" -> adv st; eat st TColon; None
     | _ -> err st "expected 'when' or 'otherwise'"
   in
-  let lets = ref [] and outs = ref [] in
+  let lets = ref [] and outs = ref [] and laws = ref [] in
   let is_boundary () = match peek st with
     | TEof | TId "when" | TId "otherwise" | TId "examples" -> true | _ -> false in
   let rec loop () =
@@ -215,7 +224,8 @@ let p_case st : case =
        | TId "stdout" -> adv st; eat st TColon; outs := (Stdout, p_rhs st) :: !outs
        | TId "stderr" -> adv st; eat st TColon; outs := (Stderr, p_rhs st) :: !outs
        | TId "exit" -> adv st; (if peek st = TColon then adv st); outs := (Exit, Eq (p_expr st)) :: !outs
-       | _ -> err st "expected let / stdout: / stderr: / exit:");
+       | TId "law" -> adv st; laws := p_expr st :: !laws
+       | _ -> err st "expected let / stdout: / stderr: / exit: / law");
       loop ()
     end
   in
@@ -224,7 +234,7 @@ let p_case st : case =
     | Some r -> r
     | None -> err st (Printf.sprintf "case is missing a %s constraint"
         (match ch with Stdout -> "stdout" | Stderr -> "stderr" | Exit -> "exit")) in
-  { guard; lets = List.rev !lets; outs = [ (Stdout, find Stdout); (Stderr, find Stderr); (Exit, find Exit) ]; laws = [] }
+  { guard; lets = List.rev !lets; outs = [ (Stdout, find Stdout); (Stderr, find Stderr); (Exit, find Exit) ]; laws = List.rev !laws }
 
 (* ---- footprint / examples / spec ------------------------------------------ *)
 let p_footprints st : footprint =
@@ -298,6 +308,28 @@ let p_examples st (fp : footprint) : example list =
     List.rev !exs
   end
 
+(* static position check: output references denote the OUTPUT under a relational law; in a
+   guard / let / output equation they would be circular. Reject at parse time (Eval would only
+   catch this at runtime). *)
+let rec has_output_ref = function
+  | OStdout | OStderr | OExit -> true
+  | App (_, xs) -> List.exists has_output_ref xs
+  | Lam (_, b) -> has_output_ref b
+  | If (a, b, c) -> has_output_ref a || has_output_ref b || has_output_ref c
+  | Lit _ | Argv _ | ArgvAll | Stdin | FileBytes | Var _ -> false
+
+let check_output_refs (sp : spec) : unit =
+  List.iteri
+    (fun i (c : case) ->
+      let bad where =
+        raise (Parse_error (Printf.sprintf
+          "case #%d: output references (stdout/stderr/exit as expressions) are only valid in `law` propositions (found in %s)" i where))
+      in
+      (match c.guard with Some g when has_output_ref g -> bad "the guard" | _ -> ());
+      List.iter (fun (x, e) -> if has_output_ref e then bad ("`let " ^ x ^ "`")) c.lets;
+      List.iter (function (_, Eq e) when has_output_ref e -> bad "an output equation" | _ -> ()) c.outs)
+    sp.cases
+
 let parse (src : string) : spec =
   let st = mk (lex src) in
   skip_nl st;
@@ -316,4 +348,6 @@ let parse (src : string) : spec =
     skip_nl st
   done;
   let examples = p_examples st reads in
-  { name; reads; cases = List.rev !cases; examples }
+  let sp = { name; reads; cases = List.rev !cases; examples } in
+  check_output_refs sp;
+  sp

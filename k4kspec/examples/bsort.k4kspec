@@ -1,0 +1,16 @@
+# bsort ARG — stdout's bytes are a SORTED PERMUTATION of ARG's bytes.
+# The output is law-constrained (not pinned): only the agent-proof path can certify it.
+interface cli "bsort":
+  reads: nothing
+  writes: nothing
+cases on argv:
+  when len(argv) != 1: exit 2 ; stderr: one nonempty line ; stdout: ""
+  otherwise:
+    stdout: any
+    stderr: ""
+    exit:   0
+    law sorted(list_of(stdout))
+    law permutation(list_of(stdout), list_of(argv[0]))
+examples:
+  argv=[] -> exit=2
+  argv=["a","b"] -> exit=2

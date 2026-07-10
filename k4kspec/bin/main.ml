@@ -141,6 +141,16 @@ let do_certify arg ~unsigned ~mode =
          | `Compositional -> Agent_proof.certify_compositional ~signature ~backend sp)
   in
   List.iter print_endline r.Certify.log;
+  (* a FAILED run on a file persists its honest report — the input to propose-fix *)
+  (if (not r.Certify.ok) && Sys.file_exists arg then begin
+     Store.write_file (Store.last_failure_path arg)
+       (Printf.sprintf "# certify failure — %s\nspec-sha256: %s\ndate: %s\n\n%s\n"
+          (Filename.basename arg)
+          (Sign.hash_bytes (Store.read_file arg))
+          (Store.timestamp ())
+          (String.concat "\n" r.Certify.log));
+     Printf.eprintf "hint: k4kspec propose-fix %s  (agent drafts a spec-change proposal from this failure)\n" arg
+   end);
   (* SIGNED successful runs are PROMOTED into the ledger: certificate.md + the named artifacts
      move from the /tmp workdir to <name>.k4k/certificates/v<N>/. Dev runs stay in /tmp. *)
   (match sg, r.Certify.ok with
@@ -183,6 +193,118 @@ let () =
        | [ "--structured"; arg ] -> do_certify arg ~unsigned ~mode:(`Agent `Structured)
        | [ arg ] -> do_certify arg ~unsigned ~mode:(`Agent `OneShot)
        | _ -> print_string usage; exit 2)
+  | _ :: "propose" :: name :: intent :: _ ->
+      let spec_path = name ^ ".k4kspec" in
+      if Sys.file_exists spec_path then
+        (Printf.eprintf "[k4kspec] REFUSE: %s exists — propose only CREATES; use `k4kspec revise %s \"...\"`\n" spec_path spec_path;
+         exit 2);
+      let backend = Propose.authoring_backend ~stub:(Propose.stub_propose_backend ~name) in
+      (match Propose.propose ~backend ~name ~intent with
+       | Error m -> Printf.eprintf "[k4kspec] agent backend unusable after retries:\n%s\n" m; exit 5
+       | Ok d ->
+           let hints_path = Store.hints_path spec_path in
+           Store.write_file spec_path d.Propose.spec_text;
+           Store.write_file hints_path d.Propose.hints_text;
+           Store.write_file (Store.decisions_path spec_path) d.Propose.decisions_text;
+           let record : Record.t =
+             { Record.fields =
+                 [ ("k4k-proposal", "1"); ("kind", "new"); ("spec", Filename.basename spec_path);
+                   ("against-version", "unsigned"); ("date", Store.timestamp ());
+                   ("backend", d.Propose.backend_name);
+                   ("proposal-check", "parses, check=pass") ];
+               sections =
+                 [ ("decisions", d.Propose.decisions_text); ("proposed spec", d.Propose.spec_text);
+                   ("proposed hints", d.Propose.hints_text) ] }
+           in
+           Store.write_new (Store.proposal_path spec_path "new") (Record.to_string record);
+           Printf.printf "wrote %s        (DRAFT — you are the sole writer; edit it)\n" spec_path;
+           Printf.printf "wrote %s           (guidance draft — cosmetic only, uncertified)\n" hints_path;
+           Printf.printf "wrote %s   (the agent's decisions — review THESE)\n" (Store.decisions_path spec_path);
+           print_newline ();
+           print_string d.Propose.decisions_text;
+           print_newline ();
+           Printf.printf "next: review + edit, then  k4kspec check %s  and  k4kspec sign %s\n" spec_path spec_path;
+           exit 0)
+  | _ :: "revise" :: file :: request :: _ ->
+      if not (Sys.file_exists file) then (Printf.eprintf "[k4kspec] no such file: %s\n" file; exit 2);
+      let spec = Store.read_file file in
+      let hints_path = Store.hints_path file in
+      let hints = if Sys.file_exists hints_path then Store.read_file hints_path else "" in
+      let dpath = Store.decisions_path file in
+      let decisions = if Sys.file_exists dpath then Store.read_file dpath else "" in
+      let backend = Propose.authoring_backend ~stub:Propose.stub_revise_backend in
+      (match Propose.revise ~backend ~spec ~hints ~decisions ~request with
+       | Error m -> Printf.eprintf "[k4kspec] agent backend unusable after retries:\n%s\n" m; exit 5
+       | Ok d ->
+           let against =
+             match Sign.verify file with
+             | Sign.Valid (s, _) -> Printf.sprintf "v%d" s.Sign.version
+             | _ -> "unsigned"
+           in
+           let record : Record.t =
+             { Record.fields =
+                 [ ("k4k-proposal", "1"); ("kind", "revise"); ("spec", Filename.basename file);
+                   ("against-version", against); ("against-sha256", Sign.hash_bytes spec);
+                   ("date", Store.timestamp ()); ("backend", d.Propose.backend_name);
+                   ("proposal-check", if d.Propose.check_ok then "parses, check=pass" else "parses, check=FAIL") ];
+               sections =
+                 [ ("decisions", d.Propose.decisions_text); ("proposed spec", d.Propose.spec_text);
+                   ("proposed hints", d.Propose.hints_text) ] }
+           in
+           Store.write_new (Store.proposal_path file "revise") (Record.to_string record);
+           Store.write_file (Store.new_spec_path file) d.Propose.spec_text;
+           Store.write_file (Store.new_hints_path file) d.Propose.hints_text;
+           Store.write_file dpath d.Propose.decisions_text;
+           (match d.Propose.summary_text with Some s -> Printf.printf "== the agent's summary ==\n%s\n" s | None -> ());
+           print_endline "== mechanical delta (computed, not the agent's claim) ==";
+           (match Parse.parse spec with
+            | old_sp -> (match Parse.parse d.Propose.spec_text with
+                         | new_sp -> print_string (Propose.mechanical_delta old_sp new_sp)
+                         | exception _ -> ())
+            | exception _ -> print_endline "  (current spec does not parse; no delta)");
+           print_endline "== line diff (current -> proposed) ==";
+           print_string (Propose.line_diff spec d.Propose.spec_text);
+           print_endline "== check on the proposed draft ==";
+           print_string d.Propose.check_report;
+           (match Sign.verify file with
+            | Sign.Valid (s, _) ->
+                Printf.printf "\nNOTE: %s is SIGNED (v%d); accepting this draft invalidates the signature —\n\
+                               review, `mv %s %s`, then re-sign.\n"
+                  file s.Sign.version (Store.new_spec_path file) file
+            | _ ->
+                Printf.printf "\nreview, then accept with: mv %s %s\n" (Store.new_spec_path file) file);
+           exit (if d.Propose.check_ok then 0 else 1))
+  | _ :: "propose-fix" :: file :: _ ->
+      if not (Sys.file_exists file) then (Printf.eprintf "[k4kspec] no such file: %s\n" file; exit 2);
+      let fpath = Store.last_failure_path file in
+      if not (Sys.file_exists fpath) then
+        (Printf.eprintf "[k4kspec] REFUSE: no failure report (%s) — run certify-agent first.\n" fpath; exit 6);
+      let spec = Store.read_file file in
+      let hints_path = Store.hints_path file in
+      let hints = if Sys.file_exists hints_path then Store.read_file hints_path else "" in
+      let backend = Propose.authoring_backend ~stub:Propose.stub_revise_backend in
+      (match Propose.propose_fix ~backend ~spec ~hints ~failure:(Store.read_file fpath) with
+       | Error m -> Printf.eprintf "[k4kspec] agent backend unusable after retries:\n%s\n" m; exit 5
+       | Ok d ->
+           let record : Record.t =
+             { Record.fields =
+                 [ ("k4k-proposal", "1"); ("kind", "fix"); ("spec", Filename.basename file);
+                   ("against-sha256", Sign.hash_bytes spec); ("date", Store.timestamp ());
+                   ("backend", d.Propose.backend_name);
+                   ("proposal-check", if d.Propose.check_ok then "parses, check=pass" else "parses, check=FAIL") ];
+               sections =
+                 [ ("decisions", d.Propose.decisions_text); ("proposed spec", d.Propose.spec_text);
+                   ("proposed hints", d.Propose.hints_text) ] }
+           in
+           let ppath = Store.proposal_path file "fix" in
+           Store.write_new ppath (Record.to_string record);
+           Store.write_file (Store.new_spec_path file) d.Propose.spec_text;
+           (match d.Propose.summary_text with Some s -> Printf.printf "== the agent's summary ==\n%s\n" s | None -> ());
+           print_endline "== line diff (current -> proposed) ==";
+           print_string (Propose.line_diff spec d.Propose.spec_text);
+           Printf.printf "proposal: %s\nreview, then accept with: mv %s %s  (then re-sign and re-run certify-agent)\n"
+             ppath (Store.new_spec_path file) file;
+           exit (if d.Propose.check_ok then 0 else 1))
   | _ :: "sign" :: file :: rest ->
       let ack = List.mem "--ack-underspec" rest in
       let rec waivers acc = function

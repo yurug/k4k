@@ -235,6 +235,108 @@ let () =
    check "cert waiver honesty line" (Algebra.contains cert_waived "NO property testing was run");
    check "cert partial-waive scope" (Algebra.contains cert_waived "CERTIFIED-BY-LAW (1 law(s)); 1 law(s) WAIVED"));
 
+  (* ---- decisions ---------------------------------------------------------------- *)
+  let d1 = "D1. [active] one arg\n  decided: len != 1 errors\n  alternatives: stdin\n  why: intent\n  spec: case #0\n" in
+  let d2 = "D2. [active] newline\n  decided: trailing newline\n  alternatives: none\n  why: POSIX\n  spec: case #1 stdout\n" in
+  let d_src = d1 ^ d2 in
+  let old_es = match Decisions.parse d_src with Ok es -> es | Error m -> failwith ("decisions parse: " ^ m) in
+  check "decisions parse count" (List.length old_es = 2);
+  check "decisions max_id" (Decisions.max_id old_es = 2);
+  let parse_ok s = match Decisions.parse s with Ok es -> es | Error m -> failwith ("decisions: " ^ m) in
+  (* append + flip: accepted *)
+  let d1_flipped = "D1. [superseded-by:D3] one arg\n  decided: len != 1 errors\n  alternatives: stdin\n  why: intent\n  spec: case #0\n" in
+  let d3 = "D3. [active] variadic\n  decided: any number of args\n  alternatives: exactly one\n  why: change request\n  spec: case #0\n" in
+  check "monotone append+flip ok"
+    (Decisions.check_monotone ~old:old_es ~fresh:(parse_ok (d1_flipped ^ d2 ^ d3)) = Ok ());
+  (* dropped entry: rejected, names D1 *)
+  check "monotone drop rejected"
+    (match Decisions.check_monotone ~old:old_es ~fresh:(parse_ok d2) with
+     | Error m -> Algebra.contains m "D1" && Algebra.contains m "DROPPED"
+     | Ok () -> false);
+  (* edited field: rejected, names entry + field *)
+  let d1_edited = "D1. [active] one arg\n  decided: len != 1 errors\n  alternatives: stdin\n  why: REWRITTEN\n  spec: case #0\n" in
+  check "monotone edit rejected"
+    (match Decisions.check_monotone ~old:old_es ~fresh:(parse_ok (d1_edited ^ d2)) with
+     | Error m -> Algebra.contains m "D1" && Algebra.contains m "why"
+     | Ok () -> false);
+  (* malformed: dangling supersede / decreasing ids / missing field *)
+  check "decisions dangling supersede rejected"
+    (match Decisions.parse ("D1. [superseded-by:D9] t\n  decided: d\n  alternatives: a\n  why: w\n  spec: header\n") with
+     | Error _ -> true | Ok _ -> false);
+  check "decisions decreasing ids rejected"
+    (match Decisions.parse (d2 ^ d1) with Error _ -> true | Ok _ -> false);
+  check "decisions missing field rejected"
+    (match Decisions.parse "D1. [active] t\n  decided: d\n  why: w\n  spec: header\n" with
+     | Error m -> Algebra.contains m "alternatives" | Ok _ -> false);
+
+  (* ---- extract_sections ----------------------------------------------------------- *)
+  let resp = "prose before\n```k4kspec\nSPEC\n```\nchatter\n```hints\nHINTS\n```\n```decisions\nDEC\n```\ntrailing" in
+  let secs = Propose.extract_sections resp in
+  check "extract three sections" (List.length secs = 3);
+  check "extract spec body" (List.assoc_opt "k4kspec" secs = Some "SPEC\n");
+  check "extract hints body" (List.assoc_opt "hints" secs = Some "HINTS\n");
+  check "extract missing detected"
+    (match Propose.require_sections [ "k4kspec"; "summary" ] secs with Error m -> Algebra.contains m "summary" | Ok () -> false);
+
+  (* ---- propose / revise drivers (stub + adversarial inline backends) --------------- *)
+  (match Propose.propose ~backend:(Propose.stub_propose_backend ~name:"echoer") ~name:"echoer" ~intent:"echo" with
+   | Ok d ->
+       check "propose stub draft parses" (match Parse.parse d.Propose.spec_text with _ -> true | exception _ -> false);
+       check "propose stub check ok" d.Propose.check_ok;
+       check "propose stub decisions valid" (match Decisions.parse d.Propose.decisions_text with Ok es -> es <> [] | Error _ -> false);
+       check "propose stub one attempt" (d.Propose.attempts = 1)
+   | Error m -> incr fails; Printf.printf "FAIL  propose stub: %s\n" m);
+  (* bad-then-good backend: succeeds on attempt 2 *)
+  (let calls = ref 0 in
+   let bad_then_good : Agent_proof.backend =
+     { Agent_proof.name = "flaky";
+       invoke = (fun p -> incr calls; if !calls = 1 then "no fences at all" else (Propose.stub_propose_backend ~name:"e2").Agent_proof.invoke p) }
+   in
+   match Propose.propose ~backend:bad_then_good ~name:"e2" ~intent:"x" with
+   | Ok d -> check "propose retry attempt=2" (d.Propose.attempts = 2 && !calls = 2)
+   | Error m -> incr fails; Printf.printf "FAIL  propose retry: %s\n" m);
+  (* always-bad backend: exhausts after 4 *)
+  (let calls = ref 0 in
+   let always_bad : Agent_proof.backend = { Agent_proof.name = "bad"; invoke = (fun _ -> incr calls; "garbage") } in
+   match Propose.propose ~backend:always_bad ~name:"e3" ~intent:"x" with
+   | Error _ -> check "propose exhaustion after 4" (!calls = 4)
+   | Ok _ -> incr fails; print_endline "FAIL  propose exhaustion: accepted garbage");
+  (* revise stub: decisions monotone, spec unchanged, summary present *)
+  (match Propose.propose ~backend:(Propose.stub_propose_backend ~name:"e4") ~name:"e4" ~intent:"x" with
+   | Error m -> incr fails; Printf.printf "FAIL  revise setup: %s\n" m
+   | Ok base -> (
+       match Propose.revise ~backend:Propose.stub_revise_backend ~spec:base.Propose.spec_text
+               ~hints:base.Propose.hints_text ~decisions:base.Propose.decisions_text ~request:"change" with
+       | Ok d ->
+           check "revise stub spec unchanged" (d.Propose.spec_text = base.Propose.spec_text);
+           check "revise stub summary present" (d.Propose.summary_text <> None);
+           check "revise stub decisions appended"
+             (match Decisions.parse d.Propose.decisions_text, Decisions.parse base.Propose.decisions_text with
+              | Ok f, Ok o -> Decisions.max_id f = Decisions.max_id o + 1
+              | _ -> false)
+       | Error m -> incr fails; Printf.printf "FAIL  revise stub: %s\n" m));
+  (* a history-rewriting reviser is rejected then fixed (bad-then-good) *)
+  (match Propose.propose ~backend:(Propose.stub_propose_backend ~name:"e5") ~name:"e5" ~intent:"x" with
+   | Error m -> incr fails; Printf.printf "FAIL  rewrite setup: %s\n" m
+   | Ok base ->
+       let calls = ref 0 in
+       let rewriter : Agent_proof.backend =
+         { Agent_proof.name = "rewriter";
+           invoke =
+             (fun p ->
+               incr calls;
+               if !calls = 1 then
+                 (* drops every existing decision: must be rejected by check_monotone *)
+                 Printf.sprintf "```k4kspec\n%s```\n```hints\nh\n```\n```decisions\nD9. [active] t\n  decided: d\n  alternatives: a\n  why: w\n  spec: header\n```\n```summary\ns\n```\n" base.Propose.spec_text
+               else Propose.stub_revise_backend.Agent_proof.invoke p) }
+       in
+       (match Propose.revise ~backend:rewriter ~spec:base.Propose.spec_text ~hints:base.Propose.hints_text
+                ~decisions:base.Propose.decisions_text ~request:"r" with
+        | Ok d -> check "revise rewrite rejected then fixed" (d.Propose.attempts = 2)
+        | Error m -> incr fails; Printf.printf "FAIL  revise rewrite: %s\n" m));
+
+  (* ---- law parsing units ---------------------------------------------------- *)
+
   (* ---- law parsing units ---------------------------------------------------- *)
   let mini_spec laws_and_stmts =
     "interface cli \"t\":\n  reads: nothing\ncases on argv:\n  when len(argv) != 1: exit 2 ; stderr: one nonempty line ; stdout: \"\"\n  otherwise:\n"

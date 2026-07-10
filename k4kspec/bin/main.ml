@@ -90,26 +90,6 @@ let do_run arg args =
              sp.Ast.name idx guard r.Eval.rexit (String.length r.Eval.rstdout) serr;
            exit r.Eval.rexit)
 
-(* ---- the signature gate for certify paths -------------------------------------
-   Built-ins and --unsigned runs are DEVELOPMENT runs (loud manifest stamp, no promotion);
-   spec FILES must carry a valid signature over their exact bytes. *)
-let gate arg ~unsigned : Sign.signature option =
-  if not (Sys.file_exists arg) then None                       (* built-in: development run *)
-  else if unsigned then None
-  else
-    match Sign.verify arg with
-    | Sign.Valid (s, _) -> Some s
-    | Sign.Unsigned ->
-        Printf.eprintf
-          "[k4kspec] REFUSE: %s is not signed.\n\
-           Review it (k4kspec check %s), then sign it (k4kspec sign %s).\n\
-           Nothing was certified. (--unsigned runs it as a development run.)\n"
-          arg arg arg;
-        exit 3
-    | Sign.Mismatch m ->
-        Printf.eprintf "[k4kspec] REFUSE: %s\nNothing was certified.\n" m;
-        exit 3
-
 let signature_line = function
   | None -> "none — development run, NOT a certified deliverable"
   | Some (s : Sign.signature) ->
@@ -120,8 +100,37 @@ let signature_line = function
          | ws -> Printf.sprintf "; %d law(s) WAIVED (tier B/C): removed from the certified statement" (List.length ws))
 
 let do_certify arg ~unsigned ~mode =
-  let sg = gate arg ~unsigned in
-  let sp0 = load arg in
+  (* READ-ONCE (2026-07-10 audit: read-twice TOCTOU): for files, the signature gate hashes and
+     the parser consumes THE SAME BYTES — what is verified is exactly what is certified.
+     Built-ins and --unsigned runs are DEVELOPMENT runs (loud manifest stamp, no promotion). *)
+  let sg, sp0 =
+    if Sys.file_exists arg then begin
+      let bytes =
+        match read_file_opt arg with
+        | Some s -> s
+        | None -> Printf.eprintf "[k4kspec] cannot read %s\n" arg; exit 2
+      in
+      let sp =
+        try Parse.parse bytes
+        with Parse.Parse_error m -> Printf.eprintf "[k4kspec] parse error in %s: %s\n" arg m; exit 2
+      in
+      if unsigned then (None, sp)
+      else
+        match Sign.verify_bytes ~spec_path:arg ~bytes with
+        | Sign.Valid (s, _) -> (Some s, sp)
+        | Sign.Unsigned ->
+            Printf.eprintf
+              "[k4kspec] REFUSE: %s is not signed.\n\
+               Review it (k4kspec check %s), then sign it (k4kspec sign %s).\n\
+               Nothing was certified. (--unsigned runs it as a development run.)\n"
+              arg arg arg;
+            exit 3
+        | Sign.Mismatch m ->
+            Printf.eprintf "[k4kspec] REFUSE: %s\nNothing was certified.\n" m;
+            exit 3
+    end
+    else (None, load arg)                                       (* built-in: development run *)
+  in
   (* waivers recorded at sign time weaken WHAT IS PROVEN (single choke point), never what check sees *)
   let waived = match sg with None -> [] | Some s -> List.map (fun w -> (w.Sign.case_i, w.Sign.law_j)) s.Sign.waivers in
   let sp = Sign.apply_waivers sp0 waived in

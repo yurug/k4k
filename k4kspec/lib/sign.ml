@@ -188,14 +188,16 @@ let sign ~(spec_path : string) ~(ack_underspec : bool)
 
 type verdict = Valid of signature * string (* sig, path *) | Unsigned | Mismatch of string
 
-let verify (spec_path : string) : verdict =
+(* verify against a GIVEN buffer — the caller hashes and parses THE SAME BYTES (the 2026-07-10
+   audit found a read-twice TOCTOU when the gate hashed one read and the loader parsed another) *)
+let verify_bytes ~(spec_path : string) ~(bytes : string) : verdict =
   match Store.latest_signature spec_path with
   | None -> Unsigned
   | Some (_, path) -> (
       match of_record (Record.of_string (Store.read_file path)) with
       | Error m -> Mismatch (Printf.sprintf "%s is unreadable: %s" path m)
       | Ok s ->
-          let now = hash_bytes (Store.read_file spec_path) in
+          let now = hash_bytes bytes in
           if now = s.spec_hash then Valid (s, path)
           else
             Mismatch
@@ -204,3 +206,7 @@ let verify (spec_path : string) : verdict =
                   Re-review and re-sign (k4kspec sign %s creates v%d)."
                  s.version (String.sub s.spec_hash 0 12) (Filename.basename spec_path)
                  (String.sub now 0 12) (Filename.basename spec_path) (s.version + 1)))
+
+(* convenience for status display etc. — one fresh read; certify paths MUST use verify_bytes *)
+let verify (spec_path : string) : verdict =
+  verify_bytes ~spec_path ~bytes:(Store.read_file spec_path)

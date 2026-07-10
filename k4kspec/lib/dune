@@ -1,3 +1,16 @@
 (library
  (name k4kspec)
  (libraries unix))
+
+; the audited-once blessed algebra, embedded at build time so certify works from ANY cwd
+; (the binary carries the exact bytes of backend/Kalgebra.v that were audited)
+(rule
+ (targets kalgebra_embedded.ml)
+ (deps ../backend/Kalgebra.v)
+ (action
+  (with-stdout-to
+   %{targets}
+   (progn
+    (echo "(* generated from backend/Kalgebra.v — do not edit *)\nlet source = {kalg|")
+    (cat %{deps})
+    (echo "|kalg}\n")))))

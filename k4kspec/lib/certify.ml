@@ -42,19 +42,18 @@ let coqc_check ?(workdir = "/tmp/k4k_coqc_check") (name : string) (v : string) :
   ignore (Sys.command (Printf.sprintf "rm -rf %s && mkdir -p %s" (Filename.quote workdir) (Filename.quote workdir)));
   match Refdiff.which "coqc" with
   | None -> (false, "coqc not on PATH")
-  | Some coqc -> (
-      match List.find_opt Sys.file_exists [ "k4kspec/backend/Kalgebra.v"; "backend/Kalgebra.v"; "../backend/Kalgebra.v" ] with
-      | None -> (false, "cannot locate Kalgebra.v")
-      | Some ksrc ->
-          let ic = open_in_bin ksrc in let kn = in_channel_length ic in
-          let ks = really_input_string ic kn in close_in ic; write "Kalgebra.v" ks;
-          let ck, ko, ke = Refdiff.run_cmd [ coqc; "-Q"; "."; ""; "Kalgebra.v" ] ~cwd:workdir in
-          if ck <> 0 then (false, Printf.sprintf "Kalgebra.v failed: %s%s" ko ke)
-          else begin
-            write (name ^ ".v") v;
-            let c, o, e = Refdiff.run_cmd [ coqc; "-Q"; "."; ""; name ^ ".v" ] ~cwd:workdir in
-            (c = 0, o ^ e)
-          end)
+  | Some coqc ->
+      (* the audited-once algebra is EMBEDDED at build time (Kalgebra_embedded, generated from
+         backend/Kalgebra.v) so certification works from any cwd — the product runs in the
+         user's project directory, not this repo *)
+      write "Kalgebra.v" Kalgebra_embedded.source;
+      let ck, ko, ke = Refdiff.run_cmd [ coqc; "-Q"; "."; ""; "Kalgebra.v" ] ~cwd:workdir in
+      if ck <> 0 then (false, Printf.sprintf "Kalgebra.v failed: %s%s" ko ke)
+      else begin
+        write (name ^ ".v") v;
+        let c, o, e = Refdiff.run_cmd [ coqc; "-Q"; "."; ""; name ^ ".v" ] ~cwd:workdir in
+        (c = 0, o ^ e)
+      end
 
 (* the manifest's closing honesty line depends on WHO produced run+proof (the 2026-07-08 audit
    caught the deterministic text shipping, falsely, on agent-produced certificates) *)
@@ -69,7 +68,8 @@ let agent_provenance =
 (* the pipeline given a final .v source (elaborator- OR agent-produced): write it, gate on no
    escape hatches, coqc (with the audited-once Kalgebra), extract, compile (+ shim), run,
    cross-check vs the oracle, write the manifest. *)
-let certify_v ?(workdir = "/tmp/k4k_certify") ?(limitation = deterministic_limitation) (sp : spec)
+let certify_v ?(workdir = "/tmp/k4k_certify") ?(limitation = deterministic_limitation)
+    ?(signature = "none — development run, NOT a certified deliverable") (sp : spec)
     (v : string) : report =
   let log = ref [] in
   let say s = log := s :: !log in
@@ -90,15 +90,12 @@ let certify_v ?(workdir = "/tmp/k4k_certify") ?(limitation = deterministic_limit
          | None, _ -> say "FAIL: coqc not on PATH"; done_ false
          | _, None -> say "FAIL: ocamlfind not on PATH"; done_ false
          | Some coqc, Some ocf ->
-             (* audited-once blessed algebra: copy backend/Kalgebra.v in and compile it first *)
+             (* audited-once blessed algebra: EMBEDDED at build time (generated from
+                backend/Kalgebra.v) so certification works from any cwd *)
              let kalg_ok =
-               match List.find_opt Sys.file_exists [ "k4kspec/backend/Kalgebra.v"; "backend/Kalgebra.v"; "../backend/Kalgebra.v" ] with
-               | None -> say "FAIL: cannot locate k4kspec/backend/Kalgebra.v"; false
-               | Some ksrc ->
-                   let ic = open_in_bin ksrc in let kn = in_channel_length ic in
-                   let ks = really_input_string ic kn in close_in ic; write "Kalgebra.v" ks;
-                   let ck, ko, ke = Refdiff.run_cmd [ coqc; "-Q"; "."; ""; "Kalgebra.v" ] ~cwd:workdir in
-                   if ck <> 0 then (say (Printf.sprintf "FAIL: coqc Kalgebra.v exit %d:\n%s%s" ck ko ke); false) else true
+               write "Kalgebra.v" Kalgebra_embedded.source;
+               let ck, ko, ke = Refdiff.run_cmd [ coqc; "-Q"; "."; ""; "Kalgebra.v" ] ~cwd:workdir in
+               if ck <> 0 then (say (Printf.sprintf "FAIL: coqc Kalgebra.v exit %d:\n%s%s" ck ko ke); false) else true
              in
              if not kalg_ok then done_ false
              else
@@ -160,8 +157,8 @@ let certify_v ?(workdir = "/tmp/k4k_certify") ?(limitation = deterministic_limit
                    let _, coqv, _ = Refdiff.run_cmd [ coqc; "--version" ] ~cwd:workdir in
                    let manifest =
                      Printf.sprintf
-                       "# TCB manifest — %s\n\nClaim: the extracted implementation is PROVEN (coqc) to satisfy spec_rel,\nthe relation denoted by the signed k4kspec, MODULO this trusted base:\n\n- Rocq kernel + extraction: %s- OCaml compiler (ocamlfind ocamlopt %s)\n- the blessed value algebra (audited-once backend/Kalgebra.v; extracted into %s_ext.ml)\n- the I/O shim (%s_main.ml)\n- the elaborator (lib/rocq_emit.ml)\n\nArtifacts: %s.v (source+proof), %s_ext.ml (extracted), %s (binary).\n%s\n"
-                       name coqv (match Refdiff.which "ocamlopt" with Some p -> p | None -> "ocamlopt") name name name name name limitation
+                       "# TCB manifest — %s\n\nClaim: the extracted implementation is PROVEN (coqc) to satisfy spec_rel,\nthe relation denoted by the signed k4kspec, MODULO this trusted base:\n\n- Rocq kernel + extraction: %s- OCaml compiler (ocamlfind ocamlopt %s)\n- the blessed value algebra (audited-once backend/Kalgebra.v; extracted into %s_ext.ml)\n- the I/O shim (%s_main.ml)\n- the elaborator (lib/rocq_emit.ml)\n\nArtifacts: %s.v (source+proof), %s_ext.ml (extracted), %s (binary).\nSignature: %s\n%s\n"
+                       name coqv (match Refdiff.which "ocamlopt" with Some p -> p | None -> "ocamlopt") name name name name name signature limitation
                    in
                    write (name ^ ".tcb.md") manifest;
                    say (Printf.sprintf "wrote %s.tcb.md ; certified binary at %s" name bin);
@@ -172,7 +169,7 @@ let certify_v ?(workdir = "/tmp/k4k_certify") ?(limitation = deterministic_limit
        end
 
 (* the deterministic v1 path: the elaborator generates run + a generic proof *)
-let certify ?(workdir = "/tmp/k4k_certify") (sp : spec) : report =
+let certify ?(workdir = "/tmp/k4k_certify") ?signature (sp : spec) : report =
   match (try `Ok (Rocq_emit.emit sp) with Failure m -> `Err m) with
   | `Err m -> { ok = false; log = [ "FAIL: elaboration: " ^ m ] }
-  | `Ok v -> certify_v ~workdir sp v
+  | `Ok v -> certify_v ~workdir ?signature sp v

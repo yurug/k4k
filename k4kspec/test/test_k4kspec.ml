@@ -148,6 +148,67 @@ let () =
    check "report grepf ok" ok;
    check "report grepf text" (Algebra.contains txt "[stability]"));
 
+  (* ---- sign / signature gate -------------------------------------------------- *)
+  let with_tmpdir f =
+    let d = Filename.temp_file "k4ktest" "" in
+    Sys.remove d; Unix.mkdir d 0o755;
+    Fun.protect ~finally:(fun () -> ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote d)))) (fun () -> f d)
+  in
+  let greet_src =
+    (* greet NAME: pinned success, free stderr on the error path — has an under-spec dim *)
+    "interface cli \"greet\":\n  reads: nothing\ncases on argv:\n  when len(argv) != 1: exit 2 ; stderr: one nonempty line ; stdout: \"\"\n  otherwise: stdout: concat(\"hello \", argv[0]) ; stderr: \"\" ; exit: 0\nexamples:\n  argv=[\"bob\"] -> stdout=\"hello bob\" exit=0\n  argv=[] -> exit=2\n"
+  in
+  with_tmpdir (fun d ->
+      let spec = Filename.concat d "greet.k4kspec" in
+      let spit p s = let oc = open_out_bin p in output_string oc s; close_out oc in
+      spit spec greet_src;
+      (* under-spec dims present -> refuse without ack (code 4) *)
+      (match Sign.sign ~spec_path:spec ~ack_underspec:false ~waivers:[] with
+       | Error { Sign.code = 4; _ } -> ()
+       | _ -> incr fails; print_endline "FAIL  sign: expected under-spec refusal (code 4)");
+      (* ack -> v1 *)
+      (match Sign.sign ~spec_path:spec ~ack_underspec:true ~waivers:[] with
+       | Ok (1, _) -> ()
+       | _ -> incr fails; print_endline "FAIL  sign: expected v1");
+      (* idempotent *)
+      (match Sign.sign ~spec_path:spec ~ack_underspec:true ~waivers:[] with
+       | Ok (1, _) -> ()
+       | _ -> incr fails; print_endline "FAIL  sign: expected idempotent v1");
+      check "verify valid" (match Sign.verify spec with Sign.Valid (s, _) -> s.Sign.version = 1 | _ -> false);
+      (* one-byte change -> Mismatch *)
+      spit spec (greet_src ^ "#\n");
+      check "verify mismatch after edit" (match Sign.verify spec with Sign.Mismatch _ -> true | _ -> false);
+      (* re-sign -> v2 with chain *)
+      (match Sign.sign ~spec_path:spec ~ack_underspec:true ~waivers:[] with
+       | Ok (2, path) ->
+           let r = Record.of_string (let ic = open_in_bin path in let n = in_channel_length ic in let s = really_input_string ic n in close_in ic; s) in
+           check "v2 chains to v1" (match Record.get r "previous" with Some p -> String.length p > 3 && String.sub p 0 3 = "v1 " | None -> false)
+       | _ -> incr fails; print_endline "FAIL  sign: expected v2");
+      (* unsigned spec elsewhere *)
+      let other = Filename.concat d "other.k4kspec" in
+      spit other greet_src;
+      check "verify unsigned" (Sign.verify other = Sign.Unsigned));
+  (* waiver ref parsing + validation *)
+  check "waiver ref ok" (Sign.parse_waiver_ref "case#1.law#0:B" = Ok (1, 0, "B"));
+  check "waiver ref bad tier" (match Sign.parse_waiver_ref "case#1.law#0:A" with Error _ -> true | _ -> false);
+  check "waiver ref garbage" (match Sign.parse_waiver_ref "law 3" with Error _ -> true | _ -> false);
+  check "waiver validate range"
+    (match Sign.validate_waivers Specs.grepsort [ (2, 5, "B", "r") ] with Error _ -> true | _ -> false);
+  check "waiver validate ok"
+    (Sign.validate_waivers Specs.grepsort [ (2, 0, "B", "r") ] = Ok ());
+  (* apply_waivers: strips exactly the referenced law; check is UNCHANGED *)
+  (let sp' = Sign.apply_waivers Specs.grepsort [ (2, 0) ] in
+   let laws_at i sp = (List.nth sp.Ast.cases i).Ast.laws in
+   check "apply_waivers strips one law" (List.length (laws_at 2 sp') = 1);
+   check "apply_waivers keeps the other" (laws_at 2 sp' = [ List.nth (laws_at 2 Specs.grepsort) 1 ]);
+   let stmt = Rocq_emit.emit_statement sp' in
+   check "waived law absent from spec_rel" (not (Algebra.contains stmt "Sorted bytes_le"));
+   check "unwaived law present in spec_rel" (Algebra.contains stmt "Permutation");
+   (* waivers are certification scope, NOT spec edits: a spec with its laws stripped would be
+      genuinely vacuous and FAIL check — which is exactly why check reads the file, never .sig *)
+   check "fully-waived spec would fail check"
+     (fst (Check.report (Sign.apply_waivers Specs.grepsort [ (2, 0); (2, 1) ])) = false));
+
   (* ---- law parsing units ---------------------------------------------------- *)
   let mini_spec laws_and_stmts =
     "interface cli \"t\":\n  reads: nothing\ncases on argv:\n  when len(argv) != 1: exit 2 ; stderr: one nonempty line ; stdout: \"\"\n  otherwise:\n"

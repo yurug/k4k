@@ -88,7 +88,7 @@ let retry_suffix (coqc_log : string) : string =
   ^ "\nReturn corrected `run` and `correct` (the two items only)."
 
 (* ---- the harness ---------------------------------------------------------- *)
-let certify ?(workdir = "/tmp/k4k_certify_agent") ?(max_attempts = 4) ~(backend : backend) (sp : spec) : Certify.report =
+let certify ?(workdir = "/tmp/k4k_certify_agent") ?signature ?(max_attempts = 4) ~(backend : backend) (sp : spec) : Certify.report =
   let stmt = (try Rocq_emit.emit_statement sp with Failure m -> failwith ("statement: " ^ m)) in
   let extr = Rocq_emit.extraction_for sp.name in
   let base = base_prompt stmt in
@@ -96,7 +96,7 @@ let certify ?(workdir = "/tmp/k4k_certify_agent") ?(max_attempts = 4) ~(backend 
   let rec loop attempt prompt acc_log =
     let body = clean (backend.invoke prompt) in
     let v = assemble body in
-    let r = Certify.certify_v ~workdir ~limitation:Certify.agent_provenance sp v in
+    let r = Certify.certify_v ~workdir ?signature ~limitation:Certify.agent_provenance sp v in
     let attempt_log = Printf.sprintf "[attempt %d via %s] %s" attempt backend.name (if r.Certify.ok then "coqc CLOSED the agent's proof; certified" else "rejected") in
     if r.Certify.ok then { Certify.ok = true; log = acc_log @ [ attempt_log ] @ r.Certify.log }
     else if attempt >= max_attempts then
@@ -161,7 +161,7 @@ let has_admit v = List.exists (Algebra.contains v) [ "Admitted"; " admit"; "admi
 (* the structured harness: each step is coqc-gated (intermediate gates allow admits; the FINAL gate,
    certify_v, bans them). The skeleton gate (PHASE 2) kernel-checks the decomposition before any
    hard lemma is proved. *)
-let certify_structured ?(workdir = "/tmp/k4k_certify_agent") ?(max_attempts = 3) ?(max_fill = 4) ~(backend : backend) (sp : spec) : Certify.report =
+let certify_structured ?(workdir = "/tmp/k4k_certify_agent") ?signature ?(max_attempts = 3) ?(max_fill = 4) ~(backend : backend) (sp : spec) : Certify.report =
   let stmt = (try Rocq_emit.emit_statement sp with Failure m -> failwith ("statement: " ^ m)) in
   let extr = Rocq_emit.extraction_for sp.Ast.name in
   let name = sp.Ast.name in
@@ -216,7 +216,7 @@ let certify_structured ?(workdir = "/tmp/k4k_certify_agent") ?(max_attempts = 3)
          | None -> fail ()
          | Some devf ->
            say "[assemble] FINAL gate: certify_v (bans admits; coqc; extract; compile; cross-check; manifest)";
-           let r = Certify.certify_v ~workdir ~limitation:Certify.agent_provenance sp (String.concat "\n" [ stmt; run; devf; extr ]) in
+           let r = Certify.certify_v ~workdir ?signature ~limitation:Certify.agent_provenance sp (String.concat "\n" [ stmt; run; devf; extr ]) in
            { Certify.ok = r.Certify.ok; log = List.rev !log @ r.Certify.log })))
 
 (* ===== COMPOSITIONAL METHODOLOGY (ADR-021): decompose -> module-interface gate -> certify each
@@ -296,7 +296,7 @@ let sketch_one_prompt stmt dev lname err =
        development must COMPILE with the helpers Admitted (the kernel gates your decomposition).\n\
        Raw Coq only. No prose." lname lname lname
 
-let certify_compositional ?(workdir = "/tmp/k4k_certify_agent") ?(max_attempts = 3) ?(fill_budget = 48) ~(backend : backend) (sp : spec) : Certify.report =
+let certify_compositional ?(workdir = "/tmp/k4k_certify_agent") ?signature ?(max_attempts = 3) ?(fill_budget = 48) ~(backend : backend) (sp : spec) : Certify.report =
   let stmt = (try Rocq_emit.emit_statement sp with Failure m -> failwith ("statement: " ^ m)) in
   let extr = Rocq_emit.extraction_for sp.Ast.name in
   let name = sp.Ast.name in
@@ -382,5 +382,5 @@ let certify_compositional ?(workdir = "/tmp/k4k_certify_agent") ?(max_attempts =
       | None -> fail ()
       | Some devf ->
         say "[assemble] FINAL gate: certify_v (bans admits; coqc; extract; compile; cross-check; manifest)";
-        let r = Certify.certify_v ~workdir ~limitation:Certify.agent_provenance sp (String.concat "\n" [ stmt; devf; extr ]) in
+        let r = Certify.certify_v ~workdir ?signature ~limitation:Certify.agent_provenance sp (String.concat "\n" [ stmt; devf; extr ]) in
         { Certify.ok = r.Certify.ok; log = List.rev !log @ r.Certify.log }))

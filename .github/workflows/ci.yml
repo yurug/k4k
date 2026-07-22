@@ -16,6 +16,9 @@ jobs:
         with:
           ocaml-compiler: "5.3"
 
+      - name: Install dependencies
+        run: opam install . --deps-only --yes
+
       - name: Build
         run: opam exec -- dune build
 
@@ -30,6 +33,9 @@ jobs:
       - uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: "5.3"
+
+      - name: Install dependencies
+        run: opam install . --deps-only --yes
 
       - name: Install the Rocq prover (coqc compatibility binaries)
         run: opam install --yes coq

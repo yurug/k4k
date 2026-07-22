@@ -86,12 +86,16 @@ interpreter would give certified k4k tools real file/stdin/stdout behaviour
 with proven equivalence, replacing the shim, and would reuse rocqeteer's
 differential harness against coreutils.
 
-Spike, strictly bounded: re-certify **one** built-in (catf or grepf) through
-EffIR end-to-end, then decide: adopt as the execution backend / keep as an
-interop demo / defer. Known rocqeteer gaps to respect: no pipes yet, bounded
-input sizes, concurrency only proposed (ADR-0019). Licensing is compatible
-(BSD-3 is permissive; retain the notice); the dependency also makes a good
-story: two certified toolchains, one personal, one from work, composing.
+Spike, strictly bounded (per decision 4, backend abstraction): re-certify
+**one** built-in (catf or grepf) through EffIR end-to-end, behind a backend
+interface that keeps the k4k core backend-agnostic. The spike's deliverables:
+the interface, the worked example, and the list of rocqeteer adaptations
+needed for the integration to be idiomatic (pipes are the known first
+candidate; those changes land upstream in rocqeteer, not as contortions in
+k4k). Known rocqeteer gaps today: no pipes, bounded input sizes, concurrency
+only proposed (ADR-0019). Both projects are MIT (decision 2); the pairing
+also makes a good story: two certified toolchains, one personal, one from
+work, composing.
 
 ### W4 — local-explainability experiment
 
@@ -106,9 +110,11 @@ essay.
 
 ### W5 — publication
 
-Create the GitHub repo (`yurug/k4k`), add LICENSE (see Open questions), CI
-(build + tests + one `certify` smoke run, no agent-driven proving in CI), tag
-v0.3.0. This closes the blog's hub gate ("public and presentable").
+Create the GitHub repo (`yurug/k4k`), add the MIT LICENSE, CI (build + tests
++ one `certify` smoke run, no agent-driven proving in CI), tag v0.3.0. The
+README carries the experimental-status statement (part of the blog's umbrella
+experiment) alongside a genuinely usable quick start (decision 5). This
+closes the blog's hub gate ("public and presentable").
 
 ## Sequencing and gates
 
@@ -120,12 +126,22 @@ v0.3.0. This closes the blog's hub gate ("public and presentable").
 - Blog-side mirror of these gates: `revision-2-living-essays.md` § Tool
   releases.
 
-## Open questions (author)
+## Decisions (author, 2026-07-22)
 
-1. **Binary and repo name**: install the CLI as `k4k` (recommended) and name
-   the GitHub repo `k4k`? (`k4kspec` remains the language/file-format name.)
-2. **License**: BSD-3-Clause (matches rocqeteer) or MIT? Needed before W5.
-3. **v2 salvage check**: anything in the watcher stack worth keeping beyond
-   what the ADRs record, before W1 deletes it?
-4. **rocqeteer adoption depth**: is "execution backend" the ambition if the
-   spike succeeds, or is an interop demo enough for the series?
+1. **Names**: the CLI installs as `k4k`; the GitHub repo is `yurug/k4k`;
+   `k4kspec` remains the name of the language / file format.
+2. **License: MIT, for everything** — k4k, and rocqeteer relicensed from
+   BSD-3-Clause to MIT (relicensing commit to be pushed by the author;
+   copyright holder line unchanged).
+3. **No v2 salvage**: the ADRs already record the concepts worth keeping;
+   W1 deletes the watcher stack outright, git history is the archive.
+4. **Backend abstraction**: k4k stays abstract with respect to the execution
+   backend; rocqeteer is the first backend, not a hard dependency. The
+   integration must be idiomatic on both sides: rather than contorting k4k to
+   fit rocqeteer's current surface, **adapt rocqeteer upstream** (if pipes are
+   needed, add pipes to rocqeteer). The pairing is also promotion for both
+   tools.
+5. **Experimental, but usable**: k4k, rocqeteer, agentic-dev-kit and laconic
+   are marked experimental and explicitly part of the blog's umbrella
+   experiment, yet people who want to use them must be able to: clear
+   presentation and product quality are requirements, not afterthoughts.

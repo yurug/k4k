@@ -13,10 +13,10 @@ a manifest that names exactly what you are trusting.
 
 > **Status: experimental.** k4k is part of a broader experiment on
 > [software engineering in the agent era](https://yann.regis-gianas.org/en/),
-> alongside [rocqeteer](https://github.com/yurug/rocqeteer),
-> [agentic-dev-kit](https://github.com/yurug/agentic-dev-kit) and the essays
-> that report on them. It is usable today on programs within its scope, and
-> its interfaces will move.
+> alongside [rocqeteer](https://github.com/yurug/rocqeteer), the
+> agentic-dev-kit methodology (release planned) and the essays that report on
+> them. It is usable today on programs within its scope, and its interfaces
+> will move.
 
 ## The idea
 

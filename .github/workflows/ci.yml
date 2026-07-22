@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.3"
+
+      - name: Build
+        run: opam exec -- dune build
+
+      - name: Tests
+        run: opam exec -- dune exec k4kspec/test/test_k4kspec.exe
+
+  certify-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.3"
+
+      - name: Install the Rocq prover (coqc compatibility binaries)
+        run: opam install --yes coq
+
+      - name: Build
+        run: opam exec -- dune build
+
+      - name: Certify smoke run (development mode, unsigned)
+        run: opam exec -- dune exec k4kspec/bin/main.exe -- certify --unsigned k4kspec/examples/upper.k4kspec

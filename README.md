@@ -1,136 +1,147 @@
 # k4k — KISS for KISS
 
-An autonomous coding agent that builds **formally verified** POSIX-like programs from a single user-edited file.
+If you build a KISS program, keep its agentic development stupidly simple:
+**sign a specification, and prove one theorem: the program does one thing and
+does it well.**
 
-## What it does
+k4k is a spec-validation and certification harness for KISS programs,
+POSIX-like command-line tools whose observable behavior is fully determined by
+`argv` and file contents. You write a short observational specification in the
+**k4kspec** language; k4k validates it, you *sign* it, and k4k produces a
+machine-checked certificate that a generated implementation satisfies it, with
+a manifest that names exactly what you are trusting.
 
-You write free-form prose describing the program you want into a `.k4k` file. k4k watches the file, asks clarifying questions in-line until your demand denotes a clear theorem, then develops + verifies the implementation in **full autonomy** — with full formal verification by default (Rocq + extraction to OCaml; Frama-C/ACSL on C; Lean; Verus; F*). Trade-offs to lower verification tiers happen only with your explicit sign-off, in the same file.
+> **Status: experimental.** k4k is part of a broader experiment on
+> [software engineering in the agent era](https://yann.regis-gianas.org/en/),
+> alongside [rocqeteer](https://github.com/yurug/rocqeteer),
+> [agentic-dev-kit](https://github.com/yurug/agentic-dev-kit) and the essays
+> that report on them. It is usable today on programs within its scope, and
+> its interfaces will move.
 
-You never run flags. You never configure tooling. You never see the verifier or the agent backend. The file is the protocol.
+## The idea
 
-## Quick start
+Coding agents make production cheap; validation is what stays hard. For a
+KISS program, validation can be made stupidly simple too, because the whole
+demand fits in a specification a human can read, sign, and a machine can
+check. k4k enforces that division of labor:
 
-```bash
-pipx install cotype                  # ADR-010 — file-concurrency primitive
-                                     # (or: pip install --user cotype)
-dune build && dune install           # builds k4k + the reference backends
-                                     # and puts them on $PATH
-k4k myproject.k4k                    # one-shot launch
-```
+- **The human is the sole writer and signer of the spec.** Agents may
+  *propose* spec drafts and revisions (`k4k propose`, `k4k revise`), but
+  nothing is certified that a human did not sign, and signing refuses to
+  proceed while any observable dimension is left unconstrained and
+  unacknowledged.
+- **The machine owns the proof.** Certification elaborates the spec to a Rocq
+  theorem, checks it, extracts the program, and cross-checks the binary
+  against the spec's own executable oracle.
 
-`cotype` ships on PyPI; k4k requires it (and `git`) on `$PATH`. If
-`pipx` itself is missing, k4k aborts with exit 5 and a hint of the
-exact install command — there is no silent fallback. Cotype needs
-Python ≥ 3.11 and POSIX `diff3` (the latter is part of `diffutils`,
-almost always pre-installed).
+KISS is a scope, not a doctrine: plenty of systems are intrinsically complex
+and need their depth. k4k works the proving ground where the process runs
+end-to-end with strong guarantees.
 
-On first run k4k creates `myproject/.k4k/config.json` and
-**autodetects** an agent backend on `$PATH` —
-`claude_code_backend` (the bundled example) or `ollama_backend`
-(local LLM alternative). Edit the file once if you need a
-different command; subsequent runs read it back. Override with
-`K4K_BACKEND_COMMAND=...` for one-off CI runs without mutating
-the project's config.
+## Five-minute demo
 
-The two reference backends conform to
-[`kb/external/backend-protocol.md`](kb/external/backend-protocol.md):
-[`claude-code`](examples/backends/claude-code/README.md) (calls
-`claude -p`; needs `claude` on `$PATH` + `ANTHROPIC_API_KEY`) and
-[`ollama`](examples/backends/ollama/) (calls a local Ollama
-server). Any executable that speaks the wire protocol works.
-
-If neither autodetection nor manual config picks a backend, the
-watcher logs `agent.unconfigured` once and idles — useful for
-`--exit-on-stable` smokes but not for real work.
-
-To smoke-test the claude-code backend wire (one round-trip; consumes
-API tokens):
-
-```bash
-./examples/backends/claude-code/smoke.sh formalization
-```
-
-After launching the watcher you only edit `myproject.k4k`. k4k:
-
-- Appends `## k4k:clarification:<ts>` blocks until your spec denotes a clear theorem.
-- Snapshots a `## k4k:version:<n>` block and develops the version on a `k4k/version/<n>` git branch (per ADR-013). Accepted gap-steps commit as `[k4k] establish <pid>`; on completion k4k merges to `main` and tags `v<n>`.
-- Updates a `## k4k:status` block live (per-property statuses, pending user edits, open trade-offs, last activity).
-- Surfaces `## k4k:tradeoff:proposal:<ts>` if Tier A fails on a property and degradation is warranted; pauses for your sign-off (`Approved: Tier B` / `Approved: Tier C` / `Rejected: <guidance>`) inline.
-- Treats edits you make to your own sections during development as **queued for the next version** — they never interrupt the in-flight gap-step loop. The status block surfaces the count.
-
-## Verification tiers
-
-| Tier | What it means | Sign-off |
-|---|---|---|
-| **A — Full formal verification** | Implementation extracted from / machine-checked against a formal artifact (Rocq+Extraction, Frama-C/ACSL+WP, Lean, Verus, F*…). | Implicit — the goal. |
-| **B — Formal model + intensive testing** | A formal model exists; the implementation is hand-written and tested against the model via property-based testing + fuzzing. | Required, in-file, with k4k's written rationale. |
-| **C — Testing-only** | No formal artifact. Tests only. | Required, in-file, with explicit acknowledgment that the formal-correctness goal is forfeited for the relevant property. |
-
-Tiers are **per-property**. A program may end up with 10 properties at Tier A and 2 at Tier B; the file's status block reflects the distribution.
-
-## Architecture in one paragraph
-
-`lib/` is the harness — verifier-agnostic, backend-agnostic, concurrency-delegated. Tools enter via wire protocols (`Verifier_external`, `Backend_external` per ADR-008/009) or via a hardcoded runtime dependency (`cotype` per ADR-010, like `git`). The user-facing protocol is the `.k4k` file. `bin/main.ml` is the watcher daemon; `lib/Watcher_loop` orchestrates stability, formalization, version lifecycle (`lib/Version`, `lib/Version_loop`, `lib/Version_finalize`), the direct-commit gap-step (`lib/Gap_step`), trade-off sign-off (`lib/Tradeoff_flow`, `lib/Version_tradeoff`), and user-edit queueing (`lib/Version_user_edits`).
-
-## Repository layout
+A spec is a few lines. `upper` prints its ASCII-uppercased argument:
 
 ```
-bin/main.ml                  watcher daemon entry — single CLI form: k4k <file>
-lib/                         the harness (engine; verifier/backend/concurrency-agnostic)
-examples/
-  backends/                  reference agent-backend executables (claude-code, ollama)
-prompts/                     formalize.md, gap-step.tier-{a,b,c}.md, kb-regen.md
-test/{unit,integration,edge,conformance}/   test suites (~270 tests; see kb/INDEX.md)
-kb/                          the meta knowledge base — describes k4k itself
-kb/archive/v0-drifted/       historical record of the v0 build under the drifted UX framing
+interface cli "upper":
+  writes: nothing
+cases on argv:
+  when len(argv) != 1: exit 2 ; stderr: one nonempty line ; stdout: ""
+  otherwise:
+    stdout: ascii_upper(argv[0]) ++ "\n"
+    stderr: ""
+    exit:   0
+examples:
+  argv=["hello"] -> stdout="HELLO\n" exit=0
+  argv=["aB3z!"] -> stdout="AB3Z!\n" exit=0
+  argv=[] -> exit=2
+  argv=["a","b"] -> exit=2
 ```
 
-## Operator flags
+Validate it:
 
-The user UX is in-file; the binary itself takes only `<file>` plus a few operator flags:
+```
+$ k4k check upper.k4kspec
+[examples] 4/4 passed
+[stability]
+  exhaustiveness (static): OK (otherwise present)
+  exhaustiveness (swept 11 inputs): OK (all matched a case)
+  anti-vacuity: OK (no fully-unconstrained channel)
+[under-specified dimensions]
+  case #0  stderr : free (one-nonempty-line)
+```
 
-- `-v` / `-vv` — verbose / debug stderr (engine-level transitions / subprocess argv).
-- `--exit-on-stable` *[test-only]* — exit after the first stability snapshot.
-- `--exit-on-done` *[test-only]* — exit once the in-flight version completes or rolls back.
+Try to sign it. k4k refuses until you acknowledge what you left open:
 
-Test-only knobs (env vars) are documented in [`kb/runbooks/test-environment.md`](kb/runbooks/test-environment.md).
+```
+$ k4k sign upper.k4kspec
+REFUSE: this spec leaves 1 observable dimension(s) unconstrained.
+Signing acknowledges them as INTENDED. Re-run with --ack-underspec to sign.
 
-## Status
+$ k4k sign upper.k4kspec --ack-underspec
+signed: upper.k4kspec -> v1  (upper.k4k/signatures/v1.sig)
+```
 
-v2 closure pass complete. The watcher drives a stable spec to a real
-version-1 completion via real formalization, handles trade-off
-sign-off + Tier-B/C retry, surfaces user edits queued for the next
-version, finalizes with audit/merge/tag, and supports rollback via
-in-file directive. Ralph-loop feedback: every gap-step retry sees
-the prior failure reason; every rolled-back version splices a
-deferred-property summary; N consecutive rollbacks escalate to a
-stronger user prompt. Phase tracker at [`kb/INDEX.md`](kb/INDEX.md);
-audit closure at [`kb/reports/audit-2026-05-08-summary.md`](kb/reports/audit-2026-05-08-summary.md).
-Test count: 326 (291 unit + 25 integration + 6 conformance + 4 edge).
+Certify. This is the theorem being proved and checked for real (`coqc` must
+be on your `PATH`):
 
-For a runnable end-to-end smoke against a real backend, see
-[`examples/scenarios/echo-tiny/README.md`](examples/scenarios/echo-tiny/README.md).
+```
+$ k4k certify upper.k4kspec
+coqc: proof CHECKED (exit 0; algebra from audited-once Kalgebra.v), extraction done
+certificate gate: statement pinned (correct : forall i, spec_rel i (run i)); Print Assumptions closed
+compiled the certified binary
+binary MATCHES spec on 15/15 inputs
+certificate: upper.k4k/certificates/v1/certificate.md
+CERTIFY: OK
+```
 
-## Editor integration
+Eight built-in specs ship for exploration (`k4k list`): grepf, cutf, catf,
+kvget, bsort, partition, usort, grepsort. `k4k run <spec> -- <args>` executes
+any spec as its own reference model; `k4k emit <spec>` prints the elaborated
+Rocq statement.
 
-A reference Emacs major mode lives at
-[`editors/emacs/k4k-mode.el`](editors/emacs/README.md). It derives
-from `markdown-mode` (fallback `text-mode`), delegates save
-coordination to [`cotype-mode`](https://github.com/yurug/cotype/tree/main/editors/emacs),
-adds font-lock for the k4k-managed headings, and ships snippet
-commands for the three reply patterns (`Approved: Tier <B|C>`,
-`Rejected: <reason>`, `- request: rollback`) plus navigation between
-pending tradeoff / clarification blocks. See the directory README for
-keybindings.
+## What the certificate means, exactly
 
-## The methodology
+The pipeline is deterministic: elaborate the signed spec against a blessed,
+audited-once value algebra (`k4kspec/backend/Kalgebra.v`); check a
+non-vacuous theorem `correct : forall i, spec_rel i (run i)` with `coqc`
+(`Print Assumptions` must come back closed, no axioms, no `Admitted`);
+extract to OCaml; compile with a thin I/O shim; run the binary against the
+spec's executable oracle on the full validation sweep; record a certificate
+and a TCB manifest in the spec's `.k4k/` ledger.
 
-This project is built using **spec-driven agentic development** ([`agentic-dev-kit/`](agentic-dev-kit/)). The KB at [`kb/`](kb/) is the source of truth. Two UX corrections from the user (ADR-008/009/010 + the v2 reorientation in ADR-011/012/013) reshaped the framing while leaving the architectural primitives intact.
+What you trust, and it is written in every manifest: Rocq's kernel, Rocq's
+extraction, the OCaml compiler, the audited-once algebra, the I/O shim, and
+the elaborator from k4kspec to Rocq. What you do not have to trust: the agent
+that drafted the spec or the proof, and the implementation itself.
 
-## Why "KISS for KISS"
+Agent-driven proving exists behind the same gate: `k4k certify-agent` lets an
+LLM (`$K4K_PROOF_CMD`) drive the prover, and nothing it produces is accepted
+unless `coqc` checks it under the same closed-assumptions rule.
 
-The harness is itself kept stupidly simple so it can build computer programs that are kept stupidly simple. We exclude complex GUIs, large webapps, big software stacks, ML training, GPU/numerics, distributed systems. We target POSIX-like CLIs and libraries with well-specified I/O whose behavior is fully determined by argv + filesystem contents. See [`kb/NOTES.md`](kb/NOTES.md) for the founding vision.
+## Roadmap
+
+- **Backend abstraction.** The certification core is being kept abstract over
+  execution backends. The first target backend is
+  [rocqeteer](https://github.com/yurug/rocqeteer), a certified pipeline from
+  effectful Rocq programs to idiomatic OCaml 5, so that certified k4k tools
+  get real file and stdin/stdout behavior with proven semantics instead of a
+  trusted shim.
+- **Local explainability.** An experiment measuring module cohesion as the
+  minimal length of a correct explanation of the module's role, hosted here,
+  feeding the blog series.
+
+## Build
+
+```
+dune build            # OCaml >= 5.3, stdlib-only
+dune exec k4kspec/test/test_k4kspec.exe   # ALL OK expected
+dune install          # installs the k4k binary
+```
+
+Certification additionally needs the Rocq prover on `PATH` (`opam install
+coq` installs the 9.x compatibility binaries, including `coqc`).
 
 ## License
 
-MIT (project itself). Note `agentic-dev-kit/` is a sibling submodule with its own provenance; `kb/archive/v0-drifted/` is the historical record kept verbatim.
+MIT. See [`LICENSE`](LICENSE).

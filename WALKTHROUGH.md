@@ -1,179 +1,113 @@
-# k4k — first-run walkthrough
+# k4k — walkthrough
 
-What to expect from a clean repo to a verified version-1 program.
+A full session, from an unsigned spec to a certificate, with the outputs you
+should expect. Run on 2026-07-22 with Rocq 9.1.0 and OCaml 5.3.0; trimmed
+only where marked.
 
-## Prerequisites
-
-Verify these are on `$PATH`:
-
-```bash
-cotype --version   # ADR-010, file-concurrency primitive (pipx install cotype)
-git --version      # ADR-013, version-as-branch
-claude --version   # the agent backend (https://docs.claude.com)
-```
-
-If `ANTHROPIC_API_KEY` is set in your environment, the bundled
-`claude-code` backend will use it. Otherwise it relies on whatever
-auth `claude` is configured with.
-
-## Build
-
-```bash
-cd /home/coder/workspace/k4k
-dune build && dune install   # puts k4k + claude_code_backend on $PATH
-```
-
-If you skip `dune install`, use the absolute paths under
-`_build/install/default/bin/` in the smokes below.
-
-## Smoke 1 — wire-only, no API tokens
-
-A fresh tempdir + a stable `.k4k` file + `--exit-on-stable`. The
-watcher initializes, runs the structural-stability check, and exits.
-No formalization, no agent calls.
-
-```bash
-WORKDIR=$(mktemp -d)
-cd "$WORKDIR"
-git init -q && git config user.email x@x && git config user.name x
-cat > test.k4k <<'EOF'
----
-k4k:
-  version: 1
-  class: cli
----
-# echo --upper
-
-## Goal
-Echo argv with optional uppercasing.
-
-## Inputs and outputs
-- argv: positional args optionally preceded by `--upper`
-- stdout: argv joined; uppercased iff `--upper` is set
-
-## Error taxonomy
-N/A
-
-## File-system contract
-N/A
-
-## Concurrency
-N/A
-
-## Performance bounds
-N/A
-
-## Acceptance examples
-1. argv=["hi"]            → "hi\n"
-2. argv=["--upper","hi"]  → "HI\n"
-3. argv=["a","b"]         → "a b\n"
-
-## Refusing examples
-1. argv=["--unknown"] → exit non-zero
-
-## Out of scope
-- everything except echoing
-EOF
-git add -A && git commit -q -m initial
-
-/home/coder/workspace/k4k/_build/install/default/bin/k4k \
-  --exit-on-stable test.k4k
-```
-
-Expected stdout (JSONL):
+## 0. Build
 
 ```
-{"ts":"...","event":"watcher.start","details":{"file":"...test.k4k"}}
-{"ts":"...","event":"agent.unconfigured","details":{"hint":"set K4K_BACKEND_COMMAND or K4K_STUB_RESPONSES"}}
-{"ts":"...","event":"stability.pass","details":{}}
-{"ts":"...","event":"watcher.exit","details":{}}
+$ dune build && dune install
+$ k4k list
+grepf
+cutf
+catf
+kvget
+bsort
+partition
+usort
+grepsort
 ```
 
-`stability.pass` confirms the structural check accepts the file.
-`agent.unconfigured` is just a heads-up that no backend is wired —
-fine for `--exit-on-stable`.
+## 1. Check
 
-## Smoke 2 — full v1 development against real claude (consumes tokens)
-
-If `claude_code_backend` is on `$PATH` after `dune install`, k4k
-autodetects it on first run and writes `.k4k/config.json` for you.
-No env vars needed.
-
-```bash
-# Same WORKDIR / test.k4k as above.
-# --exit-on-done returns after the first version completes (Done)
-# or rolls back. Without it the watcher polls forever.
-k4k --exit-on-done test.k4k
-```
-
-If autodetection didn't find a backend (rare; usually means you
-skipped `dune install`), open `.k4k/config.json` after the first
-run, set `backend.command` to your backend's path, and re-launch.
-
-Expected JSONL trajectory (event names; details elided):
+`check` validates a spec: the examples run against the spec's own executable
+model, exhaustiveness and dead cases are analyzed, anti-vacuity is enforced
+(a spec that constrains nothing certifies nothing), and an adversarial sweep
+summarizes the validation surface per case.
 
 ```
-watcher.start
-agent.external_configured            # K4K_BACKEND_COMMAND wired
-stability.pass                        # structure is OK
-formalize.ok                          # two-run formalization converged
-                                       (or formalize.cached on a re-run)
-version.start                         # k4k/version/1 branch cut
-version.commit (× N)                  # one per established property
-version.complete                      # merge to main, tag v1
-watcher.exit
+$ k4k check upper.k4kspec
+=== k4kspec check: upper ===
+
+[examples] 4/4 passed
+
+[stability]
+  exhaustiveness (static): OK (otherwise present)
+  exhaustiveness (swept 11 inputs): OK (all matched a case)
+  dead cases (heuristic, over sweep): none
+  anti-vacuity: OK (no fully-unconstrained channel)
+
+[under-specified dimensions]  (content agent-authored, NOT certified — intended?)
+  case #0  stderr : free (one-nonempty-line)
+
+[validation surface]  (curated; full sweep = 11 inputs)
+  by case (one representative per distinct behavior):
+    case #0  [len(argv) != 1]  — 7 input(s)
+        -> exit=2 stdout="" stderr=~one-nonempty-line   e.g. argv=[] files={}
+    case #1  [otherwise]  — 4 input(s)
+        -> exit=0 stdout="HELLO\n" stderr=""   e.g. argv=["hello"] files={}
 ```
 
-What lands on disk:
+Note the `[under-specified dimensions]` report: case #0 leaves stderr's
+content free. k4k will not let that pass silently.
+
+## 2. Run the spec as its own model
+
+Any spec is executable before any implementation exists:
 
 ```
-test.k4k                              # status block updated
-.k4k/manifest.json                    # cached desired D
-.k4k/log.jsonl                        # the JSONL stream above + per-step logs
-.k4k/version/1/manifest.json          # frozen-at-tag-time per-version record
-.k4k/version/1/D-spec.json            # canonicalized D
-.k4k/version/1/audit.md               # human-readable audit
-.k4k/agent-runs/<id>/                 # prompt + response + verdict per call
-src/<...>                             # the agent's source code
-_verifier.sh                          # the agent's verifier wrapper
-git tag                               # v1, annotated
+$ k4k run upper.k4kspec -- hello
+HELLO
+[k4kspec] upper: case #1 [otherwise] -> exit=0, stdout=6 bytes, stderr=pinned
 ```
 
-`git log --oneline` on `main` shows the merge from `k4k/version/1`
-plus the per-property `[k4k] establish <pid>` commits.
+## 3. Sign
 
-## What can go wrong
-
-- **`agent.unconfigured`** + nothing else: `K4K_BACKEND_COMMAND` is
-  not set or empty. Set it.
-- **`agent.tool_error`** repeatedly: the backend executable is
-  failing (likely missing `claude` on `$PATH` or auth). Inspect
-  `.k4k/agent-runs/<id>/verdict.json` for the wrapper's stderr.
-- **`version.skip` with `reason: no-spec-change`**: idempotence
-  gate — the previous completed version already converged at this
-  exact D. Make a meaningful edit to the user-owned sections.
-- **`formalize.unstable`** or **`formalize.coverage_unstable`**: the
-  agent could not produce a stable D. A clarification block was
-  appended; reply inline and re-save.
-- **`tradeoff.proposed`**: Tier-A failed 3× on a property. The
-  watcher pauses and waits for your reply (`Approved: Tier B|C` or
-  `Rejected: <guidance>`) inside the proposal block. Edit and save.
-
-## Stopping
-
-The watcher is signal-driven. SIGINT (Ctrl-C) cancels cooperatively
-within ~5s (NF1). SIGTERM is the same.
-
-In-file directives stop a version cooperatively:
+Signing is the human act. It freezes the exact spec bytes as a version. It
+refuses while under-specification is unacknowledged:
 
 ```
-## k4k:status
-- request: rollback   # aborts the in-flight version, leaves baseline intact
-- request: pause      # halts the gap-step loop without reverting
+$ k4k sign upper.k4kspec
+  case#0 stderr : free (one-nonempty-line)
+REFUSE: this spec leaves 1 observable dimension(s) unconstrained (listed above).
+Signing acknowledges them as INTENDED. Re-run with --ack-underspec to sign.
+
+$ k4k sign upper.k4kspec --ack-underspec
+signed: upper.k4kspec -> v1  (upper.k4k/signatures/v1.sig)
 ```
 
-## More
+## 4. Certify
 
-- Architecture: `kb/architecture/overview.md`
-- All audit reports: `kb/reports/audit-2026-05-08-*`
-- Test environment knobs: `kb/runbooks/test-environment.md`
+Certification refuses unsigned specs (`--unsigned` exists for development
+runs and says so). On a signed spec:
+
+```
+$ k4k certify upper.k4kspec
+coqc: proof CHECKED (exit 0; algebra from audited-once Kalgebra.v), extraction done
+certificate gate: statement pinned (correct : forall i, spec_rel i (run i)); Print Assumptions closed
+compiled the certified binary
+binary MATCHES spec on 15/15 inputs
+wrote upper.tcb.md ; certified binary at /tmp/k4k_certify/upper
+certificate: upper.k4k/certificates/v1/certificate.md
+CERTIFY: OK
+```
+
+The certificate ledger (`upper.k4k/certificates/v1/`) now holds the
+certificate and the TCB manifest naming every trust assumption. `k4k status
+upper.k4kspec` summarizes signature validity, waivers, and certificates.
+
+## 5. Where the Rocq goes
+
+`k4k emit upper.k4kspec` prints the elaborated Rocq statement and `run`
+function that `certify` checks, stated against the audited-once
+`k4kspec/backend/Kalgebra.v`.
+
+## Agent-assisted flows
+
+- `k4k propose <name> <intent>` and `k4k revise <file> <request>` let an
+  agent draft or amend a spec; drafts are gated by parse+check and recorded
+  in a decision journal. The human remains the sole signer.
+- `k4k certify-agent [--structured|--compositional] <spec>` lets an LLM
+  (`$K4K_PROOF_CMD`) drive the prover; acceptance is still `coqc` with closed
+  assumptions, nothing less.

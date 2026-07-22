@@ -17,6 +17,8 @@ related: []
 
 > **v3 reorientation (2026-06-19).** The KB was re-grounded on the certification thesis: see ADR-014/015/016, the rewritten `domain/prd.md`, and `reports/expert-panel-2026-06-19.md`. Files describing the v2 autonomous-daemon / cotype / single-file-edited-by-both design (ADR-010/011, `external/cotype.md`, much of `architecture/overview.md`, `spec/*`) are superseded or pending sync; trust the v3 ADRs + PRD where they conflict.
 
+> **Publication rework (2026-07-22).** The v2 watcher stack is deleted (W1); README/WALKTHROUGH now tell the v3 story; the repo is headed for public release as the killer app of the blog series *Software engineering in the agent era*. Program of work, author decisions (names, MIT, backend abstraction over rocqeteer, experimental-but-usable bar), and gates: **`kb/plan-publication-rework.md`**. Quick-load bundles below that reference `examples/backends/` or v2 files are stale until the W2 kb pass completes.
+
 ## How to use this KB (for agents)
 
 **Always read first:**

@@ -1,3 +1,5 @@
 (executable
  (name main)
+ (public_name k4k)
+ (package k4k)
  (libraries k4kspec))

@@ -1,6 +1,0 @@
-(test
- (name test_conformance)
- (libraries alcotest astring unix yojson)
- (deps
-  (file ../../examples/backends/ollama/main.exe)
-  (file fixtures/synthetic-verifier.sh)))

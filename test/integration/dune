@@ -1,9 +1,0 @@
-(test
- (name test_integration)
- (libraries k4k alcotest astring unix yojson)
- (deps
-  (alias_rec ../../bin/all)
-  (file ../../examples/backends/ollama/main.exe)
-  (file ../../tests/fixtures/well-formed-structural.k4k)
-  (file ../../tests/fixtures/empty.k4k)
-  (file ../../tests/fixtures/echo-upper.k4k)))

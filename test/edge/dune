@@ -1,3 +1,0 @@
-(test
- (name test_edge)
- (libraries k4k alcotest unix))

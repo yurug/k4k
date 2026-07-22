@@ -1,3 +1,0 @@
-(test
- (name test_unit)
- (libraries k4k alcotest yojson re unix qcheck-core qcheck-core.runner))

@@ -1,5 +1,0 @@
-(executable
- (name main)
- (public_name ollama_backend)
- (package k4k)
- (libraries k4k cmdliner unix astring yojson))

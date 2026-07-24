@@ -145,3 +145,13 @@ closes the blog's hub gate ("public and presentable").
    are marked experimental and explicitly part of the blog's umbrella
    experiment, yet people who want to use them must be able to: clear
    presentation and product quality are requirements, not afterthoughts.
+
+## Update (2026-07-24)
+
+The blog's agent-era series no longer features k4k (author decision 12 in
+the blog kb): the series concentrates on the process and engineer
+engineering, with agentic-dev-kit as its concrete thread. k4k gets its own
+blog series later. Consequences here: the hub gate is dissolved (W1/W2/W5
+were completed anyway and the repo is public); W3 (rocqeteer spike) and W4
+(explainability experiment) now pace themselves against the future k4k
+series, not against the pillar essays.
